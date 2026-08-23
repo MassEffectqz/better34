@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,6 +24,17 @@ var genericTags = map[string]bool{
 	"blush": true, "smile": true, "simple_background": true, "white_background": true,
 	"photo": true, "color": true, "english_text": true, "commentary": true,
 	"looking_at_viewer": true, "open_mouth": true, "closed_eyes": true,
+}
+
+var startedAt = time.Now()
+
+// GET /api/healthz — liveness для мониторинга/Docker HEALTHCHECK.
+// Намеренно без авторизации и без деталей (только статус и аптайм).
+func (h *Handler) Healthz(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ok",
+		"uptime": int(time.Since(startedAt).Seconds()),
+	})
 }
 
 func (h *Handler) SearchRandom(c *gin.Context) {

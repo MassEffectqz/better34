@@ -257,10 +257,22 @@ func (a *Accounts) CreateSession(username string) (string, time.Time, error) {
 	token := hex.EncodeToString(buf)
 	expires := time.Now().Add(sessionTTL)
 	a.mu.Lock()
+	// Заодно выметаем просроченные: иначе мапа и sessions.json растут
+	// бесконечно у клиентов, которые не делают logout.
+	a.pruneExpiredSessionsLocked(expires.Add(-sessionTTL))
 	a.sessions[token] = sessionEntry{Username: username, ExpiresAt: expires}
 	a.mu.Unlock()
 	_ = a.saveSessions()
 	return token, expires, nil
+}
+
+// pruneExpiredSessionsLocked удаляет истёкшие сессии (вызывать под a.mu).
+func (a *Accounts) pruneExpiredSessionsLocked(now time.Time) {
+	for t, s := range a.sessions {
+		if now.After(s.ExpiresAt) {
+			delete(a.sessions, t)
+		}
+	}
 }
 
 func (a *Accounts) UserBySession(token string) (string, bool) {

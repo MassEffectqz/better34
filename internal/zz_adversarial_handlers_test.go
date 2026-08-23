@@ -59,7 +59,7 @@ func TestAdversarialGetPostsByIDsFanOut(t *testing.T) {
 	cl := NewRule34Client()
 	cl.spec.apiURL = srv.URL
 	cl.httpClient.Store(&http.Client{})
-	cl.keys.sync([]APICredential{{Name: "t", APIKey: "adversarial-fake-key"}})
+	seedTestKeys(cl, []APICredential{{Name: "t", APIKey: "adversarial-fake-key"}})
 	cl.cache = newBooruCache(filepath.Join(t.TempDir(), "sc.json"))
 	cl.breaker.failures = 0
 	cl.breaker.openUntil = time.Time{}
@@ -93,7 +93,7 @@ func TestAdversarialGetTagCountsFanOut(t *testing.T) {
 	cl := NewRule34Client()
 	cl.spec.apiURL = srv.URL
 	cl.httpClient.Store(&http.Client{})
-	cl.keys.sync([]APICredential{{Name: "t", APIKey: "adversarial-fake-key"}})
+	seedTestKeys(cl, []APICredential{{Name: "t", APIKey: "adversarial-fake-key"}})
 	cl.cache = newBooruCache(filepath.Join(t.TempDir(), "sc.json"))
 	cl.suggMu.Lock()
 	cl.suggM = make(map[string]suggestionCacheEntry)

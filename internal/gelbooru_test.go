@@ -24,10 +24,21 @@ func newTestGelbooru(srvURL string) *booruClient {
 	c.suggMu.Unlock()
 	c.breaker.failures = 0
 	c.breaker.openUntil = time.Time{}
-	// gelbooru требует валидный api_key — сеем тестовый
-	// (configGen в тестах не меняется, syncFromConfig не перетрёт).
-	c.keys.sync([]APICredential{{Name: "test", APIKey: "testkey", UserID: "1"}})
+	// gelbooru требует валидный api_key — сеем тестовый.
+	seedTestKeys(c, []APICredential{{Name: "test", APIKey: "testkey", UserID: "1"}})
 	return c
+}
+
+// seedTestKeys сеет ключи и «поглощает» текущее поколение конфига:
+// иначе syncFromConfig при очередном maybeReload (раз в 5с) затирает
+// сеяные ключи ключами из реального data/config.json — под -count=2
+// полный прогон пересекает границу троттлинга и тесты падают с
+// «все на карантине». С заморозкой lastGen resync для клиента выключен.
+func seedTestKeys(c *booruClient, creds []APICredential) {
+	c.keys.sync(creds)
+	c.keys.mu.Lock()
+	c.keys.lastGen = configGen.Load()
+	c.keys.mu.Unlock()
 }
 
 // Обёрнутый ответ {"@attributes":..,"post":[..]} должен разворачиваться.
@@ -134,7 +145,7 @@ func TestGelbooruSuggestTagIndex(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestGelbooru(srv.URL)
-	c.keys.sync([]APICredential{{Name: "gb", APIKey: "gbkey", UserID: "1"}})
+	seedTestKeys(c, []APICredential{{Name: "gb", APIKey: "gbkey", UserID: "1"}})
 	sugg, err := c.SuggestTags("cat")
 	if err != nil {
 		t.Fatalf("SuggestTags failed: %v", err)
@@ -199,7 +210,7 @@ func TestDapiParsingTypeTolerance(t *testing.T) {
 // requireAuth=true: без ключей — явная ошибка, а не тихая пустая лента.
 func TestGelbooruRequiresAuth(t *testing.T) {
 	c := newTestGelbooru("http://127.0.0.1:1") // никуда не дойдёт
-	c.keys.sync(nil)                           // ключей нет
+	seedTestKeys(c, nil)                       // ключей нет
 	c.cache = newBooruCache(filepath.Join(os.TempDir(), "gb_sc_auth.json"))
 	if _, err := c.SearchPosts("solo", 1, 5, 0); err == nil || !strings.Contains(err.Error(), "ключ") {
 		t.Fatalf("expected keys-required error, got %v", err)
@@ -221,7 +232,7 @@ func TestGelbooruAuthKeyRotationOn401(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestGelbooru(srv.URL)
-	c.keys.sync([]APICredential{{Name: "b", APIKey: "bad"}, {Name: "g", APIKey: "good"}})
+	seedTestKeys(c, []APICredential{{Name: "b", APIKey: "bad"}, {Name: "g", APIKey: "good"}})
 	posts, err := c.SearchPosts("x", 1, 5, 0)
 	if err != nil {
 		t.Fatalf("rotation on 401 failed: %v", err)
@@ -289,7 +300,7 @@ func TestSearchPostsRatingParam(t *testing.T) {
 	cl := NewRule34Client()
 	cl.spec.apiURL = srv.URL
 	cl.httpClient.Store(&http.Client{})
-	cl.keys.sync([]APICredential{{Name: "t", APIKey: "k"}})
+	seedTestKeys(cl, []APICredential{{Name: "t", APIKey: "k"}})
 	cl.cache = newBooruCache(filepath.Join(os.TempDir(), "r34_rf.json"))
 	cl.breaker.failures = 0
 	cl.breaker.openUntil = time.Time{}
@@ -345,7 +356,7 @@ func TestSuggestRelevanceGuard(t *testing.T) {
 	c := NewRule34Client()
 	c.spec.apiURL = srv.URL + "/index.php"
 	c.httpClient.Store(&http.Client{})
-	c.keys.sync([]APICredential{{Name: "t", APIKey: "k"}})
+	seedTestKeys(c, []APICredential{{Name: "t", APIKey: "k"}})
 	c.suggMu.Lock()
 	c.suggM = make(map[string]suggestionCacheEntry)
 	c.suggMu.Unlock()

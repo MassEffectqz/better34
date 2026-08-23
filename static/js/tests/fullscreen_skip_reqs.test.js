@@ -71,6 +71,8 @@ const App = {};
 global.App = App;
 const viewerPath = path.join(__dirname, '..', 'viewer.js');
 eval(fs.readFileSync(viewerPath, 'utf8'));
+// video.js добавляет видео-методы на App (renderViewer их вызывает).
+eval(fs.readFileSync(path.join(__dirname, '..', 'video.js'), 'utf8'));
 
 function makeViewerEl() {
   return {

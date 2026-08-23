@@ -174,6 +174,7 @@ func main() {
 	}
 	api := r.Group("/api")
 	{
+		api.GET("/healthz", handler.Healthz)
 		api.POST("/auth/register", handler.AuthRegister)
 		api.POST("/auth/login", handler.AuthLogin)
 		api.POST("/auth/logout", handler.AuthLogout)
@@ -265,6 +266,10 @@ func main() {
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: r,
+		// Медленные заголовки — классический Slowloris. ReadTimeout/WriteTimeout
+		// намеренно не ставим: SSE (/api/events) и прокси-стриминг долгоживущие.
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -384,7 +389,9 @@ func webSecurityMiddleware() gin.HandlerFunc {
 		}
 		legacyMode := authToken != "" && tokenMatches(c)
 		if strings.HasPrefix(c.Request.URL.Path, "/api") && !legacyMode {
-			if strings.HasPrefix(c.Request.URL.Path, "/api/auth/") || c.Request.URL.Path == "/api/tags/popular" {
+			if strings.HasPrefix(c.Request.URL.Path, "/api/auth/") ||
+				strings.HasPrefix(c.Request.URL.Path, "/api/healthz") ||
+				c.Request.URL.Path == "/api/tags/popular" {
 				c.Next()
 				return
 			}
