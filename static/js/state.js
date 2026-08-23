@@ -290,11 +290,13 @@ export const App = {
         const tb = ev.target.closest('.ff-type');
         if (!tb) return;
         ff.type = tb.dataset.type;
+        this._autoEmptyStreak = 0;
         this._saveFeedFilters(); syncUi(); this.renderPosts();
       });
       const bindNum = (input, key) => input.addEventListener('change', () => {
         ff[key] = Math.max(0, parseInt(input.value, 10) || 0);
         input.value = ff[key] || '';
+        this._autoEmptyStreak = 0;
         this._saveFeedFilters(); syncUi(); this.renderPosts();
       });
       bindNum(e.ffMinScore, 'minScore');
@@ -302,6 +304,7 @@ export const App = {
       bindNum(e.ffMinHeight, 'minHeight');
       e.ffReset.addEventListener('click', () => {
         this.state.feedFilters = { type: 'all', minScore: 0, minWidth: 0, minHeight: 0 };
+        this._autoEmptyStreak = 0;
         this._saveFeedFilters(); syncUi(); this.renderPosts();
       });
     }

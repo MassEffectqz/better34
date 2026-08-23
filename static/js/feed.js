@@ -391,6 +391,8 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
     if (reset) this._pendingReload = { reset, restorePostId };
     return;
   }
+  // Новый поиск/сброс ленты — обнуляем счётчик «пустых» автодогрузок.
+  if (reset) this._autoEmptyStreak = 0;
   const feedSeq = (this._feedSeq = (this._feedSeq || 0) + 1);
   const scrollEl = document.getElementById('main');
   const keepTop = forceRefresh && reset && scrollEl ? scrollEl.scrollTop : null;
@@ -596,7 +598,18 @@ App.maybeLoadMore = function () {
     if (this.state.loading || !this.state.hasMore || this.state.viewerOpen) return;
     if (sent.style.display === 'none') return;
     if (!this._sentinelNearViewport(sent)) return;
-    this.loadMore();
+    // Прогрессирующая пауза: если под фильтр не попадает ни одна карточка
+    // (короткий грид -> сентинел постоянно в зоне), автодогрузка иначе
+    // молотит провайдер страницу за страницей без остановки.
+    const streak = this._autoEmptyStreak || 0;
+    const gap = Math.min(8000, 1000 * Math.pow(2, streak));
+    if (Date.now() - (this._lastAutoLoad || 0) < gap) return;
+    this._lastAutoLoad = Date.now();
+    const before = this._displayCount || 0;
+    this.loadMore().then(() => {
+      const gained = (this._displayCount || 0) - before;
+      this._autoEmptyStreak = gained > 0 ? 0 : Math.min(6, streak + 1);
+    }).catch(() => {});
   };
   if ('requestIdleCallback' in window) {
     requestIdleCallback(fire, { timeout: 800 });
