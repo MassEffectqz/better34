@@ -454,16 +454,25 @@ func credentialsForSite(creds []APICredential, site string) []APICredential {
 // иначе ключ отдаётся только своему провайдеру.
 func (m *keyManager) syncFromConfig(site string) {
 	gen := configGen.Load()
+	// lastGen проверяется и мутируется под тем же локом, что и keys:
+	// параллельные вызовы из fan-out запросов иначе дают DATA RACE.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.lastGen == gen {
 		return
 	}
 	m.lastGen = gen
-	m.sync(credentialsForSite(GetConfig().GetAPICredentials(), site))
+	m.syncLocked(credentialsForSite(GetConfig().GetAPICredentials(), site))
 }
 
 func (m *keyManager) sync(creds []APICredential) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.syncLocked(creds)
+}
+
+// syncLocked вызывает под уже взятым m.mu.
+func (m *keyManager) syncLocked(creds []APICredential) {
 	byKey := make(map[string]*keyState, len(m.keys))
 	for i := range m.keys {
 		byKey[m.keys[i].cred.APIKey] = &m.keys[i]
