@@ -4,7 +4,7 @@
  *  - навигация — сеть, при неудаче кэш страницы, иначе офлайн-заглушка;
  *  - /static/* — cache-first (URL версионирован ?v=..., immutable).
  */
-const CACHE = 'briefly-static-v2';
+const CACHE = 'briefly-static-v3';
 const PRECACHE = ['/static/offline.html'];
 
 // JS/CSS не кэшируем жёстко: URL модулей фиксированы (?v= только у входа),
