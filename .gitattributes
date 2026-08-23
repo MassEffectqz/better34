@@ -1,0 +1,13 @@
+# Нормализуем окончания строк: в репозитории (Git store) — LF,
+# на Windows в рабочей копии при checkout — CRLF, но без смешивания.
+* text=auto eol=lf
+
+# Двоичные файлы — без авто-нормализации окончаний.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.exe binary

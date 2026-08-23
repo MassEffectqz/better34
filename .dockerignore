@@ -1,0 +1,10 @@
+# В образ не должны попадать данные с ключами/сессиями и локальный мусор.
+data/
+.env
+.git/
+.gitignore
+.dockerignore
+.playwright-mcp/
+*.exe
+*.exe~
+*.md

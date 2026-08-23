@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>better34 — просмотрщик</title>
+<meta name="briefly-token" content="__BRIEFLY_TOKEN__">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23a78bfa'/><stop offset='1' stop-color='%237c5cbf'/></linearGradient></defs><rect x='4' y='4' width='92' height='92' rx='24' fill='%23161616'/><circle cx='45' cy='45' r='20' fill='none' stroke='url(%23g)' stroke-width='8'/><line x1='59' y1='59' x2='76' y2='76' stroke='url(%23g)' stroke-width='9' stroke-linecap='round'/></svg>">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#0f0f0f">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="/static/css/style.css?v=__VERSION__">
+</head>
+<body>
+<div id="app">
+  <header id="header">
+    <div class="header-content">
+      <button id="btn-home" class="brand" title="На главную" aria-label="На главную">
+        <svg class="brand-logo" viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="brand-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c5cbf"/></linearGradient></defs><rect x="4" y="4" width="92" height="92" rx="24" fill="#161616"/><circle cx="45" cy="45" r="20" fill="none" stroke="url(#brand-g)" stroke-width="8"/><line x1="59" y1="59" x2="76" y2="76" stroke="url(#brand-g)" stroke-width="9" stroke-linecap="round"/></svg>
+        <span class="auth-name brand-name"><span>better</span><span class="auth-name-34">34</span></span>
+      </button>
+      <div class="search-box">
+        <i class="search-icon" data-lucide="search" data-size="15"></i>
+        <input type="text" id="search-input" placeholder="Поиск тегов..." spellcheck="false" autocomplete="off" title="Пробел — И · -тег — исключить · | — чередование лент · / или Ctrl+K — фокус">
+        <span id="query-meta" class="query-meta" title="Часть тегов фильтруется локально (лимит источника)"></span>
+        <button class="search-clear" id="search-clear" aria-label="Очистить"><i data-lucide="x" data-size="14"></i></button>
+        <div id="suggestions" class="suggestions"></div>
+        <div id="history-dropdown" class="history-dropdown"></div>
+      </div>
+      <div id="search-chips" class="search-chips"></div>
+      <div class="header-actions">
+        <button id="btn-local" class="btn-icon" title="Локальные (L)" aria-label="Локальные посты"><i data-lucide="house" data-size="17"></i></button>
+        <div class="rating-toggle" id="rating-toggle" role="group" aria-label="Фильтр рейтинга">
+          <button type="button" class="rt-btn active" data-rating="">All</button>
+          <button type="button" class="rt-btn" data-rating="sfw">SFW</button>
+          <button type="button" class="rt-btn" data-rating="nsfw">18+</button>
+        </div>
+        <div class="grid-control" id="provider-control">
+          <button id="provider-badge" class="provider-badge" title="Источник постов"><span id="provider-badge-label">rule34</span><i data-lucide="chevronDown" data-size="13"></i></button>
+          <div id="provider-menu" class="grid-menu hidden">
+            <div class="grid-menu-title">Источник постов</div>
+            <div id="provider-menu-list" class="provider-menu-list"></div>
+          </div>
+        </div>
+      </div>
+      <button id="btn-header-menu" class="btn-icon" title="Меню" aria-label="Меню"><i data-lucide="menu" data-size="17"></i></button>
+
+      <div id="header-menu" class="header-menu hidden">
+        <div class="header-menu-group">
+          <div class="header-menu-title">Поиск</div>
+          <button class="header-menu-item" data-action="random"><i data-lucide="shuffle" data-size="16"></i> Случайный пост</button>
+          <button class="header-menu-item" data-action="recommend"><i data-lucide="star" data-size="16"></i> Рекомендации</button>
+          <button class="header-menu-item" data-action="presets"><i data-lucide="bookmark" data-size="16"></i> Пресеты</button>
+          <button class="header-menu-item" data-action="grid"><i data-lucide="grid" data-size="16"></i> Плотность сетки</button>
+        </div>
+        <div class="header-menu-group">
+          <div class="header-menu-title">Разделы</div>
+          <button class="header-menu-item" data-action="profile"><i data-lucide="user" data-size="16"></i> Профиль</button>
+          <button class="header-menu-item" data-action="local"><i data-lucide="house" data-size="16"></i> Локальные</button>
+          <button class="header-menu-item" data-action="queue"><i data-lucide="list" data-size="16"></i> Очередь</button>
+          <button class="header-menu-item" data-action="stats"><i data-lucide="chart" data-size="16"></i> Статистика</button>
+        </div>
+        <div class="header-menu-group">
+          <div class="header-menu-title">Система</div>
+          <button class="header-menu-item" data-action="theme"><i data-lucide="moon" data-size="16"></i> Тема</button>
+          <button class="header-menu-item" data-action="settings"><i data-lucide="settings" data-size="16"></i> Настройки</button>
+          <button class="header-menu-item" data-action="help"><i data-lucide="help" data-size="16"></i> Справка</button>
+          <button class="header-menu-item" data-action="logout"><i data-lucide="logout" data-size="16"></i> Выйти</button>
+        </div>
+      </div>
+      <div id="feed-progress" class="feed-progress"><div class="feed-progress-bar"></div></div>
+    </div>
+  </header>
+  <div id="scroll-progress" aria-hidden="true"></div>
+
+  <main id="main">
+    <div id="mode-bar" class="mode-bar hidden">
+      <span id="mode-bar-text"></span>
+      <button class="btn-icon btn-icon-sm hidden" id="mode-bar-refresh" title="Обновить подборку"><i data-lucide="refresh" data-size="14"></i></button>
+      <button class="btn-icon btn-icon-sm" id="mode-bar-close"><i data-lucide="x" data-size="14"></i></button>
+    </div>
+    <div id="posts-grid" class="posts-grid"></div>
+    <div id="sentinel" class="sentinel"><div class="load-more-dot"></div></div>
+  </main>
+
+  <div id="viewer" class="viewer hidden">
+    <div class="viewer-backdrop"></div>
+    <div class="viewer-container">
+    <div class="viewer-head" id="viewer-head">
+      <span id="viewer-info" class="viewer-info"></span>
+      <div class="viewer-actions">
+        <div class="zoom-controls" id="viewer-zoom-controls">
+          <button class="btn-icon btn-icon-sm" id="zoom-out" title="Отдалить (−)" aria-label="Отдалить (−)"><i data-lucide="minus" data-size="13"></i></button>
+          <span id="zoom-label" class="zoom-label">100%</span>
+          <button class="btn-icon btn-icon-sm" id="zoom-in" title="Приблизить (+)" aria-label="Приблизить (+)"><i data-lucide="plus" data-size="13"></i></button>
+          <button class="btn-icon btn-icon-sm" id="zoom-fit" title="Сброс / по размеру (Z)" aria-label="Сброс (Z)"><i data-lucide="maximize" data-size="13"></i></button>
+        </div>
+        <div class="ss-speed">
+          <i data-lucide="clock" data-size="14"></i>
+          <input type="number" id="ss-speed-input" min="1" max="30" value="3" title="Скорость слайдшоу (сек)">
+        </div>
+        <button class="btn-icon" id="viewer-like" title="Лайк" aria-label="Лайк (Q)"><i data-lucide="heart" data-size="20"></i></button>
+        <button class="btn-icon" id="viewer-hide" title="Дизлайк" aria-label="Скрыть (E)"><i data-lucide="heartOff" data-size="20"></i></button>
+        <button class="btn-icon download-btn" id="viewer-download" title="Скачать (X)" aria-label="Скачать (X)"><i data-lucide="download" data-size="20"></i></button>
+        <button class="btn-icon" id="viewer-fullscreen" title="На весь экран (F)" aria-label="Полноэкранный режим (F)"><i data-lucide="maximize" data-size="20"></i></button>
+        <button class="btn-icon" id="viewer-close" title="Закрыть (ESC)" aria-label="Закрыть (ESC)"><i data-lucide="x" data-size="20"></i></button>
+      </div>
+    </div>
+    <div class="viewer-body" id="viewer-body">
+      <button class="nav-btn prev-btn" id="prev-btn" title="Назад (←)"><i data-lucide="chevronLeft" data-size="24"></i></button>
+      <div class="viewer-content" id="viewer-content">
+        <div class="viewer-loader" id="viewer-loader"><div class="spinner"></div></div>
+      </div>
+      <button class="nav-btn next-btn" id="next-btn" title="Вперёд (→)"><i data-lucide="chevronRight" data-size="24"></i></button>
+      <div class="zoom-hud" id="zoom-hud">
+        <div class="z-track z-track-x"><div class="z-thumb" id="z-thumb-x"></div></div>
+        <div class="z-track z-track-y"><div class="z-thumb" id="z-thumb-y"></div></div>
+      </div>
+    </div>
+    <div class="viewer-foot" id="viewer-foot">
+      <div id="viewer-tags" class="viewer-tags"></div>
+      <div id="viewer-related" class="viewer-related hidden"></div>
+
+      <div id="viewer-progress" class="viewer-progress"></div>
+    </div>
+    <div class="viewer-mobile-actions" id="viewer-mobile-actions">
+      <button class="viewer-mobile-toggle" id="viewer-mobile-toggle" title="Свернуть панель" aria-label="Свернуть/развернуть панель"><i data-lucide="chevronDown" data-size="12"></i></button>
+      <button class="btn-icon" id="viewer-like-mobile" title="Лайк" aria-label="Лайк (Q)"><i data-lucide="heart" data-size="20"></i></button>
+      <button class="btn-icon" id="viewer-hide-mobile" title="Дизлайк" aria-label="Скрыть (E)"><i data-lucide="heartOff" data-size="20"></i></button>
+      <button class="btn-icon" id="viewer-fullscreen-mobile" title="Свернуть полный просмотр" aria-label="Свернуть полный просмотр (F)"><i data-lucide="minimize" data-size="24"></i></button>
+    </div>
+    </div>
+  </div>
+
+  <div id="panel-backdrop" class="panel-backdrop"></div>
+
+  <div id="profile-panel" class="profile-panel hidden">
+    <div class="panel-resize" aria-hidden="true"></div>
+    <div class="profile-hero">
+      <div class="profile-hero-glow" aria-hidden="true"></div>
+      <div class="profile-hero-top">
+        <span class="profile-panel-title">Профиль</span>
+        <button class="btn-icon" id="profile-close" title="Закрыть (Esc)"><i data-lucide="x" data-size="18"></i></button>
+      </div>
+      <div class="profile-identity">
+        <div class="profile-avatar" id="profile-avatar" title="Загрузить аватар">
+          <img id="profile-avatar-img" src="" alt="avatar">
+          <div class="profile-avatar-overlay"><i data-lucide="camera" data-size="22"></i></div>
+          <input type="file" id="profile-avatar-file" accept="image/*" hidden>
+        </div>
+        <input type="text" id="profile-nickname" placeholder="Ваш ник" maxlength="30" spellcheck="false">
+      </div>
+      <div class="profile-stats">
+        <button class="stat" data-goto="presets"><span class="stat-icon"><i data-lucide="bookmark"></i></span><span class="stat-num" id="st-presets">0</span><span class="stat-label">Пресеты</span></button>
+        <button class="stat" data-goto="likes"><span class="stat-icon"><i data-lucide="heart"></i></span><span class="stat-num" id="st-likes">0</span><span class="stat-label">Лайки</span></button>
+        <button class="stat" data-goto="hides"><span class="stat-icon"><i data-lucide="eyeOff"></i></span><span class="stat-num" id="st-hides">0</span><span class="stat-label">Скрыто</span></button>
+        <button class="stat" data-goto="tags"><span class="stat-icon"><i data-lucide="hash"></i></span><span class="stat-num" id="st-tags">0</span><span class="stat-label">Теги</span></button>
+      </div>
+    </div>
+    <div class="profile-tabs">
+      <button class="profile-tab active" data-tab="presets">Пресеты <span class="tab-badge" id="tb-presets">0</span></button>
+      <button class="profile-tab" data-tab="likes">Лайки <span class="tab-badge" id="tb-likes">0</span></button>
+      <button class="profile-tab" data-tab="hides">Скрытые <span class="tab-badge" id="tb-hides">0</span></button>
+      <button class="profile-tab" data-tab="tags">Теги <span class="tab-badge" id="tb-tags">0</span></button>
+    </div>
+    <div class="profile-body">
+      <div class="profile-tab-content active" id="tab-presets">
+        <div class="preset-form">
+          <input type="text" id="preset-name" placeholder="Название пресета" maxlength="60">
+          <button id="btn-save-preset" class="btn-primary btn-sm"><i data-lucide="save" data-size="14"></i> Сохранить</button>
+        </div>
+        <div id="preset-current" class="preset-current"></div>
+        <div class="preset-tag-row">
+          <button id="btn-save-hidden-preset" class="btn-sm preset-tag-btn preset-tag-hidden" title="Сохранить текущие скрытые теги как пресет"><i data-lucide="eyeOff" data-size="13"></i> Скрытые теги → пресет</button>
+          <button id="btn-save-fav-preset" class="btn-sm preset-tag-btn preset-tag-fav" title="Сохранить текущие избранные теги как пресет"><i data-lucide="star" data-size="13"></i> Избранные теги → пресет</button>
+        </div>
+        <div id="presets-list" class="presets-list"></div>
+        <div class="preset-export-row">
+          <button id="btn-export-presets" class="btn-primary btn-sm"><i data-lucide="download" data-size="14"></i> Экспорт</button>
+          <button id="btn-import-presets" class="btn-primary btn-sm"><i data-lucide="upload" data-size="14"></i> Импорт</button>
+          <input type="file" id="preset-import-file" accept=".json" hidden>
+        </div>
+      </div>
+      <div class="profile-tab-content" id="tab-likes">
+        <p class="profile-empty" id="likes-empty"><span class="empty-icon"><i data-lucide="heart" data-size="26"></i></span><br>Нет лайков</p>
+        <div id="likes-list" class="profile-thumbs"></div>
+        <button id="btn-likes-grid" class="btn-primary btn-sm pf-grid-btn" style="display:none">Показать всё в сетке</button>
+        <button id="btn-likes-download" class="btn-primary btn-sm pf-grid-btn" style="display:none">Скачать все лайки</button>
+        <button id="btn-likes-more" class="btn-primary btn-sm pf-more" style="display:none">Показать ещё</button>
+      </div>
+      <div class="profile-tab-content" id="tab-hides">
+        <p class="profile-empty" id="hides-empty"><span class="empty-icon"><i data-lucide="eyeOff" data-size="26"></i></span><br>Нет скрытых</p>
+        <div id="hides-list" class="profile-thumbs"></div>
+        <button id="btn-hides-grid" class="btn-primary btn-sm pf-grid-btn" style="display:none">Показать всё в сетке</button>
+        <button id="btn-hides-more" class="btn-primary btn-sm pf-more" style="display:none">Показать ещё</button>
+      </div>
+      <div class="profile-tab-content" id="tab-tags">
+        <div class="tag-filter-row">
+          <input type="text" id="tag-filter" placeholder="Поиск по тегам..." spellcheck="false">
+          <span id="tag-filter-count" class="tag-filter-count"></span>
+        </div>
+        <div class="tag-mgmt">
+          <div class="tag-mgmt-head">
+            <h3>Избранные теги <span class="hint">(+) в поиске</span></h3>
+            <button class="btn-clear-tags" id="btn-clear-fav-tags">Очистить</button>
+          </div>
+          <div class="tag-preset-row">
+            <span class="tag-preset-label">Избр:</span>
+            <select class="tag-preset-select" id="fav-preset-select" title="Заменить избранные теги набором из пресета"><option value="">Станд. (текущие)</option></select>
+          </div>
+          <div class="tag-input-row">
+            <input type="text" id="fav-tag-input" placeholder="Добавить избранный тег..." spellcheck="false">
+            <button id="btn-add-fav-tag" class="btn-primary btn-sm" title="Добавить"><i data-lucide="plus" data-size="13"></i></button>
+            <div id="fav-suggestions" class="suggestions"></div>
+          </div>
+          <div id="fav-tags-list" class="profile-tag-list"></div>
+        </div>
+        <div class="tag-mgmt">
+          <div class="tag-mgmt-head">
+            <h3>Скрытые теги <span class="hint">(-) в поиске</span></h3>
+            <button class="btn-clear-tags" id="btn-clear-hidden-tags">Очистить</button>
+          </div>
+          <div class="tag-preset-row">
+            <span class="tag-preset-label">Скрыт:</span>
+            <select class="tag-preset-select" id="hidden-preset-select" title="Заменить скрытые теги набором из пресета"><option value="">Станд. (текущие)</option></select>
+          </div>
+          <div class="tag-input-row">
+            <input type="text" id="hidden-tag-input" placeholder="Добавить скрытый тег..." spellcheck="false">
+            <button id="btn-add-hidden-tag" class="btn-primary btn-sm" title="Добавить"><i data-lucide="plus" data-size="13"></i></button>
+            <div id="profile-suggestions" class="suggestions"></div>
+          </div>
+          <div id="hidden-tags-list" class="profile-tag-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-panel" class="settings-panel hidden">
+    <div class="panel-resize" aria-hidden="true"></div>
+    <div class="profile-hero">
+      <div class="profile-hero-glow" aria-hidden="true"></div>
+      <div class="profile-hero-top">
+        <span class="profile-panel-title">Настройки</span>
+        <button class="btn-icon" id="settings-close"><i data-lucide="x" data-size="18"></i></button>
+      </div>
+    </div>
+    <div class="profile-tabs">
+      <button class="profile-tab active" data-tab="appearance">Оформление</button>
+      <button class="profile-tab" data-tab="network">Сеть</button>
+      <button class="profile-tab" data-tab="download">Скачивание</button>
+      <button class="profile-tab" data-tab="maintenance">Обслуживание</button>
+    </div>
+    <div class="profile-body">
+      <div class="profile-tab-content active" id="stab-appearance">
+        <label class="setting-group">
+          <span class="setting-label">Тема</span>
+          <select id="setting-theme" class="tag-preset-select">
+            <option value="dark">Тёмная</option>
+            <option value="light">Светлая</option>
+          </select>
+        </label>
+        <label class="setting-group">
+          <span class="setting-label">Плотность сетки</span>
+          <select id="setting-grid" class="tag-preset-select">
+            <option value="auto">Авто</option>
+            <option value="2">2 колонки</option>
+            <option value="3">3 колонки</option>
+            <option value="4">4 колонки</option>
+            <option value="5">5 колонок</option>
+            <option value="6">6 колонок</option>
+          </select>
+        </label>
+        <div class="setting-group">
+          <span class="setting-label">Акцентный цвет</span>
+          <div class="accent-row" id="setting-accent">
+            <button class="accent-swatch" data-accent="purple" style="--sw:#a78bfa" title="Фиолетовый"></button>
+            <button class="accent-swatch" data-accent="blue" style="--sw:#60a5fa" title="Синий"></button>
+            <button class="accent-swatch" data-accent="cyan" style="--sw:#22d3ee" title="Бирюзовый"></button>
+            <button class="accent-swatch" data-accent="green" style="--sw:#34d399" title="Зелёный"></button>
+            <button class="accent-swatch" data-accent="pink" style="--sw:#f472b6" title="Розовый"></button>
+            <button class="accent-swatch" data-accent="orange" style="--sw:#fb923c" title="Оранжевый"></button>
+            <button class="accent-swatch" data-accent="red" style="--sw:#f87171" title="Красный"></button>
+          </div>
+        </div>
+      </div>
+      <div class="profile-tab-content" id="stab-network">
+        <label class="setting-group">
+          <span class="setting-label">Источник постов</span>
+          <select id="setting-provider" class="tag-preset-select"></select>
+          <span class="setting-hint">Сайт, с которого ищутся и скачиваются посты</span>
+        </label>
+        <div class="setting-group">
+          <span class="setting-label">API ключи <span class="hint">каждый ключ со своим user_id, чередуются</span></span>
+          <div id="api-keys-list"></div>
+          <button type="button" class="btn-primary btn-sm" id="btn-add-api-key"><i data-lucide="plus" data-size="14"></i> Добавить API</button>
+        </div>
+        <label class="setting-group">
+          <span class="setting-label">Прокси (SOCKS5)</span>
+          <input type="text" id="setting-proxy" placeholder="1.2.3.4:1080">
+          <span class="setting-hint">SOCKS5 прокси для обхода блокировок</span>
+        </label>
+      </div>
+      <div class="profile-tab-content" id="stab-download">
+        <label class="setting-group">
+          <span class="setting-label">Путь сохранения</span>
+          <input type="text" id="setting-savepath" placeholder="data/posts">
+        </label>
+        <label class="setting-group">
+          <span class="setting-label">Одновременных загрузок</span>
+          <input type="number" id="setting-concurrent" min="1" max="10">
+        </label>
+      </div>
+      <div class="profile-tab-content" id="stab-maintenance">
+        <label class="setting-group">
+          <span class="setting-label">База данных</span>
+          <button id="btn-clean-db" class="btn-primary btn-sm">Очистить нескачанные</button>
+        </label>
+        <div class="setting-group">
+          <span class="setting-label">Дубликаты</span>
+          <button id="btn-find-dups" class="btn-primary btn-sm">Найти дубликаты</button>
+          <span id="dups-info" class="dups-info hidden"></span>
+          <button id="btn-clean-dups" class="btn-primary btn-sm hidden">Удалить дубликаты</button>
+        </div>
+      </div>
+    </div>
+    <div class="settings-foot">
+      <button id="btn-save-settings" class="btn-primary">Сохранить</button>
+    </div>
+  </div>
+
+  <div id="stats-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-head">
+        <h2>Статистика</h2>
+        <button class="btn-icon" id="stats-close"><i data-lucide="x" data-size="18"></i></button>
+      </div>
+      <div id="stats-body" class="stats-body"></div>
+    </div>
+  </div>
+
+  <div id="queue-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-head">
+        <h2>Очередь загрузок</h2>
+        <button class="btn-icon" id="queue-close"><i data-lucide="x" data-size="18"></i></button>
+      </div>
+      <div id="queue-body" class="queue-body"></div>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-backdrop" id="confirm-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-head">
+        <h2 id="confirm-title">Подтверждение</h2>
+        <button class="btn-icon" id="confirm-close"><i data-lucide="x" data-size="18"></i></button>
+      </div>
+      <div class="confirm-body"><p id="confirm-message"></p></div>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="btn-primary btn-sm">Отмена</button>
+        <button id="confirm-ok" class="btn-primary btn-sm">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="help-modal" class="modal help-modal hidden">
+    <div class="modal-backdrop" id="help-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-head">
+        <h2>Горячие клавиши</h2>
+        <button class="btn-icon" id="help-close"><i data-lucide="x" data-size="18"></i></button>
+      </div>
+      <div id="help-body" class="help-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <div id="auth-overlay" class="auth-overlay hidden">
+    <div class="auth-chips" aria-hidden="true">
+      <span class="auth-chip c1">ключ</span>
+      <span class="auth-chip c2">лайки</span>
+      <span class="auth-chip c3">пресеты</span>
+      <span class="auth-chip c4">пароль</span>
+      <span class="auth-chip c5">загрузки</span>
+      <span class="auth-chip c6">сессия</span>
+      <span class="auth-chip c7">теги</span>
+      <span class="auth-chip c8">кэш</span>
+    </div>
+    <div class="auth-card">
+      <div class="auth-topline">
+        <span class="auth-name">better<span class="auth-name-34">34</span><span class="auth-name-tm">™</span></span>
+      </div>
+      <h2 id="auth-title">Создание аккаунта</h2>
+      <form id="auth-form" class="auth-form" novalidate>
+        <div class="auth-fields">
+          <div class="auth-field">
+            <label class="auth-label" for="auth-username">Логин</label>
+            <div class="auth-input has-ico">
+              <i class="auth-ico" data-lucide="user"></i>
+              <input type="text" id="auth-username" autocomplete="username" maxlength="24" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="например, max_2026">
+            </div>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="auth-password">Пароль</label>
+            <div class="auth-input">
+              <input type="password" id="auth-password" autocomplete="current-password" placeholder="минимум 6 символов">
+              <button type="button" class="auth-pw-toggle" data-target="auth-password" aria-label="Показать пароль">
+                <i data-lucide="eye"></i>
+              </button>
+            </div>
+            <div class="auth-meter" id="auth-meter" data-level="0"><i></i><i></i><i></i><i></i></div>
+          </div>
+          <div class="auth-field" id="auth-pw2-field">
+            <label class="auth-label" for="auth-password2">Повторите пароль</label>
+            <div class="auth-input">
+              <input type="password" id="auth-password2" autocomplete="new-password" placeholder="повторите пароль">
+              <button type="button" class="auth-pw-toggle" data-target="auth-password2" aria-label="Показать пароль">
+                <i data-lucide="eye"></i>
+              </button>
+            </div>
+            <span class="auth-hint" id="auth-hint"></span>
+          </div>
+        </div>
+        <div id="auth-error" class="auth-error"></div>
+        <button id="auth-submit" type="submit" class="btn-auth">Создать аккаунт</button>
+      </form>
+      <div class="auth-divider"><span>или</span></div>
+      <button id="auth-toggle" class="auth-toggle"></button>
+    </div>
+  </div>
+
+  <div id="batch-bar" class="batch-bar">
+    <span id="batch-count" class="batch-count">Выбрано: 0</span>
+    <button class="btn-primary btn-sm" id="batch-download"><i data-lucide="download" data-size="14"></i> Скачать</button>
+    <button class="btn-primary btn-sm" id="batch-hide"><i data-lucide="eyeOff" data-size="14"></i> Скрыть</button>
+    <button class="btn-icon btn-icon-sm" id="batch-clear" title="Снять выделение"><i data-lucide="x" data-size="16"></i></button>
+  </div>
+
+  <footer id="footer">
+    <span class="keys-hint">WASD / стрелки навигация · Enter открыть · X скачать · Q лайк · E скрыть · F полный экран · Z зум · R инверсия · L локальные · / поиск · Пробел слайдшоу · ESC закрыть</span>
+    <span id="status-text">готово</span>
+    <span id="build-version" title="Сборка">__VERSION__</span>
+    <div id="dl-progress" class="dl-progress hidden"><div class="dl-progress-bar" id="dl-progress-bar"></div><span id="dl-progress-text"></span><button class="btn-icon btn-icon-sm" id="dl-pause" title="Пауза"><i data-lucide="pause" data-size="12" data-solid="1"></i></button><button class="btn-icon btn-icon-sm hidden" id="dl-resume" title="Продолжить"><i data-lucide="play" data-size="12" data-solid="1"></i></button></div>
+  </footer>
+</div>
+
+<script src="/static/js/utils.js?__VERSION__"></script>
+<script src="/static/js/api.js?__VERSION__"></script>
+<script src="/static/js/state.js?__VERSION__"></script>
+<script src="/static/js/toast.js?__VERSION__"></script>
+<script src="/static/js/dialogs.js?__VERSION__"></script>
+<script src="/static/js/search.js?__VERSION__"></script>
+<script src="/static/js/viewer.js?__VERSION__"></script>
+<script src="/static/js/feed.js?__VERSION__"></script>
+<script src="/static/js/keyboard.js?__VERSION__"></script>
+<script src="/static/js/profile.js?__VERSION__"></script>
+<script src="/static/js/settings.js?__VERSION__"></script>
+<script src="/static/js/app.js?__VERSION__"></script>
+<script src="/static/js/auth.js?__VERSION__"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  });
+}
+</script>
+</body>
+</html>

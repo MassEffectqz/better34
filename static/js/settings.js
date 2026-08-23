@@ -1,0 +1,206 @@
+App.toggleSettings = function () {
+  this.state.settingsOpen = !this.state.settingsOpen;
+  if (this.state.settingsOpen && this.state.profileOpen) {
+    this.state.profileOpen = false;
+    this.els.profilePanel.classList.add('hidden');
+  }
+  this.els.settingsPanel.classList.toggle('hidden', !this.state.settingsOpen);
+  this._syncPanels();
+  if (this.state.settingsOpen) { this.applyPanelWidth(); this.syncCustomControls(); }
+};
+
+App.syncCustomControls = function () {
+  if (this.els.settingTheme) this.els.settingTheme.value = this.state.theme || 'dark';
+  if (this.els.settingGrid) this.els.settingGrid.value = this.state.gridCols === null ? 'auto' : String(this.state.gridCols);
+  this.renderAccent();
+};
+
+App.renderAPIKeys = function (keys) {
+  const listEl = _('api-keys-list');
+  if (!listEl) return;
+  const list = (keys && keys.length) ? keys.map(k => ({ ...k })) : [{ name: '', api_key: '', user_id: '' }];
+  this.state.apiKeys = list;
+  listEl.innerHTML = '';
+  list.forEach((k, i) => {
+    const row = document.createElement('div');
+    row.className = 'api-key-row';
+    row.innerHTML = `
+      <input type="text" class="api-key-name" placeholder="Название" value="${esc(k.name || '')}">
+      <input type="password" class="api-key-value" placeholder="API ключ" value="${esc(k.api_key || '')}" spellcheck="false">
+      <input type="text" class="api-key-uid" placeholder="user_id" value="${esc(k.user_id || '')}" spellcheck="false">
+      <button type="button" class="btn-icon btn-icon-sm" title="Удалить">${icon('x', 13)}</button>`;
+    row.querySelector('.api-key-name').addEventListener('input', e => { list[i].name = e.target.value; });
+    row.querySelector('.api-key-value').addEventListener('input', e => { list[i].api_key = e.target.value; });
+    row.querySelector('.api-key-uid').addEventListener('input', e => { list[i].user_id = e.target.value; });
+    row.querySelector('.btn-icon').addEventListener('click', () => {
+      list.splice(i, 1);
+      this.renderAPIKeys(list);
+    });
+    listEl.appendChild(row);
+  });
+};
+
+App.renderProviderOptions = function (providers) {
+  const sel = this.els.settingProvider;
+  if (!sel) return;
+  const list = (providers && providers.length)
+    ? providers
+    : [{ value: 'rule34', name: 'rule34.xxx' }, { value: 'gelbooru', name: 'Gelbooru' }];
+  const prev = sel.value;
+  sel.innerHTML = list.map(p =>
+    `<option value="${esc(p.value)}">${esc(p.name)}</option>`
+  ).join('');
+  if (prev) sel.value = prev;
+};
+
+App.loadSettings = async function () {
+  try {
+    const d = await API.get('/settings');
+    this.renderProviderOptions(d.providers);
+    if (this.els.settingProvider) this.els.settingProvider.value = d.provider || 'rule34';
+    this.state.activeProvider = d.provider || 'rule34';
+    this.state.providers = d.providers || [];
+    this.state.maxQueryLen = d.max_query_len || 3800;
+    this.renderProviderBadge();
+    this.renderAPIKeys(d.api_keys || []);
+    this.els.settingProxy.value = d.proxy_url || '';
+    this.els.settingSavepath.value = d.save_path || 'data/posts';
+    this.els.settingConcurrent.value = d.concurrent_downloads || 3;
+    this.state.thumbSize = d.thumb_size || 300;
+    this.state.autoDownload = d.auto_download || false;
+    this.state.minId = d.min_id || null;
+    this.state.renameTemplate = d.rename_template || '';
+  } catch (err) {
+    console.error('Failed to load settings:', err);
+  }
+};
+
+App.saveSettings = async function () {
+  try {
+    const apiKeys = (this.state.apiKeys || []).filter(k => k.api_key).map(k => ({ name: k.name || '', api_key: k.api_key, user_id: k.user_id || '', ...(k.provider ? { provider: k.provider } : {}) }));
+    const providerChanged = this.els.settingProvider && this.els.settingProvider.value !== this.state.activeProvider;
+    await API.post('/settings', {
+      api_keys: apiKeys,
+      proxy_url: this.els.settingProxy.value, save_path: this.els.settingSavepath.value,
+      concurrent_downloads: parseInt(this.els.settingConcurrent.value) || 3,
+      thumb_size: this.state.thumbSize || 300,
+      auto_download: !!this.state.autoDownload,
+      min_id: this.state.minId || null,
+      rename_template: this.state.renameTemplate || '',
+      provider: this.els.settingProvider ? this.els.settingProvider.value : undefined,
+    });
+    if (this.els.settingProvider) this.state.activeProvider = this.els.settingProvider.value;
+    if (providerChanged) {
+      API.invalidate('/');
+      this.loadPosts(true, null, true);
+    }
+    this.showToast('Настройки сохранены');
+    this.toggleSettings();
+  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+};
+
+App.renderProviderBadge = function () {
+  const label = document.getElementById('provider-badge-label');
+  if (!label) return;
+  const list = this.state.providers && this.state.providers.length
+    ? this.state.providers
+    : [{ value: 'rule34', name: 'rule34.xxx' }, { value: 'gelbooru', name: 'Gelbooru' }];
+  const active = list.find(p => p.value === this.state.activeProvider);
+  label.textContent = active ? active.name : this.state.activeProvider;
+  const menu = document.getElementById('provider-menu-list');
+  if (menu) {
+    menu.innerHTML = list.map(p =>
+      `<button type="button" class="provider-menu-item${p.value === this.state.activeProvider ? ' active' : ''}" data-value="${esc(p.value)}">${esc(p.name)}</button>`
+    ).join('');
+  }
+};
+
+App.switchProvider = async function (value) {
+  if (!value || value === this.state.activeProvider) return;
+  try {
+    await API.post('/settings', { provider: value });
+    this.state.activeProvider = value;
+    if (this.els.settingProvider) this.els.settingProvider.value = value;
+    this.renderProviderBadge();
+    API.invalidate('/');
+    this.loadPosts(true, null, true);
+    this.showToast(`Источник: ${value}`, 'success');
+  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+};
+
+App.showStats = async function () {
+  if (this.state.viewerOpen) this.closeViewer();
+  try {
+    const [d, tagD] = await Promise.all([API.get('/stats'), API.get('/tag-stats')]);
+    const tags = tagD.tags || {};
+    const tagHtml = Object.entries(tags).slice(0, 30).map(([t, c]) =>
+      `<span class="stat-tag"><span class="stat-tag-name">${esc(t)}</span><span class="stat-tag-count">${c}</span></span>`
+    ).join('');
+    this.els.statsBody.innerHTML = `
+      <div class="stat-cards"><div class="stat-card"><div class="stat-value">${d.total_searched || 0}</div><div class="stat-label">Найдено</div></div>
+      <div class="stat-card"><div class="stat-value">${d.total_downloaded || 0}</div><div class="stat-label">Скачано</div></div>
+      <div class="stat-card"><div class="stat-value">${d.thumbnails || 0}</div><div class="stat-label">Миниатюр</div></div>
+      <div class="stat-card"><div class="stat-value">${d.disk_usage_mb || '0'}</div><div class="stat-label">Занято (MB)</div></div></div>
+      <h3 class="stat-tags-title">Топ теги (скачанные)</h3>
+      <div class="stat-tags">${tagHtml || '<p style="color:var(--text-dim);font-size:.8rem">Нет данных</p>'}</div>`;
+    this.els.statsModal.classList.remove('hidden');
+  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+};
+
+App.hideStats = function () { this.els.statsModal.classList.add('hidden'); };
+
+App.cleanDB = async function () {
+  const ok = await this.confirmDialog({
+    title: 'Очистка базы данных',
+    message: 'Удалить все <b>нескачанные</b> записи из базы? Скачанные посты не пострадают.',
+    okText: 'Очистить',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await API.post('/db/clean');
+    this.showToast(`База очищена: ${r.deleted} записей удалено`, 'success');
+  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+};
+
+App.findDuplicates = async function () {
+  const btn = this.els.btnFindDups;
+  const info = this.els.dupsInfo;
+  if (btn) { btn.disabled = true; btn.textContent = 'Поиск…'; }
+  if (info) info.classList.add('hidden');
+  this.els.btnCleanDups.classList.add('hidden');
+  try {
+    const d = await API.get('/dups');
+    const groups = (d && d.dups) || [];
+    const total = groups.reduce((s, g) => s + Math.max(0, (g.files || []).length - 1), 0);
+    if (!groups.length) {
+      if (info) { info.textContent = 'Дубликаты не найдены'; info.classList.remove('error'); info.classList.remove('hidden'); }
+      this._dupsTotal = 0;
+      return;
+    }
+    if (info) { info.textContent = `Найдено: ${total} дубликатов в ${groups.length} группах`; info.classList.add('error'); info.classList.remove('hidden'); }
+    this._dupsTotal = total;
+    this.els.btnCleanDups.textContent = `Удалить ${total} дубликатов`;
+    this.els.btnCleanDups.classList.remove('hidden');
+  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Найти дубликаты'; }
+};
+
+App.cleanDuplicates = async function () {
+  const total = this._dupsTotal || 0;
+  if (!total) { this.els.btnCleanDups.classList.add('hidden'); return; }
+  const ok = await this.confirmDialog({
+    title: 'Удаление дубликатов',
+    message: `Удалить <b>${total}</b> файлов-дубликатов? Останется по одной копии каждого файла. Действие необратимо.`,
+    okText: 'Удалить',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await API.post('/dups/clean', null, { 'X-Confirm-Dupes': '1' });
+    this.showToast(`Удалено файлов: ${r.count || 0}`, 'success');
+    this.els.dupsInfo.classList.add('hidden');
+    this.els.btnCleanDups.classList.add('hidden');
+    this._dupsTotal = 0;
+  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+};

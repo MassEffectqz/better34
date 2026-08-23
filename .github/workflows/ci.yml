@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Vet
+        run: go vet ./...
+      # Локально race-детектор недоступен (нет gcc) — гонки ловим только тут.
+      - name: Test (race)
+        run: go test -race ./...
+
+  js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Frontend tests
+        shell: bash
+        run: |
+          status=0
+          for f in static/js/tests/*.test.js; do
+            echo "::group::$f"
+            node "$f" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
