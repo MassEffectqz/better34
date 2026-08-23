@@ -1,3 +1,4 @@
+import { App } from './state.js';
 App.showToast = function (msg, type) {
   const el = this.els.toast; el.textContent = msg; el.className = 'toast';
   el.style.borderColor = type === 'error' ? 'var(--error)' : type === 'success' ? 'var(--success)' : 'var(--border)';

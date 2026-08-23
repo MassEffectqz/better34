@@ -1,4 +1,4 @@
-const API = {
+export const API = {
   _cache: {},
   _inflight: {},
   _inflightCtrl: {},
@@ -16,8 +16,9 @@ const API = {
       }
     });
   },
+  /** @returns {Record<string, string>} */
   _headers() {
-    const h = {};
+    const h = /** @type {Record<string, string>} */ ({});
     if (this._token === null) {
       const m = document.querySelector('meta[name="briefly-token"]');
       this._token = m ? m.getAttribute('content') || '' : '';

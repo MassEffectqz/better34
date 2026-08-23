@@ -1,7 +1,7 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
+// zz_adversarial_suggest_stale.test.js — F4: устаревший ответ /suggest не затирает свежий.
+import { App } from '../state.js';
+import { API } from '../api.js';
+await import('../search.js');
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
@@ -33,26 +33,17 @@ function makeEl() {
   };
 }
 
-global.window = {};
-global.localStorage = {
+globalThis.window = {};
+globalThis.localStorage = {
   _s: {},
   getItem(k) { return this._s[k] != null ? this._s[k] : null; },
   setItem(k, v) { this._s[k] = String(v); },
   removeItem(k) { delete this._s[k]; },
 };
-global.document = {
+globalThis.document = {
   querySelector() { return null; },
   createElement: () => makeEl(),
 };
-function icon(name, size, solid) { return `<svg data-icon="${name}"></svg>` + (solid ? '-solid' : ''); }
-global.icon = icon;
-function esc(s) { return String(s); }
-global.esc = esc;
-
-const App = {};
-global.App = App;
-const searchPath = path.join(__dirname, '..', 'search.js');
-eval(fs.readFileSync(searchPath, 'utf8'));
 
 const flush = () => new Promise(res => setTimeout(res, 10));
 
@@ -74,19 +65,16 @@ console.log('suggestProfileTag stale race (F4) tests\n');
     profileSuggestions: { classList: makeClassList(), innerHTML: '' },
   };
 
-  // контролируемые ответы /suggest по порядку вызовов
+  // контролируемые ответы /suggest по порядку вызовов (патчим реальный API)
   const calls = [];
-  const API = {
-    async get(url, opts) {
-      const rec = { url, resolvers: [] };
-      rec.promise = new Promise(res => rec.resolvers.push(res));
-      calls.push(rec);
-      return rec.promise;
-    },
-    async post() { return {}; },
-    invalidate() {},
+  API.get = async function (url) {
+    const rec = { url, resolvers: [] };
+    rec.promise = new Promise(res => rec.resolvers.push(res));
+    calls.push(rec);
+    return rec.promise;
   };
-  global.API = API;
+  API.post = async function () { return {}; };
+  API.invalidate = function () {};
 
   // пользователь печатает «cd» ПОСЛЕ «ab»; ответ по «ab» приходит ПОЗЖЕ
   a.els.favTagInput.value = 'ab';
@@ -109,5 +97,5 @@ console.log('suggestProfileTag stale race (F4) tests\n');
     latest, 'старый ответ перезаписал подсказки: ' + favSuggestions.children.map(c => c.textContent).join(','));
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
-  process.exit(failed ? 1 : 0);
+  if (failed) throw new Error(`${failed} checks failed`);
 })();

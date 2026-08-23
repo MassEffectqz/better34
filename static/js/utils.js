@@ -108,9 +108,12 @@ function renderLucideIcons(root) {
     const tmp = document.createElement('div');
     tmp.innerHTML = svg;
     const node = tmp.firstChild;
-    if (el.className) node.setAttribute('class', el.className);
+    if (el.className) (/** @type {Element} */ (node)).setAttribute('class', el.className);
     el.replaceWith(node);
   });
 }
 
-renderLucideIcons();
+// Единая точка входа браузера вызывает renderLucideIcons() при инициализации:
+// на верхнем уровне модуля DOM-обращений быть не должно (import-safe для тестов).
+export { _, esc, go, icon, renderLucideIcons, getHistory, saveHistory, addHistory,
+         removeHistory, togglePinHistory, clearHistory };

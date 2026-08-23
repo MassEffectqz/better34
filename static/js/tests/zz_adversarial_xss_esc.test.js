@@ -1,7 +1,5 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
+// zz_adversarial_xss_esc.test.js — F7: esc() экранирует кавычки (атрибутный контекст).
+import { esc } from '../utils.js';
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
@@ -9,23 +7,10 @@ function check(name, cond, detail) {
   else { failed++; console.log(' FAIL - ' + name + (detail ? ' | ' + detail : '')); }
 }
 
-function makeClassList(initial) {
-  const s = new Set(initial || []);
-  return {
-    contains(c) { return s.has(c); },
-    add(c) { s.add(c); },
-    remove(c) { s.delete(c); },
-    toggle(c, force) {
-      const on = force != null ? !!force : !s.has(c);
-      if (on) s.add(c); else s.delete(c);
-      return on;
-    },
-  };
-}
+console.log('esc() attribute-context (F7) tests\n');
 
 // document.createElement моделирует БРАУЗЕРНОЕ экранирование текстового узла:
-// &, <, > — экранируются, кавычки " — НЕТ (в тексте элемента кавычки не
-// экранируются ни одним браузером).
+// &, <, > — экранируются, кавычки " — НЕТ.
 function makeEscDiv() {
   const el = { innerHTML: '' };
   const escText = (s) => String(s)
@@ -38,30 +23,17 @@ function makeEscDiv() {
   });
   return el;
 }
-
-global.window = {};
-global.localStorage = {
-  _s: {},
-  getItem(k) { return this._s[k] != null ? this._s[k] : null; },
-  setItem(k, v) { this._s[k] = String(v); },
-  removeItem(k) { delete this._s[k]; },
-};
-global.document = {
+globalThis.document = {
   createElement() { return makeEscDiv(); },
   querySelectorAll() { return []; },
 };
-
-const utilsPath = path.join(__dirname, '..', 'utils.js');
-(0, eval)(fs.readFileSync(utilsPath, 'utf8'));
-
-console.log('esc() attribute-context (F7) tests\n');
 
 check('esc экранирует &', esc('a&b') === 'a&amp;b', esc('a&b'));
 check('esc экранирует < и >', esc('<b>') === '&lt;b&gt;', esc('<b>'));
 
 // F7: esc() используется в АТРИБУТНЫХ контекстах:
-//   state.js:886  data-query="${esc(p.query || '')}"
-//   profile.js:567 data-query="${esc(pr.query || '')}"
+//   state.js  data-query="${esc(p.query || '')}"
+//   profile.js data-query="${esc(pr.query || '')}"
 // Кавычки в тексте элемента не экранируются → data-query="..." можно
 // «выломать», вставив атрибут-обработчик.
 const payload = 'x" onmouseover="alert(1)';
@@ -69,4 +41,4 @@ check('F7: esc экранирует двойные кавычки (атрибу�
   esc(payload).indexOf('&quot;') >= 0, 'esc(' + JSON.stringify(payload) + ') = ' + JSON.stringify(esc(payload)));
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
-process.exit(failed ? 1 : 0);
+if (failed) throw new Error(`${failed} checks failed`);

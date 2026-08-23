@@ -1,34 +1,25 @@
-'use strict';
+// pan.test.js — rAF-цикл панорамирования в зуме (viewer.js).
+import { App } from '../state.js';
+await import('../viewer.js');
+await import('../video.js');
 
-const fs = require('fs');
-const path = require('path');
+const pending = new Map();
+let rafCounter = 0;
+globalThis.requestAnimationFrame = (cb) => { const id = ++rafCounter; pending.set(id, cb); return id; };
+globalThis.cancelAnimationFrame = (id) => { pending.delete(id); };
+globalThis.window = {};
+globalThis.localStorage = { _s: {}, getItem(k) { return this._s[k] != null ? this._s[k] : null; }, setItem(k, v) { this._s[k] = String(v); } };
+globalThis.document = {
+  addEventListener() {}, removeEventListener() {},
+  getElementById() { return null; }, querySelector() { return null; },
+  createElement() { return { style: {}, addEventListener() {}, appendChild() {}, innerHTML: '', querySelector() { return null; } }; },
+};
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
   if (cond) { passed++; console.log('  ok  - ' + name); }
   else { failed++; console.log(' FAIL - ' + name + (detail ? ' | ' + detail : '')); }
 }
-
-const pending = new Map(); 
-let rafCounter = 0;
-global.requestAnimationFrame = (cb) => { const id = ++rafCounter; pending.set(id, cb); return id; };
-global.cancelAnimationFrame = (id) => { pending.delete(id); };
-global.window = {};
-global.localStorage = { _s: {}, getItem(k) { return this._s[k] != null ? this._s[k] : null; }, setItem(k, v) { this._s[k] = String(v); } };
-global.document = {
-  addEventListener() {}, removeEventListener() {},
-  getElementById() { return null; }, querySelector() { return null; },
-  createElement() { return { style: {}, addEventListener() {}, appendChild() {}, innerHTML: '', querySelector() { return null; } }; },
-};
-function icon(name, size, solid) { return `<svg data-icon="${name}"></svg>` + (solid ? '-solid' : ''); }
-global.icon = icon;
-
-const App = {};
-global.App = App;
-const viewerPath = path.join(__dirname, '..', 'viewer.js');
-eval(fs.readFileSync(viewerPath, 'utf8'));
-// video.js добавляет видео-методы на App (renderViewer их вызывает).
-eval(fs.readFileSync(path.join(__dirname, '..', 'video.js'), 'utf8'));
 
 App.state = { viewerOpen: true };
 App.els = {
@@ -41,14 +32,14 @@ App.els = {
 let panCount = 0;
 App.panBy = function () { panCount++; };
 
-function runOneFrame() { 
+function runOneFrame() {
   for (const [id, cb] of Array.from(pending.entries())) { pending.delete(id); cb(); return; }
 }
 function flushAll() { while (pending.size) runOneFrame(); }
 function reset() {
   App._cancelPan();
   App._zoomActive = true; App._zoomScale = 2; App._zoomTx = 0; App._zoomTy = 0;
-  App.state.viewerOpen = true; 
+  App.state.viewerOpen = true;
   panCount = 0;
   flushAll();
 }
@@ -112,4 +103,4 @@ App.stopPan(App.DIR.RIGHT);
 flushAll();
 
 console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+if (failed) throw new Error(`${failed} checks failed`);

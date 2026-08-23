@@ -1,7 +1,8 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
+// fullscreen_skip_reqs.test.js — F-режим отменяет запросы похожих/счётчиков.
+import { App } from '../state.js';
+import { API } from '../api.js';
+await import('../viewer.js');
+await import('../video.js');
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
@@ -23,14 +24,14 @@ function makeClassList(initial) {
   };
 }
 
-global.window = {};
-global.localStorage = {
+globalThis.window = {};
+globalThis.localStorage = {
   _s: {},
   getItem(k) { return this._s[k] != null ? this._s[k] : null; },
   setItem(k, v) { this._s[k] = String(v); },
   removeItem(k) { delete this._s[k]; },
 };
-global.document = {
+globalThis.document = {
   addEventListener() {}, removeEventListener() {},
   getElementById() { return null; },
   createElement() {
@@ -40,39 +41,27 @@ global.document = {
       appendChild(c) { this.children.push(c); },
       addEventListener() {},
       querySelector() { return null; },
+      remove() {},
     };
   },
   body: { style: {} },
 };
-global.requestAnimationFrame = () => 1;
-global.cancelAnimationFrame = () => {};
-function esc(s) { return String(s); }
-global.esc = esc;
-function icon(name, size, solid) { return `<svg data-icon="${name}"></svg>` + (solid ? '-solid' : ''); }
-global.icon = icon;
+globalThis.requestAnimationFrame = () => 1;
+globalThis.cancelAnimationFrame = () => {};
 
+// Патчим методы РЕАЛЬНОГО API (модули зовут API.get(...) через свойство).
 const API_CALLS = [];
-const API = {
-  async get(url, opts) {
-    API_CALLS.push(url);
-    if (opts && opts.signal && opts.signal.aborted) {
-      const e = new Error('Aborted');
-      e.name = 'AbortError';
-      throw e;
-    }
-    return {};
-  },
-  async post() { return {}; },
-  invalidate() {},
+API.get = async function (url, opts) {
+  API_CALLS.push(url);
+  if (opts && opts.signal && opts.signal.aborted) {
+    const e = new Error('Aborted');
+    e.name = 'AbortError';
+    throw e;
+  }
+  return {};
 };
-global.API = API;
-
-const App = {};
-global.App = App;
-const viewerPath = path.join(__dirname, '..', 'viewer.js');
-eval(fs.readFileSync(viewerPath, 'utf8'));
-// video.js добавляет видео-методы на App (renderViewer их вызывает).
-eval(fs.readFileSync(path.join(__dirname, '..', 'video.js'), 'utf8'));
+API.post = async function () { return {}; };
+API.invalidate = function () {};
 
 function makeViewerEl() {
   return {

@@ -1,0 +1,22 @@
+{
+  "name": "better34-frontend",
+  "private": true,
+  "type": "module",
+  "description": "Инструменты фронтенда better34: линтер, типо-проверка, тесты, опциональный бандл",
+  "scripts": {
+    "lint": "eslint static/js",
+    "typecheck": "tsc -p .",
+    "test": "node --test \"static/js/tests/*.test.js\"",
+    "build": "esbuild static/js/app.js --bundle --minify --outfile=static/js/dist/app.js --format=esm",
+    "check": "npm run lint && npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "esbuild": "^0.25",
+    "eslint": "^9",
+    "typescript": "^5"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}

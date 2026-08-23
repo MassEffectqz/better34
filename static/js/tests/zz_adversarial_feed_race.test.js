@@ -1,7 +1,7 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
+// zz_adversarial_feed_race.test.js — F2 (префетч страницы), F3 (гонка лент).
+import { App } from '../state.js';
+import { API } from '../api.js';
+await import('../feed.js');
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
@@ -34,47 +34,35 @@ function makeEl() {
   };
 }
 
-global.window = { innerWidth: 1400, innerHeight: 800 };
-global.localStorage = {
+globalThis.window = { innerWidth: 1400, innerHeight: 800 };
+globalThis.localStorage = {
   _s: {},
   getItem(k) { return this._s[k] != null ? this._s[k] : null; },
   setItem(k, v) { this._s[k] = String(v); },
   removeItem(k) { delete this._s[k]; },
 };
-global.document = {
+globalThis.document = {
   addEventListener() {}, removeEventListener() {},
   getElementById() { return null; },
   querySelector() { return null; },
   createElement: () => makeEl(),
   createDocumentFragment: () => ({ children: [], appendChild(c) { this.children.push(c); } }),
 };
-global.requestAnimationFrame = () => 1;
-global.cancelAnimationFrame = () => {};
-function icon(name, size, solid) { return `<svg data-icon="${name}"></svg>` + (solid ? '-solid' : ''); }
-global.icon = icon;
-function esc(s) { return String(s); }
-global.esc = esc;
-
-const App = {};
-global.App = App;
-const feedPath = path.join(__dirname, '..', 'feed.js');
-eval(fs.readFileSync(feedPath, 'utf8'));
+globalThis.requestAnimationFrame = () => 1;
+globalThis.cancelAnimationFrame = () => {};
 
 const flush = () => new Promise(res => setTimeout(res, 10));
 
-// перехват API.get: отдаём промисы по порядку
+// Патчим реальный API.get: промисы резолвятся вручную по порядку.
 let apiCalls = [];
-const API = {
-  async get(url, opts) {
-    const rec = { url, resolvers: [] };
-    rec.promise = new Promise(res => rec.resolvers.push(res));
-    apiCalls.push(rec);
-    return rec.promise;
-  },
-  async post() { return {}; },
-  invalidate() {},
+API.get = async function (url) {
+  const rec = { url, resolvers: [] };
+  rec.promise = new Promise(res => rec.resolvers.push(res));
+  apiCalls.push(rec);
+  return rec.promise;
 };
-global.API = API;
+API.post = async function () { return {}; };
+API.invalidate = function () {};
 
 function makeApp() {
   const a = Object.create(App);
@@ -166,5 +154,5 @@ console.log('feed prefetch/race (F2, F3) tests\n');
     stale === 0, 'в лайках появились посты из старого поиска: ' + a.state.posts.map(p => p.id).join(','));
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
-  process.exit(failed ? 1 : 0);
+  if (failed) throw new Error(`${failed} checks failed`);
 })();

@@ -1,3 +1,6 @@
+import { App } from './state.js';
+import { icon, esc } from './utils.js';
+import { API } from './api.js';
 App._thumbs = App._thumbs || {};
 
 const pfProxy = u => `/api/proxy?url=${encodeURIComponent(u)}`;

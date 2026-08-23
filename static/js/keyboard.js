@@ -1,3 +1,4 @@
+import { App } from './state.js';
 App.onKeydown = function (e) {
   const { viewerOpen, settingsOpen, profileOpen, posts } = this.state;
   const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';

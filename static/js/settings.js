@@ -1,3 +1,6 @@
+import { App } from './state.js';
+import { _, icon, esc } from './utils.js';
+import { API } from './api.js';
 App.toggleSettings = function () {
   this.state.settingsOpen = !this.state.settingsOpen;
   if (this.state.settingsOpen && this.state.profileOpen) {

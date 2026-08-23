@@ -127,12 +127,19 @@ func gzipMiddleware() gin.HandlerFunc {
 	}
 }
 
-func staticCacheMiddleware() gin.HandlerFunc {
+func staticCacheMiddleware() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		// Статика раздаётся с версионированными URL (?v=__VERSION__):
-		// при изменении файлов меняется версия в ссылке — длинный кэш
-		// с immutable безопасен и убирает повторные загрузки CSS/JS.
-		if c.Request.Method == "GET" && strings.HasPrefix(c.Request.URL.Path, "/static/") {
+		if c.Request.Method != "GET" || !strings.HasPrefix(c.Request.URL.Path, "/static/") {
+			c.Next()
+			return
+		}
+		lower := strings.ToLower(c.Request.URL.Path)
+		// JS-модули импортируются по фиксированным URL (?v= есть только у
+		// точки входа) — им ревалидация по Last-Modified (304), остальной
+		// статике с версионированными ссылками — длинный immutable-кэш.
+		if strings.HasSuffix(lower, ".js") || strings.HasSuffix(lower, ".css") {
+			c.Header("Cache-Control", "no-cache")
+		} else {
 			c.Header("Cache-Control", "public, max-age=31536000, immutable")
 		}
 		c.Next()

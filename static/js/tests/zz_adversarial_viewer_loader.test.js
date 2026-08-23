@@ -1,7 +1,7 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
+// zz_adversarial_viewer_loader.test.js — F1: повторный рендер не перезагружает медиа.
+import { App } from '../state.js';
+await import('../viewer.js');
+await import('../video.js');
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
@@ -30,36 +30,26 @@ function makeEl() {
     appendChild(c) { this.children.push(c); },
     addEventListener() {},
     querySelector() { return makeEl(); },
+    remove() {},
   };
 }
 
-global.window = { innerWidth: 1400, innerHeight: 800, location: { href: 'http://localhost/' } };
-global.localStorage = {
+globalThis.window = { innerWidth: 1400, innerHeight: 800, location: { href: 'http://localhost/' } };
+globalThis.localStorage = {
   _s: {},
   getItem(k) { return this._s[k] != null ? this._s[k] : null; },
   setItem(k, v) { this._s[k] = String(v); },
   removeItem(k) { delete this._s[k]; },
 };
-global.document = {
+globalThis.document = {
   addEventListener() {}, removeEventListener() {},
   getElementById() { return null; },
   querySelector() { return null; },
   createElement: () => makeEl(),
   createDocumentFragment: () => ({ children: [], appendChild(c) { this.children.push(c); } }),
 };
-global.requestAnimationFrame = () => 1;
-global.cancelAnimationFrame = () => {};
-function icon(name, size, solid) { return `<svg data-icon="${name}"></svg>` + (solid ? '-solid' : ''); }
-global.icon = icon;
-function esc(s) { return String(s); }
-global.esc = esc;
-
-const App = {};
-global.App = App;
-const viewerPath = path.join(__dirname, '..', 'viewer.js');
-eval(fs.readFileSync(viewerPath, 'utf8'));
-// video.js добавляет видео-методы на App (renderViewer их вызывает).
-eval(fs.readFileSync(path.join(__dirname, '..', 'video.js'), 'utf8'));
+globalThis.requestAnimationFrame = () => 1;
+globalThis.cancelAnimationFrame = () => {};
 
 console.log('viewer loader (F1) tests\n');
 
@@ -133,4 +123,4 @@ check('F1: повторный рендер не должен добавлять 
   first.stats().loadListeners === 2, 'loadListeners=' + first.stats().loadListeners);
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
-process.exit(failed ? 1 : 0);
+if (failed) throw new Error(`${failed} checks failed`);

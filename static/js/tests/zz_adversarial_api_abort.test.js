@@ -1,7 +1,5 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
+// zz_adversarial_api_abort.test.js — F5: дедуп GET + разделяемая отмена.
+import { API } from '../api.js';
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
@@ -9,21 +7,21 @@ function check(name, cond, detail) {
   else { failed++; console.log(' FAIL - ' + name + (detail ? ' | ' + detail : '')); }
 }
 
-global.window = {};
-global.localStorage = {
+globalThis.window = {};
+globalThis.localStorage = {
   _s: {},
   getItem(k) { return this._s[k] != null ? this._s[k] : null; },
   setItem(k, v) { this._s[k] = String(v); },
   removeItem(k) { delete this._s[k]; },
 };
-global.document = {
+globalThis.document = {
   querySelector() { return null; },
 };
 
 // fetch-stub: запросы висят, пока их не резолвят; abort сигнала → reject(AbortError)
 let fetchCalls = 0;
 const pendingFetches = [];
-global.fetch = (url, opts) => {
+globalThis.fetch = (url, opts) => {
   fetchCalls++;
   return new Promise((resolve, reject) => {
     const rec = { url, resolve, reject, signal: opts.signal };
@@ -36,9 +34,6 @@ global.fetch = (url, opts) => {
     pendingFetches.push(rec);
   });
 };
-
-const apiPath = path.join(__dirname, '..', 'api.js');
-(0, eval)(fs.readFileSync(apiPath, 'utf8') + '\n;globalThis.API = API;');
 
 console.log('API.get abort dedup (F5) tests\n');
 
@@ -67,5 +62,5 @@ console.log('API.get abort dedup (F5) tests\n');
     resB && resB.posts, 'resB=' + JSON.stringify(resB) + ' (второй вызывающий потерял данные из-за чужого abort)');
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
-  process.exit(failed ? 1 : 0);
+  if (failed) throw new Error(`${failed} checks failed`);
 })();

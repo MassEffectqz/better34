@@ -14,3 +14,6 @@ briefly.exe
 .playwright-mcp/
 
 node_modules/
+
+# Бандл esbuild (генерируется npm run build)
+static/js/dist/

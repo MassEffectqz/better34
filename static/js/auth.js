@@ -1,3 +1,6 @@
+import { App } from './state.js';
+import { _ } from './utils.js';
+import { API } from './api.js';
 App.initAuth = async function () {
   this._resolveAuth = null;
   this.authReady = new Promise(res => { this._resolveAuth = res; });

@@ -1,3 +1,6 @@
+import { App } from './state.js';
+import { icon, esc } from './utils.js';
+import { API } from './api.js';
 const VIEWER_X_ICO = icon('x', 9);
 const SS_PLAY_ICO = icon('play', 16, true) + ' Слайдшоу';
 const SS_PAUSE_ICO = icon('pause', 16, true) + ' Слайдшоу';
@@ -901,7 +904,7 @@ App.removeCardFromGrid = function (postId, instant) {
     this.els.grid.querySelectorAll('.post-card').forEach(c => {
       const cb = c.querySelector('.card-checkbox');
       const id = cb ? cb.dataset.id : null;
-      const ni = id != null ? this.state.posts.findIndex(p => p.id == id) : -1;
+      const ni = id != null ? this.state.posts.findIndex(p => p.id === Number(id)) : -1;
       c.dataset.index = ni;
     });
     this.updateStatus();
@@ -1043,7 +1046,7 @@ App.applyZoomTransform = function () {
   this._ensureZoomState();
   const img = this.els.viewerContent.querySelector('img');
   if (!img) return;
-  const { W, H, fw, fh } = this._zoomMetrics();
+  const { fw, fh } = this._zoomMetrics();
   const s = this._zoomActive ? (this._zoomScale || 1) : 1;
   const active = this._zoomActive && s > 1;
   const { maxTX, maxTY } = this._zoomMaxPan(s);

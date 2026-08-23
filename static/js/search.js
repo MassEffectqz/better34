@@ -1,3 +1,6 @@
+import { App } from './state.js';
+import { icon, getHistory, addHistory, removeHistory, togglePinHistory, clearHistory } from './utils.js';
+import { API } from './api.js';
 App._suggestSeq = 0;
 
 App.onSearchInput = function () {
@@ -61,7 +64,7 @@ App.updateQueryMeta = function (q) {
   if (!el) return;
   const query = q.trim();
   if (!query) { el.classList.remove('visible'); return; }
-  let terms = query.split(/\s+/).filter(Boolean).length;
+  const terms = query.split(/\s+/).filter(Boolean).length;
   const hidden = (this.state.profile && this.state.profile.hidden_tags) || [];
   let budget = (this.state.maxQueryLen || 3800) - query.length;
   let local = 0;

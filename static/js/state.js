@@ -1,4 +1,9 @@
-const App = {
+// state.js — корневой объект приложения. Все модули импортируют App отсюда
+// и вешают свои методы на него; циклических импортов нет (state тянет только utils/api).
+import { _, esc, go, icon } from './utils.js';
+import { API } from './api.js';
+
+export const App = {
   state: {
     posts: [], page: 1, loading: false, hasMore: true, query: '',
     isLocal: false, viewerOpen: false, viewerIndex: 0, recommendActive: false,
@@ -292,10 +297,10 @@ const App = {
     });
     e.favTagInput.addEventListener('input', () => this.suggestProfileTag('fav'));
     e.hiddenTagInput.addEventListener('input', () => this.suggestProfileTag('hidden'));
-    document.querySelectorAll('#profile-panel .profile-tab').forEach(tab => {
+    document.querySelectorAll('#profile-panel .profile-tab').forEach((/** @type {HTMLElement} */ tab) => {
       tab.addEventListener('click', () => {
-        document.querySelectorAll('#profile-panel .profile-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('#profile-panel .profile-tab-content').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('#profile-panel .profile-tab').forEach((/** @type {HTMLElement} */ t) => t.classList.remove('active'));
+        document.querySelectorAll('#profile-panel .profile-tab-content').forEach((/** @type {HTMLElement} */ c) => c.classList.remove('active'));
         tab.classList.add('active');
         _(`tab-${tab.dataset.tab}`).classList.add('active');
         if (tab.dataset.tab === 'likes' || tab.dataset.tab === 'hides') {
@@ -303,7 +308,7 @@ const App = {
         }
       });
     });
-    document.querySelectorAll('#settings-panel .profile-tab').forEach(tab => {
+    document.querySelectorAll('#settings-panel .profile-tab').forEach((/** @type {HTMLElement} */ tab) => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('#settings-panel .profile-tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('#settings-panel .profile-tab-content').forEach(c => c.classList.remove('active'));
@@ -355,7 +360,7 @@ const App = {
     const EYE_OFF = icon('eyeOff');
     document.querySelectorAll('.auth-pw-toggle').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const inp = document.getElementById(btn.dataset.target);
+        const inp = /** @type {HTMLInputElement} */ (document.getElementById(/** @type {HTMLElement} */ (btn).dataset.target));
         const show = inp.type === 'password';
         inp.type = show ? 'text' : 'password';
         btn.innerHTML = show ? EYE_OFF : EYE_ON;
@@ -389,7 +394,7 @@ const App = {
 
   renderGridMenu() {
     const active = this.state.gridCols === null ? 'auto' : String(this.state.gridCols);
-    document.querySelectorAll('.grid-opt').forEach(b => {
+    document.querySelectorAll('.grid-opt').forEach((/** @type {HTMLElement} */ b) => {
       b.classList.toggle('active', b.dataset.cols === active);
     });
   },
@@ -454,7 +459,7 @@ const App = {
   },
 
   renderAccent() {
-    document.querySelectorAll('.accent-swatch').forEach(b => {
+    document.querySelectorAll('.accent-swatch').forEach((/** @type {HTMLElement} */ b) => {
       b.classList.toggle('active', b.dataset.accent === this.state.accent);
     });
   },
@@ -498,7 +503,7 @@ const App = {
   },
 
   loadProfileMeta() {
-    const p = this.state.profile || {};
+    const p = this.state.profile || /** @type {any} */ ({});
     let avatar = p.avatar || '';
     let nickname = p.nickname || '';
     if (!avatar && !nickname) {
@@ -537,7 +542,7 @@ const App = {
     if (!file.type.startsWith('image/')) { this.showToast('Только изображения', 'error'); return; }
     const reader = new FileReader();
     reader.onload = (e) => {
-      const src = e.target.result;
+      const src = /** @type {string} */ (e.target.result);
       const img = new Image();
       img.onload = () => {
         const MAX = 512;
@@ -923,4 +928,5 @@ const App = {
   },
 };
 
-window.App = App;
+// Доступ из консоли браузера; в Node (тесты) window не существует.
+if (typeof window !== 'undefined') (/** @type {any} */ (window)).App = App;

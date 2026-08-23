@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": false,
+    "noImplicitThis": false,
+    "strictNullChecks": false,
+    "types": []
+  },
+  // Инкрементальная типизация: ядро проверяется целиком, остальные модули
+  // добавляются сюда по мере касания (полный прогон на нетипизированном
+  // App-коде даёт сотни шума от this-инференса).
+  "include": [
+    "static/js/utils.js",
+    "static/js/api.js",
+    "static/js/video.js"
+  ]
+}

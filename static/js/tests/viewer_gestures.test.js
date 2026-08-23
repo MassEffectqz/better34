@@ -1,7 +1,7 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
+// viewer_gestures.test.js — тач-жесты вьюера (node:test, ESM).
+import { App } from '../state.js';
+await import('../viewer.js');
+await import('../video.js');
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
@@ -31,23 +31,14 @@ class FakeEl {
   appendChild() {}
 }
 
-global.window = {};
-global.localStorage = {
+globalThis.window = {};
+globalThis.localStorage = {
   _s: {},
   getItem(k) { return this._s[k] != null ? this._s[k] : null; },
   setItem(k, v) { this._s[k] = String(v); },
   removeItem(k) { delete this._s[k]; },
 };
-global.document = { addEventListener() {}, removeEventListener() {} };
-function icon(name, size, solid) { return `<svg data-icon="${name}"></svg>` + (solid ? '-solid' : ''); }
-global.icon = icon;
-
-const App = {};
-global.App = App;
-const viewerPath = path.join(__dirname, '..', 'viewer.js');
-eval(fs.readFileSync(viewerPath, 'utf8'));
-// video.js добавляет видео-методы на App (renderViewer их вызывает).
-eval(fs.readFileSync(path.join(__dirname, '..', 'video.js'), 'utf8'));
+globalThis.document = { addEventListener() {}, removeEventListener() {} };
 
 const wrap = new FakeEl();
 const vc = new FakeEl();
@@ -160,7 +151,7 @@ async function main() {
   check('edge+hasMore=false: свайп на последнем посте не вызывает навигацию', App._navCalls.length === 0, JSON.stringify(App._navCalls));
 
   console.log(`\n${passed} passed, ${failed} failed`);
-  process.exit(failed ? 1 : 0);
+  if (failed) throw new Error(`${failed} checks failed`);
 }
 
-main();
+await main();

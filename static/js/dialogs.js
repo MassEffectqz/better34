@@ -1,3 +1,5 @@
+import { App } from './state.js';
+import { esc } from './utils.js';
 App.confirmDialog = function (opts) {
   return new Promise((resolve) => {
     const el = this.els.confirmModal;
