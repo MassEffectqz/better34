@@ -18,18 +18,19 @@ import (
 )
 
 const (
-	minRecLikes       = 5
-	recLikedWindow    = 50
-	recMaxTags        = 12
-	recWeightsTTL     = 90 * time.Second
-	recFreqTTL        = 5 * time.Minute
-	recMaxQueryLen    = 3700
+	minRecLikes    = 5
+	recLikedWindow = 50
+	recMaxTags     = 12
+	recWeightsTTL  = 90 * time.Second
+	recFreqTTL     = 5 * time.Minute
+	recMaxQueryLen = 3700
 )
 
 type RecTagWeight struct {
 	Tag    string  `json:"tag"`
 	Weight float64 `json:"weight"`
 }
+
 // recWeightEntry — кэш весов тегов для одного пользователя.
 type recWeightEntry struct {
 	sig     string
@@ -236,9 +237,9 @@ func (h *Handler) computeRecWeights(p *Profile) ([]RecTagWeight, int, error) {
 func recRareTags(weights []RecTagWeight) []string {
 	freq := globalTagFreq()
 	type wt struct {
-		tag  string
-		w    float64
-		pop  int
+		tag string
+		w   float64
+		pop int
 	}
 	pool := make([]wt, 0, len(weights))
 	for i, w := range weights {
@@ -279,7 +280,7 @@ func capHiddenTags(hidden []string) (inQuery []string, extra []string) {
 		if norm == "" {
 			continue
 		}
-		add := len("-" + norm) + 1
+		add := len("-"+norm) + 1
 		if budget+add > recMaxQueryLen {
 			extra = append(extra, norm)
 			continue
@@ -334,9 +335,9 @@ func filterHiddenTags(posts []Rule34Post, hidden []string) []Rule34Post {
 // пропорции (в порядке следования). Скрытые теги должны быть уже ограничены
 // recMaxQueryLen символами.
 func recQueries(weights []RecTagWeight, page int, likedPosts []Rule34Post, hidden []string) []struct {
-	query  string
-	quota  int
-	label  string
+	query string
+	quota int
+	label string
 } {
 	slice := (page - 1) % 3
 	var anchor, or []string

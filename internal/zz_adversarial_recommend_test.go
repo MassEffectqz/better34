@@ -45,9 +45,9 @@ func TestAdversarialRecQueriesValidShapes(t *testing.T) {
 		recQueries(weights, page, nil, nil)
 	}
 	one := []RecTagWeight{{Tag: "a", Weight: 1}}
-	ok(one, 2)  // slice 1, len<=2 → только weights[0]
-	ok(one, 3)  // slice 2, rare пуст → fallback weights[0]
-	ok([]RecTagWeight{{Tag: "a", Weight: 2}, {Tag: "b", Weight: 1}}, 1) // slice 0, len==2
-	ok([]RecTagWeight{{Tag: "a", Weight: 3}, {Tag: "b", Weight: 2}, {Tag: "c", Weight: 1}}, 3) // slice 2, rare=1
+	ok(one, 2)                                                                                                                               // slice 1, len<=2 → только weights[0]
+	ok(one, 3)                                                                                                                               // slice 2, rare пуст → fallback weights[0]
+	ok([]RecTagWeight{{Tag: "a", Weight: 2}, {Tag: "b", Weight: 1}}, 1)                                                                      // slice 0, len==2
+	ok([]RecTagWeight{{Tag: "a", Weight: 3}, {Tag: "b", Weight: 2}, {Tag: "c", Weight: 1}}, 3)                                               // slice 2, rare=1
 	ok([]RecTagWeight{{Tag: "a", Weight: 5}, {Tag: "b", Weight: 4}, {Tag: "c", Weight: 3}, {Tag: "d", Weight: 2}, {Tag: "e", Weight: 1}}, 3) // slice 2, rare=2
 }

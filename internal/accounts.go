@@ -32,11 +32,11 @@ const (
 const SessionCookieName = sessionCookieName
 
 var (
-	usernameRe     = regexp.MustCompile(`^[a-zA-Z0-9_]{3,24}$`)
-	ErrUserExists  = errors.New("пользователь уже существует")
-	ErrBadUsername = errors.New("логин: 3-24 символа, только буквы, цифры и _")
-	ErrBadPassword = errors.New("пароль: минимум 6 символов")
-	ErrBadLogin    = errors.New("неверный логин или пароль")
+	usernameRe      = regexp.MustCompile(`^[a-zA-Z0-9_]{3,24}$`)
+	ErrUserExists   = errors.New("пользователь уже существует")
+	ErrBadUsername  = errors.New("логин: 3-24 символа, только буквы, цифры и _")
+	ErrBadPassword  = errors.New("пароль: минимум 6 символов")
+	ErrBadLogin     = errors.New("неверный логин или пароль")
 	ErrAvatarTooBig = errors.New("аватар слишком большой (макс. 3 МБ)")
 )
 

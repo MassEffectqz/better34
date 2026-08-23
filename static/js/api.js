@@ -50,7 +50,8 @@ export const API = {
   },
   get(e, opts) {
     const key = `GET:${e}`;
-    const cached = this._cache[key];
+    const useCache = !(opts && opts.fresh);
+    const cached = useCache ? this._cache[key] : null;
     if (cached && Date.now() - cached.ts < this._cacheTTL) return Promise.resolve(cached.data);
     if (this._inflight[key]) {
       if (opts && opts.signal) this._watchAbort(key, opts.signal);
@@ -58,12 +59,12 @@ export const API = {
     }
     const controller = new AbortController();
     this._inflightCtrl[key] = controller;
-    const promise = this._fetchGet(key, e, controller).finally(() => this._clearInflight(key, promise));
+    const promise = this._fetchGet(key, e, controller, useCache).finally(() => this._clearInflight(key, promise));
     this._inflight[key] = promise;
     if (opts && opts.signal) this._watchAbort(key, opts.signal);
     return promise;
   },
-  async _fetchGet(key, e, controller) {
+  async _fetchGet(key, e, controller, useCache) {
     try {
       const r = await fetch(`/api${e}`, { signal: controller.signal, headers: this._headers() });
       if (!r.ok) throw new Error(await this._err(r));
@@ -73,7 +74,7 @@ export const API = {
         throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`);
       }
       const data = await r.json();
-      this._setCache(key, data);
+      if (useCache !== false) this._setCache(key, data);
       return data;
     } catch (err) {
       if (err.name === 'AbortError') return;

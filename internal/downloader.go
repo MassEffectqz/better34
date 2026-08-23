@@ -2,6 +2,8 @@ package internal
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,10 +33,11 @@ type DownloadJob struct {
 }
 
 type DownloadResult struct {
-	PostID    int
-	FilePath  string
-	ThumbPath string
-	Error     error
+	PostID      int
+	FilePath    string
+	ThumbPath   string
+	DuplicateOf int
+	Error       error
 }
 
 type Downloader struct {
@@ -100,7 +103,7 @@ func NewDownloader(workers int, onResult func(DownloadResult)) *Downloader {
 			if d.onResult != nil {
 				d.onResult(result)
 			}
-			if result.Error == nil {
+			if result.Error == nil && result.DuplicateOf == 0 {
 				db := GetDB()
 				db.SetDownloaded(result.PostID, result.FilePath, result.ThumbPath)
 				db.BumpSave()
@@ -112,6 +115,10 @@ func NewDownloader(workers int, onResult func(DownloadResult)) *Downloader {
 			}
 			if result.Error != nil {
 				payload["error"] = result.Error.Error()
+			}
+			if result.DuplicateOf > 0 {
+				payload["duplicate_of"] = result.DuplicateOf
+				payload["success"] = false
 			}
 			publishSSE(payload)
 			d.resultsMu.Lock()
@@ -389,6 +396,10 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 			continue
 		}
 
+		if dup := d.checkDuplicate(partialPath, job.PostID); dup > 0 {
+			return DownloadResult{PostID: job.PostID, DuplicateOf: dup}
+		}
+
 		if err := os.Rename(partialPath, filePath); err != nil {
 			os.Remove(partialPath)
 			return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("failed to rename file: %w", err)}
@@ -404,6 +415,40 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 	}
 
 	return DownloadResult{PostID: job.PostID, Error: lastErr}
+}
+
+// checkDuplicate считает md5 скачанного файла и ищет совпадение среди уже
+// скачанных постов. При дубликате удаляет .part и возвращает id оригинала.
+// Хэш сохраняется в БД, чтобы последующие проверки работали без пересчёта.
+func (d *Downloader) checkDuplicate(path string, postID int) int {
+	if !DBReady() {
+		return 0 // глобальной БД нет (тесты/утилиты) — дедуп неприменим
+	}
+	sum, err := md5File(path)
+	if err != nil {
+		return 0
+	}
+	db := GetDB()
+	db.SetPostMD5(postID, sum)
+	if exist := db.FindDownloadedByMd5(sum, postID); exist > 0 {
+		os.Remove(path)
+		log.Printf("dedup: пост %d — дубликат #%d (md5 %s...), файл не сохранён", postID, exist, sum[:8])
+		return exist
+	}
+	return 0
+}
+
+func md5File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (d *Downloader) Submit(job DownloadJob) {

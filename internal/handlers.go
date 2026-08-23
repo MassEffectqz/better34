@@ -242,6 +242,7 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 			FileSize:   p.FileSize,
 			Score:      p.Score,
 			Rating:     p.Rating,
+			MD5:        p.Hash,
 		})
 
 		enriched = append(enriched, entry)
@@ -341,6 +342,7 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				FileSize:   p.FileSize,
 				Score:      p.Score,
 				Rating:     p.Rating,
+				MD5:        p.Hash,
 			})
 			enriched = append(enriched, gin.H{
 				"id":          p.ID,

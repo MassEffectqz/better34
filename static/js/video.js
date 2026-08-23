@@ -9,22 +9,33 @@ import { icon } from './utils.js';
 App._videoPrefsKey = 'briefly_video_prefs';
 App._videoPosKey = 'briefly_video_pos';
 App.VIDEO_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
-
+// Мьют — сессионная настройка: в localStorage не хранится. Иначе один
+// fallback-мьют при заблокированном autoplay «отравлял» настройки и все
+// последующие видео открывались беззвучными.
 App._loadVideoPrefs = function () {
   if (App._videoPrefsCache) return App._videoPrefsCache;
   let p = {};
   try { p = JSON.parse(localStorage.getItem(App._videoPrefsKey) || '{}') || {}; } catch { /* noop */ }
   App._videoPrefsCache = {
     volume: typeof p.volume === 'number' ? Math.min(1, Math.max(0, p.volume)) : 1,
-    muted: !!p.muted,
+    muted: false,
     rate: App.VIDEO_RATES.indexOf(p.rate) >= 0 ? p.rate : 1,
   };
+  // Миграция формата: выкидываем устаревший persisted-muted из хранилища.
+  if (p.v !== 2) App._saveVideoPrefs();
   return App._videoPrefsCache;
 };
 
+// Персистим только громкость и скорость.
 App._saveVideoPrefs = function () {
   if (!App._videoPrefsCache) return;
-  try { localStorage.setItem(App._videoPrefsKey, JSON.stringify(App._videoPrefsCache)); } catch { /* noop */ }
+  try {
+    localStorage.setItem(App._videoPrefsKey, JSON.stringify({
+      v: 2,
+      volume: App._videoPrefsCache.volume,
+      rate: App._videoPrefsCache.rate,
+    }));
+  } catch { /* noop */ }
 };
 
 // Применяем сохранённые громкость/мьют/скорость к каждому новому <video>.
@@ -155,7 +166,13 @@ App._bindVideoEvents = function (v) {
   v.addEventListener('volumechange', () => {
     const p = App._loadVideoPrefs();
     p.volume = v.volume;
-    p.muted = !!v.muted;
+    // Программный мьют из autoplay-fallback не считаем пользовательским
+    // выбором: в сессии он остаётся локальным для этого видео.
+    if (App._suppressMuteSync) {
+      App._suppressMuteSync = false;
+    } else {
+      p.muted = !!v.muted;
+    }
     App._saveVideoPrefs();
     if (!v.muted) App._removeUnmuteHint();
   });
@@ -183,6 +200,7 @@ App._autoplayVideo = function (v) {
   if (pr && typeof pr.catch === 'function') {
     pr.catch(() => {
       if (!App.state.viewerOpen || !v.isConnected) return;
+      if (!v.muted) App._suppressMuteSync = true;
       try { v.muted = true; } catch { /* noop */ }
       let p2 = null;
       try { p2 = v.play(); } catch { return; }

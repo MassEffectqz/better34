@@ -4,8 +4,12 @@
  *  - навигация — сеть, при неудаче кэш страницы, иначе офлайн-заглушка;
  *  - /static/* — cache-first (URL версионирован ?v=..., immutable).
  */
-const CACHE = 'briefly-static-v1';
+const CACHE = 'briefly-static-v2';
 const PRECACHE = ['/static/offline.html'];
+
+// JS/CSS не кэшируем жёстко: URL модулей фиксированы (?v= только у входа),
+// поэтому код всегда тянем из сети и лишь fallback'ом держим в кэше.
+const NO_HARD_CACHE = /\.(js|css)(\?|$)/;
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
@@ -48,7 +52,24 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Прочая статика — cache-first с догрузкой мимо кэша.
+  // Версионированная статика без кода (картинки, шрифты) — cache-first.
+  if (NO_HARD_CACHE.test(url.pathname)) {
+    e.respondWith((async () => {
+      try {
+        const res = await fetch(req);
+        if (res.ok) {
+          const cache = await caches.open(CACHE);
+          cache.put(req, res.clone());
+        }
+        return res;
+      } catch {
+        const cached = await caches.match(req);
+        return cached || Response.error();
+      }
+    })());
+    return;
+  }
+
   e.respondWith((async () => {
     const cached = await caches.match(req);
     if (cached) return cached;

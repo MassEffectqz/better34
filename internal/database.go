@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -27,6 +29,7 @@ type Post struct {
 	Downloaded bool   `json:"downloaded"`
 	FilePath   string `json:"file_path"`
 	ThumbPath  string `json:"thumb_path"`
+	MD5        string `json:"md5"`
 }
 
 // PostDB — SQLite-хранилище постов (modernc.org/sqlite, без CGO).
@@ -41,19 +44,25 @@ type PostDB struct {
 }
 
 var (
-	postDB *PostDB
-	dbOnce sync.Once
+	postDB  *PostDB
+	dbOnce  sync.Once
+	dbReady atomic.Bool
 )
 
 func GetDB() *PostDB {
 	dbOnce.Do(func() {
 		postDB = NewPostDB("data/posts.db")
 		postDB.importLegacyJSON("data/db.json")
+		dbReady.Store(true)
 	})
 	return postDB
 }
 
-const postsSchema = `
+// DBReady — истинно после первой инициализации глобальной БД. Фоновые
+// процессы (дедуп скачиваний) в тестах/утилитах без БД просто пропускают шаг.
+func DBReady() bool { return dbReady.Load() }
+
+const postsTables = `
 CREATE TABLE IF NOT EXISTS posts (
 	id          INTEGER PRIMARY KEY,
 	tags        TEXT NOT NULL DEFAULT '',
@@ -67,18 +76,39 @@ CREATE TABLE IF NOT EXISTS posts (
 	rating      TEXT NOT NULL DEFAULT '',
 	downloaded  INTEGER NOT NULL DEFAULT 0,
 	file_path   TEXT NOT NULL DEFAULT '',
-	thumb_path  TEXT NOT NULL DEFAULT ''
+	thumb_path  TEXT NOT NULL DEFAULT '',
+	md5         TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_posts_downloaded ON posts(downloaded, id);
 CREATE TABLE IF NOT EXISTS tags (
 	tag     TEXT NOT NULL COLLATE NOCASE,
 	post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
 	PRIMARY KEY (tag, post_id)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS comments (
+	id         INTEGER PRIMARY KEY,
+	post_id    INTEGER NOT NULL,
+	username   TEXT NOT NULL,
+	text       TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+`
+
+// Индексы отдельно от таблиц: перед созданием idx_posts_md5 колонка md5
+// должна существовать и в старых БД (её добавляет ALTER ниже).
+const postsIndexes = `
+CREATE INDEX IF NOT EXISTS idx_posts_downloaded ON posts(downloaded, id);
 CREATE INDEX IF NOT EXISTS idx_tags_post ON tags(post_id);
+CREATE INDEX IF NOT EXISTS idx_posts_md5 ON posts(md5) WHERE downloaded=1;
+CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id, id);
 `
 
 func NewPostDB(path string) *PostDB {
+	// SQLite сам не создаёт родительские каталоги.
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			log.Printf("[db] mkdir %s: %v", dir, err)
+		}
+	}
 	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -91,8 +121,16 @@ func NewPostDB(path string) *PostDB {
 		log.Printf("[db] ping %s: %v", path, err)
 		panic(err)
 	}
-	if _, err := sqlDB.Exec(postsSchema); err != nil {
+	if _, err := sqlDB.Exec(postsTables); err != nil {
 		log.Printf("[db] schema: %v", err)
+		panic(err)
+	}
+	// Миграция существующих БД: колонка md5 для дедупликации скачиваний.
+	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN md5 TEXT NOT NULL DEFAULT ''`); err == nil {
+		log.Printf("[db] добавлена колонка md5")
+	}
+	if _, err := sqlDB.Exec(postsIndexes); err != nil {
+		log.Printf("[db] indexes: %v", err)
 		panic(err)
 	}
 	return &PostDB{db: sqlDB, path: path}
@@ -149,13 +187,13 @@ func (db *PostDB) withTx(fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-const postCols = `id, tags, file_url, preview_url, file_type, width, height, file_size, score, rating, downloaded, file_path, thumb_path`
+const postCols = `id, tags, file_url, preview_url, file_type, width, height, file_size, score, rating, downloaded, file_path, thumb_path, md5`
 
 func scanPost(scan func(...any) error) (*Post, error) {
 	p := &Post{}
 	var dl int
 	err := scan(&p.ID, &p.Tags, &p.FileURL, &p.PreviewURL, &p.FileType,
-		&p.Width, &p.Height, &p.FileSize, &p.Score, &p.Rating, &dl, &p.FilePath, &p.ThumbPath)
+		&p.Width, &p.Height, &p.FileSize, &p.Score, &p.Rating, &dl, &p.FilePath, &p.ThumbPath, &p.MD5)
 	if err != nil {
 		return nil, err
 	}
@@ -165,14 +203,14 @@ func scanPost(scan func(...any) error) (*Post, error) {
 
 // upsertPostTx полностью заменяет запись + теги (семантика старого AddOrUpdate).
 func upsertPostTx(tx *sql.Tx, p *Post) error {
-	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET tags=excluded.tags, file_url=excluded.file_url,
 		 preview_url=excluded.preview_url, file_type=excluded.file_type, width=excluded.width,
 		 height=excluded.height, file_size=excluded.file_size, score=excluded.score,
 		 rating=excluded.rating, downloaded=excluded.downloaded, file_path=excluded.file_path,
 		 thumb_path=excluded.thumb_path`,
 		p.ID, p.Tags, p.FileURL, p.PreviewURL, p.FileType, p.Width, p.Height,
-		p.FileSize, p.Score, p.Rating, boolToInt(p.Downloaded), p.FilePath, p.ThumbPath)
+		p.FileSize, p.Score, p.Rating, boolToInt(p.Downloaded), p.FilePath, p.ThumbPath, p.MD5)
 	if err != nil {
 		return err
 	}
@@ -229,14 +267,15 @@ func (db *PostDB) UpsertMeta(p *Post) bool {
 		}
 		if old.Tags == p.Tags && old.FileURL == p.FileURL && old.PreviewURL == p.PreviewURL &&
 			old.FileType == p.FileType && old.Width == p.Width && old.Height == p.Height &&
-			old.FileSize == p.FileSize && old.Score == p.Score && old.Rating == p.Rating {
+			old.FileSize == p.FileSize && old.Score == p.Score && old.Rating == p.Rating &&
+			old.MD5 == p.MD5 {
 			return nil
 		}
 		changed = true
 		if _, err := tx.Exec(`UPDATE posts SET tags=?, file_url=?, preview_url=?, file_type=?,
-			width=?, height=?, file_size=?, score=?, rating=? WHERE id=?`,
+			width=?, height=?, file_size=?, score=?, rating=?, md5=? WHERE id=?`,
 			p.Tags, p.FileURL, p.PreviewURL, p.FileType, p.Width, p.Height,
-			p.FileSize, p.Score, p.Rating, p.ID); err != nil {
+			p.FileSize, p.Score, p.Rating, p.MD5, p.ID); err != nil {
 			return err
 		}
 		return replaceTagsTx(tx, p.ID, p.Tags)
@@ -357,6 +396,26 @@ func (db *PostDB) Stats() map[string]int {
 	return map[string]int{"total": total, "downloaded": downloaded}
 }
 
+// SetPostMD5 запоминает хэш содержимого поста (после успешного скачивания).
+func (db *PostDB) SetPostMD5(id int, md5sum string) {
+	_, _ = db.db.Exec(`UPDATE posts SET md5=? WHERE id=?`, md5sum, id)
+}
+
+// FindDownloadedByMd5 возвращает id уже скачанного поста с таким же хэшем
+// (кроме excludeID). 0 — дубликата нет.
+func (db *PostDB) FindDownloadedByMd5(md5sum string, excludeID int) int {
+	if md5sum == "" {
+		return 0
+	}
+	var id int
+	err := db.db.QueryRow(
+		`SELECT id FROM posts WHERE downloaded=1 AND md5=? AND id<>? LIMIT 1`, md5sum, excludeID).Scan(&id)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
 // TagSuggestion объявлена в rule34.go.
 
 func likePattern(prefix string) string {
@@ -438,6 +497,58 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ── Комментарии: локальное обсуждение постов между пользователями ──────
+
+type Comment struct {
+	ID        int    `json:"id"`
+	PostID    int    `json:"post_id"`
+	Username  string `json:"username"`
+	Text      string `json:"text"`
+	CreatedAt string `json:"created_at"`
+}
+
+func (db *PostDB) AddComment(postID int, username, text string) (*Comment, error) {
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	res, err := db.db.Exec(
+		`INSERT INTO comments(post_id, username, text, created_at) VALUES (?,?,?,?)`,
+		postID, username, text, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return &Comment{ID: int(id), PostID: postID, Username: username, Text: text, CreatedAt: createdAt}, nil
+}
+
+func (db *PostDB) Comments(postID int) []*Comment {
+	rows, err := db.db.Query(
+		`SELECT id, post_id, username, text, created_at FROM comments WHERE post_id=? ORDER BY id ASC`, postID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []*Comment
+	for rows.Next() {
+		cm := &Comment{}
+		if err := rows.Scan(&cm.ID, &cm.PostID, &cm.Username, &cm.Text, &cm.CreatedAt); err == nil {
+			out = append(out, cm)
+		}
+	}
+	return out
+}
+
+// DeleteComment удаляет комментарий; возвращает true, если комментарий был.
+func (db *PostDB) DeleteComment(id int) bool {
+	res, err := db.db.Exec(`DELETE FROM comments WHERE id=?`, id)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
 }
 
 func (p *Post) String() string {

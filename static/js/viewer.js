@@ -19,6 +19,10 @@ App.openViewer = function (index) {
   this.renderViewer();
   if (!this._zoomControlsBound) { this._zoomControlsBound = true; this._bindZoomControls(); }
   const post = this.state.posts[index];
+  // Видео всегда открываем в полноэкранном режиме просмотра.
+  if (post && post.file_type === 'video' && !this._viewerIsFullscreen()) {
+    this.toggleFullscreen();
+  }
   this._recMarkViewed(post ? post.id : null);
   this.scheduleRelated(post);
   if (post) this.pushState(this.state.query, post.id);
@@ -363,6 +367,7 @@ App.renderViewer = function (force) {
 
   viewerProgress.textContent = post.downloaded ? 'скачано' : 'нажми X для скачивания';
   this.updateNavButtons();
+  if (typeof this.renderComments === 'function') this.renderComments(post.id);
 };
 
 App.navigateViewer = function (dir) {

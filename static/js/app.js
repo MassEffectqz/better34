@@ -10,6 +10,7 @@ import './feed.js';
 import './keyboard.js';
 import './profile.js';
 import './settings.js';
+import './social.js';
 import './auth.js';
 import { renderLucideIcons } from './utils.js';
 

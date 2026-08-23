@@ -427,6 +427,7 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
           this.state.posts.forEach((post, i) => {
             if (hiddenIds.has(post.id)) return;
             if (this._hasHiddenTag(post.tags, hiddenTags)) return;
+            if (!this.passesFeedFilters(post)) return;
             const card = this.createPostCard(post);
             card.dataset.index = i;
             frag.appendChild(card);
@@ -506,11 +507,10 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
       if (this._hasHiddenTag(post.tags, hiddenTags)) return;
       existingIds.add(post.id);
       const postIdx = this.state.posts.length;
-      const card = this.createPostCard(post);
-      card.dataset.index = postIdx;
-      frag.appendChild(card);
       this.state.posts.push({ ...post, _index: postIdx });
       added++;
+      // Фильтр убирает карточку из отображения, но пост остаётся в state.
+      if (!this.passesFeedFilters(post)) return;
     });
     this.state.page++;
     this.state.hasMore = rawCount > 0 && (rawCount >= this.pageSize() || added > 0);
@@ -796,6 +796,30 @@ App._feedDoubleTapLike = function (post, card) {  const liked = this.optimisticL
   });
 };
 
+// Клиентские фильтры ленты (тип/очки/разрешение): не влияют на пагинацию —
+// только на отображение уже загруженных страниц.
+App.passesFeedFilters = function (p) {
+  const f = this.state.feedFilters || {};
+  if (f.type === 'video' && p.file_type !== 'video') return false;
+  if (f.type === 'gif' && p.file_type !== 'gif') return false;
+  if (f.type === 'image' && (p.file_type === 'video' || p.file_type === 'gif')) return false;
+  if (f.minScore > 0 && (p.score || 0) < f.minScore) return false;
+  if (f.minWidth > 0 && p.width && p.width < f.minWidth) return false;
+  if (f.minHeight > 0 && p.height && p.height < f.minHeight) return false;
+  return true;
+};
+
+App.feedFiltersActive = function () {
+  const f = this.state.feedFilters || {};
+  return (f.type && f.type !== 'all') || f.minScore > 0 || f.minWidth > 0 || f.minHeight > 0;
+};
+
+App.applyFeedFilters = function (list) {
+  const out = this.feedFiltersActive() ? list.filter(p => this.passesFeedFilters(p)) : list;
+  this._displayCount = out.length;
+  return out;
+};
+
 App.renderPosts = function () {
   if (!this.state.posts.length) return;
   let display = [...this.state.posts];
@@ -808,6 +832,7 @@ App.renderPosts = function () {
     else if (sortBy === 'id_asc') display.sort((a, b) => a.id - b.id);
     else if (sortBy === 'size') display.sort((a, b) => (b.file_size || 0) - (a.file_size || 0));
   }
+  display = this.applyFeedFilters(display);
   // Переиспользуем уже созданные карточки: перенос узла внутри документа
   // сохраняет загруженные картинки и листенеры — при активном sortBy каждая
   // подгруженная страница больше не пересоздаёт весь грид.
@@ -916,6 +941,10 @@ App.batchHide = async function () {
 App.setStatus = function (msg) { this.els.statusText.textContent = msg; };
 App.updateStatus = function () {
   const mode = this.state.isLocal ? 'локально' : (this.state.recommendActive ? 'рекомендации' : (this.state.query ? 'поиск' : 'последние посты'));
-  this.setStatus(`${this.state.posts.length} постов · ${mode}`);
+  let shown = String(this.state.posts.length);
+  if (this.feedFiltersActive() && this._displayCount != null) {
+    shown = `${this._displayCount}/${this.state.posts.length}`;
+  }
+  this.setStatus(`${shown} постов · ${mode}`);
   this.renderFilterChips();
 };

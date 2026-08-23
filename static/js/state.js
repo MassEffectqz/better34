@@ -14,6 +14,7 @@ export const App = {
     sortBy: '',
     displayMode: 'search', displayIds: [], theme: 'dark',
     gridCols: null,
+    feedFilters: { type: 'all', minScore: 0, minWidth: 0, minHeight: 0 },
   },
   els: {},
 
@@ -24,6 +25,7 @@ export const App = {
       searchBox: document.querySelector('.search-box'),
       viewer: _('viewer'), viewerHead: _('viewer-head'), viewerFoot: _('viewer-foot'), viewerContent: _('viewer-content'), viewerInfo: _('viewer-info'),
       viewerTags: _('viewer-tags'), viewerProgress: _('viewer-progress'),
+      viewerComments: _('viewer-comments'),
       viewerDownload: _('viewer-download'), viewerFullscreen: _('viewer-fullscreen'),
       viewerMobileActions: _('viewer-mobile-actions'), viewerMobileToggle: _('viewer-mobile-toggle'),
       zoomIn: _('zoom-in'), zoomOut: _('zoom-out'), zoomFit: _('zoom-fit'), zoomLabel: _('zoom-label'),
@@ -71,6 +73,8 @@ export const App = {
       btnHeaderMenu: _('btn-header-menu'), headerMenu: _('header-menu'), searchClear: _('search-clear'),
       providerBadge: _('provider-badge'), providerMenu: _('provider-menu'), providerMenuList: _('provider-menu-list'),
       ratingToggle: _('rating-toggle'), feedProgress: _('feed-progress'), queryMeta: _('query-meta'),
+      feedFilterBtn: _('feed-filter-btn'), feedFilterMenu: _('feed-filter-menu'),
+      ffMinScore: _('ff-min-score'), ffMinWidth: _('ff-min-width'), ffMinHeight: _('ff-min-height'), ffReset: _('ff-reset'),
       searchChips: _('search-chips'), scrollProgress: _('scroll-progress'),
       viewerRelated: _('viewer-related'), btnLikesDownload: _('btn-likes-download'),
       panelBackdrop: _('panel-backdrop'),
@@ -252,6 +256,53 @@ export const App = {
         e.ratingToggle.querySelectorAll('.rt-btn').forEach(x => x.classList.toggle('active', x === b));
         API.invalidate('/');
         this.loadPosts(true, null, true);
+      });
+    }
+    // Клиентские фильтры ленты: тип/очки/разрешение. Фильтруем отображение,
+    // пагинацию не трогаем.
+    if (e.feedFilterMenu) {
+      const savedFf = (() => { try { return JSON.parse(localStorage.getItem('briefly-feed-filters') || 'null'); } catch { return null; } })();
+      if (savedFf && typeof savedFf === 'object') {
+        this.state.feedFilters = {
+          type: ['all', 'video', 'gif', 'image'].includes(savedFf.type) ? savedFf.type : 'all',
+          minScore: Math.max(0, parseInt(savedFf.minScore, 10) || 0),
+          minWidth: Math.max(0, parseInt(savedFf.minWidth, 10) || 0),
+          minHeight: Math.max(0, parseInt(savedFf.minHeight, 10) || 0),
+        };
+      }
+      const ff = this.state.feedFilters;
+      const syncUi = () => {
+        e.feedFilterMenu.querySelectorAll('.ff-type').forEach(b => b.classList.toggle('active', b.dataset.type === ff.type));
+        e.ffMinScore.value = ff.minScore || '';
+        e.ffMinWidth.value = ff.minWidth || '';
+        e.ffMinHeight.value = ff.minHeight || '';
+        const on = ff.type !== 'all' || ff.minScore > 0 || ff.minWidth > 0 || ff.minHeight > 0;
+        e.feedFilterBtn.classList.toggle('active', on);
+      };
+      syncUi();
+      e.feedFilterBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        e.feedFilterMenu.classList.toggle('hidden');
+      });
+      e.feedFilterMenu.addEventListener('click', (ev) => ev.stopPropagation());
+      document.addEventListener('click', () => e.feedFilterMenu.classList.add('hidden'));
+      e.feedFilterMenu.addEventListener('click', (ev) => {
+        const tb = ev.target.closest('.ff-type');
+        if (!tb) return;
+        ff.type = tb.dataset.type;
+        this._saveFeedFilters(); syncUi(); this.renderPosts();
+      });
+      const bindNum = (input, key) => input.addEventListener('change', () => {
+        ff[key] = Math.max(0, parseInt(input.value, 10) || 0);
+        input.value = ff[key] || '';
+        this._saveFeedFilters(); syncUi(); this.renderPosts();
+      });
+      bindNum(e.ffMinScore, 'minScore');
+      bindNum(e.ffMinWidth, 'minWidth');
+      bindNum(e.ffMinHeight, 'minHeight');
+      e.ffReset.addEventListener('click', () => {
+        this.state.feedFilters = { type: 'all', minScore: 0, minWidth: 0, minHeight: 0 };
+        this._saveFeedFilters(); syncUi(); this.renderPosts();
       });
     }
     // Автоскрытие хедера + полоса глубины скролла ленты.
@@ -724,6 +775,12 @@ export const App = {
       lastDone = d ? (d.done || 0) : 0;
     };
     const applyResult = (r) => {
+      if (r.duplicate_of) {
+        this.state.downloadQueue.delete(r.post_id);
+        this.state.downloading.delete(r.post_id);
+        this.showToast(`Пост ${r.post_id} — дубликат #${r.duplicate_of}, файл уже скачан`);
+        return;
+      }
       if (r.success) {
         const p = this.state.posts.find(x => x.id === r.post_id);
         if (p) {
@@ -747,6 +804,7 @@ export const App = {
       try { d = JSON.parse(ev.data); } catch { return; }
       if (d.type === 'status') updateFromStatus(d);
       else if (d.type === 'result') applyResult(d);
+      else if (d.type === 'comment' && this._onCommentEvent) this._onCommentEvent(d.post_id);
     });
     es.onerror = () => {  };
     this._sse = es;
@@ -925,6 +983,10 @@ export const App = {
 
   closePresetsSubmenu() {
     this.els.headerMenu.innerHTML = this._headerMenuHTML || '';
+  },
+
+  _saveFeedFilters() {
+    try { localStorage.setItem('briefly-feed-filters', JSON.stringify(this.state.feedFilters)); } catch { /* noop */ }
   },
 };
 

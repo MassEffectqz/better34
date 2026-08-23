@@ -229,7 +229,7 @@ func TestConfigHotReload(t *testing.T) {
 	}
 	// Файл меняется (добавили ключ) — maybeReload должен подхватить.
 	time.Sleep(1100 * time.Millisecond) // mtime должен уйти в прошлое относительно loadedAt? нет — наоборот: mtime ВПЕРЁД. Sleep нужен, чтобы mtime новой записи > старой с точностью fs
-	configCheckAt.Store(0) // сбрасываем троттлинг, чтобы maybeReload сразу проверил файл
+	configCheckAt.Store(0)              // сбрасываем троттлинг, чтобы maybeReload сразу проверил файл
 	os.WriteFile("data/config.json", []byte(`{"api_keys":[{"name":"x","api_key":"k1","user_id":"u1"},{"name":"y","api_key":"k2","user_id":"u2"}]}`), 0644)
 	time.Sleep(1100 * time.Millisecond)
 	cfg.maybeReload()
