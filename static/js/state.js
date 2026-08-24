@@ -270,8 +270,9 @@ export const App = {
           minHeight: Math.max(0, parseInt(savedFf.minHeight, 10) || 0),
         };
       }
-      const ff = this.state.feedFilters;
+      const getFf = () => this.state.feedFilters;
       const syncUi = () => {
+        const ff = getFf();
         e.feedFilterMenu.querySelectorAll('.ff-type').forEach(b => b.classList.toggle('active', b.dataset.type === ff.type));
         e.ffMinScore.value = ff.minScore || '';
         e.ffMinWidth.value = ff.minWidth || '';
@@ -286,16 +287,18 @@ export const App = {
       });
       e.feedFilterMenu.addEventListener('click', (ev) => ev.stopPropagation());
       document.addEventListener('click', () => e.feedFilterMenu.classList.add('hidden'));
+      // Важно: читаем/пишем this.state.feedFilters НА ПРЯМУЮ — сброс
+      // заменяет объект целиком, и захваченная ссылка устарела бы.
       e.feedFilterMenu.addEventListener('click', (ev) => {
         const tb = ev.target.closest('.ff-type');
         if (!tb) return;
-        ff.type = tb.dataset.type;
+        this.state.feedFilters.type = tb.dataset.type;
         this._autoEmptyStreak = 0;
         this._saveFeedFilters(); syncUi(); this.renderPosts();
       });
       const bindNum = (input, key) => input.addEventListener('change', () => {
-        ff[key] = Math.max(0, parseInt(input.value, 10) || 0);
-        input.value = ff[key] || '';
+        this.state.feedFilters[key] = Math.max(0, parseInt(input.value, 10) || 0);
+        input.value = this.state.feedFilters[key] || '';
         this._autoEmptyStreak = 0;
         this._saveFeedFilters(); syncUi(); this.renderPosts();
       });

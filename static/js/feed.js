@@ -513,6 +513,9 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
       added++;
       // Фильтр убирает карточку из отображения, но пост остаётся в state.
       if (!this.passesFeedFilters(post)) return;
+      const card = this.createPostCard(post);
+      card.dataset.index = postIdx;
+      frag.appendChild(card);
     });
     this.state.page++;
     this.state.hasMore = rawCount > 0 && (rawCount >= this.pageSize() || added > 0);
@@ -603,7 +606,13 @@ App.maybeLoadMore = function () {
     // молотит провайдер страницу за страницей без остановки.
     const streak = this._autoEmptyStreak || 0;
     const gap = Math.min(8000, 1000 * Math.pow(2, streak));
-    if (Date.now() - (this._lastAutoLoad || 0) < gap) return;
+    const wait = (this._lastAutoLoad || 0) + gap - Date.now();
+    if (wait > 0) {
+      // Не теряем попытку — переносим её на конец паузы.
+      clearTimeout(this._autoRetryTimer);
+      this._autoRetryTimer = setTimeout(() => this.maybeLoadMore(), wait + 60);
+      return;
+    }
     this._lastAutoLoad = Date.now();
     const before = this._displayCount || 0;
     this.loadMore().then(() => {
@@ -864,6 +873,9 @@ App.renderPosts = function () {
       actions: [{ key: 'reset', label: 'Сбросить фильтры' }, { key: 'random', label: 'Случайный пост' }],
     }));
     this.updateStatus();
+    // Под фильтр пусто — догружаем дальше (с кулдауном), вдруг видео/гиф
+    // появятся на следующих страницах.
+    if (this.feedFiltersActive()) this.maybeLoadMore();
     return;
   }
   const idxById = new Map(this.state.posts.map((p, i) => [p.id, i]));
@@ -875,6 +887,12 @@ App.renderPosts = function () {
   });
   byId.forEach(card => card.remove());
   this.updateStatus();
+  // Показано мало карточек, а лента может продолжаться — подтягиваем ещё
+  // (maybeLoadMore сам держит кулдаун и не даст шторма запросов).
+  if (this.feedFiltersActive() && this.state.hasMore &&
+      this.els.grid.querySelectorAll('.post-card').length < 24) {
+    this.maybeLoadMore();
+  }
 };
 
 App.toggleSelect = function (id) {
