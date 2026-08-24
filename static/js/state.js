@@ -14,7 +14,6 @@ export const App = {
     sortBy: '',
     displayMode: 'search', displayIds: [], theme: 'dark',
     gridCols: null,
-    feedFilters: { type: 'all', minScore: 0, minWidth: 0, minHeight: 0 },
   },
   els: {},
 
@@ -73,8 +72,6 @@ export const App = {
       btnHeaderMenu: _('btn-header-menu'), headerMenu: _('header-menu'), searchClear: _('search-clear'),
       providerBadge: _('provider-badge'), providerMenu: _('provider-menu'), providerMenuList: _('provider-menu-list'),
       ratingToggle: _('rating-toggle'), feedProgress: _('feed-progress'), queryMeta: _('query-meta'),
-      feedFilterBtn: _('feed-filter-btn'), feedFilterMenu: _('feed-filter-menu'),
-      ffMinScore: _('ff-min-score'), ffMinWidth: _('ff-min-width'), ffMinHeight: _('ff-min-height'), ffReset: _('ff-reset'),
       searchChips: _('search-chips'), scrollProgress: _('scroll-progress'),
       viewerRelated: _('viewer-related'), btnLikesDownload: _('btn-likes-download'),
       panelBackdrop: _('panel-backdrop'),
@@ -256,59 +253,6 @@ export const App = {
         e.ratingToggle.querySelectorAll('.rt-btn').forEach(x => x.classList.toggle('active', x === b));
         API.invalidate('/');
         this.loadPosts(true, null, true);
-      });
-    }
-    // Клиентские фильтры ленты: тип/очки/разрешение. Фильтруем отображение,
-    // пагинацию не трогаем.
-    if (e.feedFilterMenu) {
-      const savedFf = (() => { try { return JSON.parse(localStorage.getItem('briefly-feed-filters') || 'null'); } catch { return null; } })();
-      if (savedFf && typeof savedFf === 'object') {
-        this.state.feedFilters = {
-          type: ['all', 'video', 'gif', 'image'].includes(savedFf.type) ? savedFf.type : 'all',
-          minScore: Math.max(0, parseInt(savedFf.minScore, 10) || 0),
-          minWidth: Math.max(0, parseInt(savedFf.minWidth, 10) || 0),
-          minHeight: Math.max(0, parseInt(savedFf.minHeight, 10) || 0),
-        };
-      }
-      const getFf = () => this.state.feedFilters;
-      const syncUi = () => {
-        const ff = getFf();
-        e.feedFilterMenu.querySelectorAll('.ff-type').forEach(b => b.classList.toggle('active', b.dataset.type === ff.type));
-        e.ffMinScore.value = ff.minScore || '';
-        e.ffMinWidth.value = ff.minWidth || '';
-        e.ffMinHeight.value = ff.minHeight || '';
-        const on = ff.type !== 'all' || ff.minScore > 0 || ff.minWidth > 0 || ff.minHeight > 0;
-        e.feedFilterBtn.classList.toggle('active', on);
-      };
-      syncUi();
-      e.feedFilterBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        e.feedFilterMenu.classList.toggle('hidden');
-      });
-      e.feedFilterMenu.addEventListener('click', (ev) => ev.stopPropagation());
-      document.addEventListener('click', () => e.feedFilterMenu.classList.add('hidden'));
-      // Важно: читаем/пишем this.state.feedFilters НА ПРЯМУЮ — сброс
-      // заменяет объект целиком, и захваченная ссылка устарела бы.
-      e.feedFilterMenu.addEventListener('click', (ev) => {
-        const tb = ev.target.closest('.ff-type');
-        if (!tb) return;
-        this.state.feedFilters.type = tb.dataset.type;
-        this._autoEmptyStreak = 0;
-        this._saveFeedFilters(); syncUi(); this.renderPosts();
-      });
-      const bindNum = (input, key) => input.addEventListener('change', () => {
-        this.state.feedFilters[key] = Math.max(0, parseInt(input.value, 10) || 0);
-        input.value = this.state.feedFilters[key] || '';
-        this._autoEmptyStreak = 0;
-        this._saveFeedFilters(); syncUi(); this.renderPosts();
-      });
-      bindNum(e.ffMinScore, 'minScore');
-      bindNum(e.ffMinWidth, 'minWidth');
-      bindNum(e.ffMinHeight, 'minHeight');
-      e.ffReset.addEventListener('click', () => {
-        this.state.feedFilters = { type: 'all', minScore: 0, minWidth: 0, minHeight: 0 };
-        this._autoEmptyStreak = 0;
-        this._saveFeedFilters(); syncUi(); this.renderPosts();
       });
     }
     // Автоскрытие хедера + полоса глубины скролла ленты.
@@ -989,10 +933,6 @@ export const App = {
 
   closePresetsSubmenu() {
     this.els.headerMenu.innerHTML = this._headerMenuHTML || '';
-  },
-
-  _saveFeedFilters() {
-    try { localStorage.setItem('briefly-feed-filters', JSON.stringify(this.state.feedFilters)); } catch { /* noop */ }
   },
 };
 
