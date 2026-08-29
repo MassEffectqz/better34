@@ -1,6 +1,7 @@
 import { App } from './state.js';
 import { icon, esc, go } from './utils.js';
 import { API } from './api.js';
+import { t, tf } from './i18n.js';
 const CHIP_X_ICO = icon('x', 10);
 const CHIP_PLUS_ICO = icon('plus', 10);
 const CHIP_MINUS_ICO = icon('minus', 10);
@@ -124,7 +125,7 @@ App.renderModeBar = function () {
   const bar = this.els.modeBar;
   if (this.state.recommendActive) {
     const liked = (this.state.profile && this.state.profile.liked_posts) || [];
-    this.els.modeBarText.textContent = `Рекомендации по вашим лайкам (${liked.length})`;
+    this.els.modeBarText.textContent = tf('mode.recommend', { n: liked.length });
     this.els.modeBarRefresh.classList.remove('hidden');
     bar.classList.remove('hidden');
     this.els.sentinel.style.display = '';
@@ -134,9 +135,9 @@ App.renderModeBar = function () {
   if (mode === 'search') {
     bar.classList.add('hidden');
   } else {
-    const label = mode === 'likes' ? 'Лайки' : 'Скрытые';
+    const what = mode === 'likes' ? t('mode.likes') : mode === 'hides' ? t('mode.hides') : t('mode.collection');
     const count = this.state.displayIds.length;
-    this.els.modeBarText.textContent = `Показываю ${label.toLowerCase()} (${count})`;
+    this.els.modeBarText.textContent = tf('mode.showing', { what, n: count });
     bar.classList.remove('hidden');
   }
   this.els.modeBarRefresh.classList.add('hidden');
@@ -157,9 +158,9 @@ App.clearMode = function () {
   } else {
     this.clearGrid();
     this.els.grid.appendChild(this.renderEmptyState({
-      title: 'Введите теги для поиска',
-      subtitle: 'Начните печатать, чтобы найти посты',
-      actions: [{ key: 'random', label: 'Случайный пост' }],
+      title: t('empty.enterTags'),
+      subtitle: t('empty.startTyping'),
+      actions: [{ key: 'random', label: t('menu.random') }],
     }));
     this.updateStatus();
   }
@@ -167,10 +168,11 @@ App.clearMode = function () {
   this.pushState(this.state.query, null);
 };
 
-App.showGridMode = async function (type) {
-  const ids = type === 'likes'
-    ? (this.state.profile.liked_posts || [])
-    : (this.state.profile.hidden_posts || []);
+App.showGridMode = async function (type, idsOverride) {
+  const ids = idsOverride ||
+    (type === 'likes'
+      ? (this.state.profile.liked_posts || [])
+      : (this.state.profile.hidden_posts || []));
   if (!ids.length) return;
   // Инвалидируем in-flight loadPosts: их ответы не должны дописываться в лайки.
   this._feedSeq = (this._feedSeq || 0) + 1;
@@ -179,7 +181,7 @@ App.showGridMode = async function (type) {
   this.state.displayIds = ids;
   this.state.viewerOpen = false;
   this.state.loading = true;
-  this.setStatus(`Загрузка ${type === 'likes' ? 'лайков' : 'скрытых'}: ${ids.length}...`);
+  this.setStatus(`…: ${ids.length}`);
   this.showSkeletons(Math.min(ids.length, 20));
   try {
     const data = await API.get(`/posts-by-ids?ids=${ids.join(',')}`);
@@ -191,9 +193,9 @@ App.showGridMode = async function (type) {
     this.renderPosts();
     const failed = ids.length - this.state.posts.length;
     if (failed > 0) {
-      this.showToast(`Загружено ${this.state.posts.length} из ${ids.length}${failed > 0 ? `, ${failed} не найдены` : ''}`, 'warning');
+      this.showToast(`${this.state.posts.length} / ${ids.length}${failed > 0 ? `, -${failed}` : ''}`, 'warning');
     }
-    this.setStatus(`${this.state.posts.length} ${type === 'likes' ? 'лайков' : 'скрытых'}`);
+    this.setStatus(String(this.state.posts.length));
     this.pushState(this.state.query, null);
   } catch (err) {
     this.hideSkeletons();
@@ -481,13 +483,13 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
       if (this.state.posts.length === 0) {
         this.els.grid.innerHTML = '';
         this.els.grid.appendChild(this.state.isLocal
-          ? this.renderEmptyState({ title: 'Нет скачанных постов', subtitle: 'Скачайте посты — они появятся здесь', actions: [{ key: 'random', label: 'Случайный пост' }] })
+          ? this.renderEmptyState({ title: t('empty.noLocal'), subtitle: t('empty.noLocalHint'), actions: [{ key: 'random', label: t('menu.random') }] })
           : this.renderEmptyState({
-              title: 'Ничего не найдено',
-              subtitle: 'Попробуйте другие теги или сбросьте фильтры',
+              title: t('empty.nothing'),
+              subtitle: t('empty.tryOther'),
               actions: (this.state.query || (this.state.profile && this.state.profile.hidden_tags && this.state.profile.hidden_tags.length))
-                ? [{ key: 'reset', label: 'Сбросить фильтры' }, { key: 'random', label: 'Случайный пост' }]
-                : [{ key: 'random', label: 'Случайный пост' }],
+                ? [{ key: 'reset', label: t('btn.resetFilters') }, { key: 'random', label: t('menu.random') }]
+                : [{ key: 'random', label: t('menu.random') }],
             }));
       }
       this.state.loading = false; restoreTop(); this._finishFeedLoad(); this.updateStatus(); this._runPendingReload(); return;
@@ -547,7 +549,7 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
       this.showToast(msg, 'error');
     } else {
       this.els.grid.innerHTML = '';
-      this.els.grid.appendChild(this.renderEmptyState({ title: 'Ошибка запроса', subtitle: msg, actions: [{ key: 'retry', label: 'Повторить' }, { key: 'random', label: 'Случайный пост' }] }));
+      this.els.grid.appendChild(this.renderEmptyState({ title: t('empty.error'), subtitle: msg, actions: [{ key: 'retry', label: t('btn.retry') }, { key: 'random', label: t('menu.random') }] }));
     }
   }
   if (restorePostId != null && !this.state.viewerOpen) {
@@ -829,9 +831,9 @@ App.renderPosts = function () {
   if (display.length === 0) {
     this.els.grid.innerHTML = '';
     this.els.grid.appendChild(this.renderEmptyState({
-      title: 'Нет постов под фильтры',
-      subtitle: 'Попробуйте изменить фильтры',
-      actions: [{ key: 'reset', label: 'Сбросить фильтры' }, { key: 'random', label: 'Случайный пост' }],
+      title: t('empty.noMatch'),
+      subtitle: t('empty.changeFilters'),
+      actions: [{ key: 'reset', label: t('btn.resetFilters') }, { key: 'random', label: t('menu.random') }],
     }));
     this.updateStatus();
     return;
@@ -864,9 +866,22 @@ App.clearSelection = function () {
 
 App.updateBatchBar = function () {
   const n = this.state.selected.size;
-  this.els.batchCount.textContent = `Выбрано: ${n}`;
+  this.els.batchCount.textContent = tf('batch.selected', { n });
   this.els.batchBar.classList.toggle('active', n > 0);
   document.body.classList.toggle('batch-active', n > 0);
+};
+
+// batchZipDownload — отдаёт выбранные скачанные посты одним ZIP-архивом
+// (браузерный download, без чтения в память). Нескачанные сервер пропускает.
+App.batchZipDownload = function () {
+  const ids = Array.from(this.state.selected);
+  if (!ids.length) return;
+  const a = document.createElement('a');
+  a.href = `/api/download-zip?ids=${ids.join(',')}`;
+  a.download = 'briefly.zip';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 };
 
 App.batchDownload = async function () {
@@ -923,7 +938,7 @@ App.batchHide = async function () {
 
 App.setStatus = function (msg) { this.els.statusText.textContent = msg; };
 App.updateStatus = function () {
-  const mode = this.state.isLocal ? 'локально' : (this.state.recommendActive ? 'рекомендации' : (this.state.query ? 'поиск' : 'последние посты'));
-  this.setStatus(`${this.state.posts.length} постов · ${mode}`);
+  const mode = this.state.isLocal ? t('status.local') : (this.state.recommendActive ? t('status.recommend') : (this.state.query ? t('status.search') : t('status.latest')));
+  this.setStatus(tf('status.posts', { n: this.state.posts.length, mode }));
   this.renderFilterChips();
 };

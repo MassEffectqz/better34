@@ -43,6 +43,14 @@ func (h *Handler) AuthRegister(c *gin.Context) {
 		authTooMany(c, wait)
 		return
 	}
+	acc := GetAccounts()
+	// Саморегистрация открыта только до создания первого аккаунта:
+	// иначе любой хост LAN заводит себе доступ к общим данным.
+	// Дальнейшие пользователи — по договорённости с админом (вручную).
+	if acc.Count() > 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "регистрация закрыта: аккаунт уже существует"})
+		return
+	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -51,7 +59,6 @@ func (h *Handler) AuthRegister(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный запрос"})
 		return
 	}
-	acc := GetAccounts()
 	user, err := acc.Register(req.Username, req.Password)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -130,6 +137,7 @@ func (h *Handler) AuthLogout(c *gin.Context) {
 // GET /api/auth/me
 func (h *Handler) AuthMe(c *gin.Context) {
 	acc := GetAccounts()
+	registerOpen := acc.Count() == 0
 	if u := sessionUser(c); u != "" {
 		user, ok := acc.Get(u)
 		if ok {
@@ -140,23 +148,17 @@ func (h *Handler) AuthMe(c *gin.Context) {
 					"nickname": user.Nickname,
 					"avatar":   user.Avatar,
 				},
-				"users_exist": true,
+				"users_exist":   true,
+				"is_admin":      acc.IsAdmin(u),
+				"register_open": registerOpen,
 			})
 			return
 		}
 	}
-	if TokenMatches(c) {
-		c.JSON(http.StatusOK, gin.H{
-			"authed":      true,
-			"user":        gin.H{"username": "token", "nickname": "", "avatar": ""},
-			"users_exist": acc.Count() > 0,
-			"token_mode":  true,
-		})
-		return
-	}
 	c.JSON(http.StatusOK, gin.H{
-		"authed":      false,
-		"users_exist": acc.Count() > 0,
+		"authed":        false,
+		"users_exist":   !registerOpen,
+		"register_open": registerOpen,
 	})
 }
 

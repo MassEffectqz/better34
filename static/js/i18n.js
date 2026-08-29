@@ -1,0 +1,338 @@
+// i18n.js — лёгкая локализация интерфейса (RU/EN).
+// Словарь покрывает основной хром UI; строки, которых нет в словаре,
+// остаются как есть. Язык хранится в localStorage('briefly_lang'),
+// по умолчанию — язык браузера.
+const RU = {
+  'header.home': 'На главную',
+  'header.menu': 'Меню',
+  'header.local': 'Локальные (L)',
+  'search.placeholder': 'Поиск тегов...',
+  'search.hint': 'Пробел — И · -тег — исключить · | — чередование лент · / или Ctrl+K — фокус',
+  'search.clear': 'Очистить',
+  'rating.label': 'Фильтр рейтинга',
+  'provider.title': 'Источник постов',
+
+  'menu.search': 'Поиск',
+  'menu.random': 'Случайный пост',
+  'menu.recommend': 'Рекомендации',
+  'menu.presets': 'Пресеты',
+  'menu.grid': 'Плотность сетки',
+  'menu.sections': 'Разделы',
+  'menu.profile': 'Профиль',
+  'menu.local': 'Локальные',
+  'menu.queue': 'Очередь',
+  'menu.stats': 'Статистика',
+  'menu.system': 'Система',
+  'menu.theme': 'Тема',
+  'menu.settings': 'Настройки',
+  'menu.help': 'Справка',
+  'menu.logout': 'Выйти',
+
+  'pf.title': 'Профиль',
+  'pf.close': 'Закрыть (Esc)',
+  'pf.nickname': 'Ваш ник',
+  'stat.presets': 'Пресеты',
+  'stat.likes': 'Лайки',
+  'stat.hides': 'Скрыто',
+  'stat.tags': 'Теги',
+  'tab.presets': 'Пресеты',
+  'tab.likes': 'Лайки',
+  'tab.hides': 'Скрытые',
+  'tab.tags': 'Теги',
+  'tab.collections': 'Коллекции',
+  'preset.namePh': 'Название пресета',
+  'btn.save': 'Сохранить',
+  'preset.saveHint': 'Установите поиск и сохраните его как пресет',
+  'preset.savingCurrent': 'Сохраняется текущий поиск:',
+  'preset.hiddenToPreset': 'Скрытые теги → пресет',
+  'preset.favToPreset': 'Избранные теги → пресет',
+  'btn.export': 'Экспорт',
+  'btn.import': 'Импорт',
+  'likes.empty': 'Нет лайков',
+  'hides.empty': 'Нет скрытых',
+  'btn.showGrid': 'Показать всё в сетке',
+  'btn.downloadLikes': 'Скачать все лайки',
+  'btn.more': 'Показать ещё',
+  'tags.filterPh': 'Поиск по тегам...',
+  'tags.favHead': 'Избранные теги',
+  'tags.hiddenHead': 'Скрытые теги',
+  'tags.plusHint': '(+) в поиске',
+  'tags.minusHint': '(-) в поиске',
+  'btn.clear': 'Очистить',
+  'tags.addFavPh': 'Добавить избранный тег...',
+  'tags.addHiddenPh': 'Добавить скрытый тег...',
+  'collections.newPh': 'Новая коллекция…',
+  'btn.create': 'Создать',
+  'collections.empty': 'Коллекций пока нет. Создайте первую и добавляйте посты кнопкой «папка» во вьюере.',
+  'collections.openInGrid': 'Открыть в сетке',
+  'collections.rename': 'Переименовать',
+  'collections.delete': 'Удалить коллекцию',
+
+  'set.title': 'Настройки',
+  'stab.appearance': 'Оформление',
+  'stab.network': 'Сеть',
+  'stab.download': 'Скачивание',
+  'stab.maintenance': 'Обслуживание',
+  'set.theme': 'Тема',
+  'theme.dark': 'Тёмная',
+  'theme.light': 'Светлая',
+  'theme.auto': 'Авто (системная)',
+  'set.grid': 'Плотность сетки',
+  'grid.auto': 'Авто',
+  'grid.n': '{n} колонки',
+  'set.accent': 'Акцентный цвет',
+  'set.lang': 'Язык интерфейса',
+  'set.provider': 'Источник постов',
+  'set.providerHint': 'Сайт, с которого ищутся и скачиваются посты',
+  'set.apikeys': 'API ключи',
+  'set.apikeysHint': 'каждый ключ со своим user_id, чередуются',
+  'btn.addApi': 'Добавить API',
+  'set.proxy': 'Прокси (SOCKS5)',
+  'set.proxyHint': 'SOCKS5 прокси для обхода блокировок',
+  'set.savepath': 'Путь сохранения',
+  'set.concurrent': 'Одновременных загрузок',
+  'maint.db': 'База данных',
+  'btn.cleanDb': 'Очистить нескачанные',
+  'maint.dups': 'Дубликаты',
+  'btn.findDups': 'Найти дубликаты',
+  'btn.cleanDups': 'Удалить дубликаты',
+  'set.backup': 'Полный бэкап профиля',
+  'set.backupHint': 'Лайки, скрытия, пресеты, теги, коллекции и ваши комментарии',
+  'btn.exportProfile': 'Экспорт профиля',
+  'btn.importProfile': 'Импорт профиля',
+  'btn.saveSettings': 'Сохранить',
+
+  'stats.title': 'Статистика',
+  'queue.title': 'Очередь загрузок',
+  'confirm.title': 'Подтверждение',
+  'confirm.cancel': 'Отмена',
+  'confirm.ok': 'Подтвердить',
+  'help.title': 'Горячие клавиши',
+
+  'batch.selected': 'Выбрано: {n}',
+  'batch.download': 'Скачать',
+  'batch.hide': 'Скрыть',
+  'batch.zip': 'ZIP-архив',
+
+  'status.ready': 'готово',
+  'status.posts': '{n} постов · {mode}',
+  'status.search': 'поиск',
+  'status.local': 'локально',
+  'status.recommend': 'рекомендации',
+  'status.latest': 'последние посты',
+  'viewer.downloaded': 'скачано',
+  'viewer.pressX': 'нажми X для скачивания',
+  'empty.enterTags': 'Введите теги для поиска',
+  'empty.startTyping': 'Начните печатать, чтобы найти посты',
+  'empty.nothing': 'Ничего не найдено',
+  'empty.tryOther': 'Попробуйте другие теги или сбросьте фильтры',
+  'empty.noLocal': 'Нет скачанных постов',
+  'empty.noLocalHint': 'Скачайте посты — они появятся здесь',
+  'empty.error': 'Ошибка запроса',
+  'empty.noMatch': 'Нет постов под фильтры',
+  'empty.changeFilters': 'Попробуйте изменить фильтры',
+  'btn.resetFilters': 'Сбросить фильтры',
+  'btn.retry': 'Повторить',
+  'mode.likes': 'лайков',
+  'mode.hides': 'скрытых',
+  'mode.collection': 'коллекцию',
+  'mode.showing': 'Показываю {what} ({n})',
+  'mode.recommend': 'Рекомендации по вашим лайкам ({n})',
+
+  'help.feed': 'Лента',
+  'help.view': 'Просмотр',
+  'help.zoom': 'Зум и панорама',
+  'help.ui': 'Интерфейс',
+};
+
+const EN = {
+  'header.home': 'Home',
+  'header.menu': 'Menu',
+  'header.local': 'Local (L)',
+  'search.placeholder': 'Search tags...',
+  'search.hint': 'Space — AND · -tag — exclude · | — alternating feeds · / or Ctrl+K — focus',
+  'search.clear': 'Clear',
+  'rating.label': 'Rating filter',
+  'provider.title': 'Post source',
+
+  'menu.search': 'Search',
+  'menu.random': 'Random post',
+  'menu.recommend': 'For you',
+  'menu.presets': 'Presets',
+  'menu.grid': 'Grid density',
+  'menu.sections': 'Sections',
+  'menu.profile': 'Profile',
+  'menu.local': 'Local files',
+  'menu.queue': 'Queue',
+  'menu.stats': 'Statistics',
+  'menu.system': 'System',
+  'menu.theme': 'Theme',
+  'menu.settings': 'Settings',
+  'menu.help': 'Shortcuts',
+  'menu.logout': 'Log out',
+
+  'pf.title': 'Profile',
+  'pf.close': 'Close (Esc)',
+  'pf.nickname': 'Your nickname',
+  'stat.presets': 'Presets',
+  'stat.likes': 'Likes',
+  'stat.hides': 'Hidden',
+  'stat.tags': 'Tags',
+  'tab.presets': 'Presets',
+  'tab.likes': 'Likes',
+  'tab.hides': 'Hidden',
+  'tab.tags': 'Tags',
+  'tab.collections': 'Collections',
+  'preset.namePh': 'Preset name',
+  'btn.save': 'Save',
+  'preset.saveHint': 'Set a search and save it as a preset',
+  'preset.savingCurrent': 'Saving current search:',
+  'preset.hiddenToPreset': 'Hidden tags → preset',
+  'preset.favToPreset': 'Favorite tags → preset',
+  'btn.export': 'Export',
+  'btn.import': 'Import',
+  'likes.empty': 'No likes yet',
+  'hides.empty': 'Nothing hidden',
+  'btn.showGrid': 'Show all in grid',
+  'btn.downloadLikes': 'Download all likes',
+  'btn.more': 'Show more',
+  'tags.filterPh': 'Filter tags...',
+  'tags.favHead': 'Favorite tags',
+  'tags.hiddenHead': 'Hidden tags',
+  'tags.plusHint': '(+) in search',
+  'tags.minusHint': '(-) in search',
+  'btn.clear': 'Clear',
+  'tags.addFavPh': 'Add favorite tag...',
+  'tags.addHiddenPh': 'Add hidden tag...',
+  'collections.newPh': 'New collection…',
+  'btn.create': 'Create',
+  'collections.empty': 'No collections yet. Create one and add posts with the folder button in the viewer.',
+  'collections.openInGrid': 'Open in grid',
+  'collections.rename': 'Rename',
+  'collections.delete': 'Delete collection',
+
+  'set.title': 'Settings',
+  'stab.appearance': 'Appearance',
+  'stab.network': 'Network',
+  'stab.download': 'Downloads',
+  'stab.maintenance': 'Maintenance',
+  'set.theme': 'Theme',
+  'theme.dark': 'Dark',
+  'theme.light': 'Light',
+  'theme.auto': 'Auto (system)',
+  'set.grid': 'Grid density',
+  'grid.auto': 'Auto',
+  'grid.n': '{n} columns',
+  'set.accent': 'Accent color',
+  'set.lang': 'UI language',
+  'set.provider': 'Post source',
+  'set.providerHint': 'Site used for searching and downloading posts',
+  'set.apikeys': 'API keys',
+  'set.apikeysHint': 'each key with its user_id, rotated',
+  'btn.addApi': 'Add API key',
+  'set.proxy': 'Proxy (SOCKS5)',
+  'set.proxyHint': 'SOCKS5 proxy to bypass blocks',
+  'set.savepath': 'Save path',
+  'set.concurrent': 'Parallel downloads',
+  'maint.db': 'Database',
+  'btn.cleanDb': 'Purge non-downloaded',
+  'maint.dups': 'Duplicates',
+  'btn.findDups': 'Find duplicates',
+  'btn.cleanDups': 'Remove duplicates',
+  'set.backup': 'Full profile backup',
+  'set.backupHint': 'Likes, hidden posts, presets, tags, collections and your comments',
+  'btn.exportProfile': 'Export profile',
+  'btn.importProfile': 'Import profile',
+  'btn.saveSettings': 'Save',
+
+  'stats.title': 'Statistics',
+  'queue.title': 'Download queue',
+  'confirm.title': 'Confirm',
+  'confirm.cancel': 'Cancel',
+  'confirm.ok': 'Confirm',
+  'help.title': 'Keyboard shortcuts',
+
+  'batch.selected': 'Selected: {n}',
+  'batch.download': 'Download',
+  'batch.hide': 'Hide',
+  'batch.zip': 'ZIP archive',
+
+  'status.ready': 'idle',
+  'status.posts': '{n} posts · {mode}',
+  'status.search': 'search',
+  'status.local': 'local',
+  'status.recommend': 'for you',
+  'status.latest': 'latest posts',
+  'viewer.downloaded': 'downloaded',
+  'viewer.pressX': 'press X to download',
+  'empty.enterTags': 'Enter tags to search',
+  'empty.startTyping': 'Start typing to find posts',
+  'empty.nothing': 'Nothing found',
+  'empty.tryOther': 'Try other tags or reset filters',
+  'empty.noLocal': 'No downloaded posts',
+  'empty.noLocalHint': 'Download posts and they will appear here',
+  'empty.error': 'Request failed',
+  'empty.noMatch': 'No posts match the filters',
+  'empty.changeFilters': 'Try changing the filters',
+  'btn.resetFilters': 'Reset filters',
+  'btn.retry': 'Retry',
+  'mode.likes': 'likes',
+  'mode.hides': 'hidden',
+  'mode.collection': 'collection',
+  'mode.showing': 'Showing {what} ({n})',
+  'mode.recommend': 'Recommendations from your likes ({n})',
+
+  'help.feed': 'Feed',
+  'help.view': 'Viewer',
+  'help.zoom': 'Zoom & pan',
+  'help.ui': 'Interface',
+};
+
+const DICTS = { ru: RU, en: EN };
+
+let lang = 'ru';
+try {
+  const saved = localStorage.getItem('briefly_lang');
+  if (saved === 'ru' || saved === 'en') lang = saved;
+  else if (!saved && (navigator.language || '').toLowerCase().startsWith('en')) lang = 'en';
+} catch { /* noop */ }
+
+function t(key) {
+  return DICTS[lang][key] ?? DICTS.ru[key] ?? key;
+}
+
+// tf(key, {n: 5}) → подставляет {name} в переводе.
+function tf(key, params) {
+  let s = t(key);
+  if (params) {
+    for (const [k, v] of Object.entries(params)) s = s.replaceAll(`{${k}}`, String(v));
+  }
+  return s;
+}
+
+function applyI18n(root) {
+  const host = root || document;
+  host.querySelectorAll('[data-i18n]').forEach(el => {
+    const v = t(el.dataset.i18n);
+    if (typeof v === 'string') el.textContent = v;
+  });
+  host.querySelectorAll('[data-i18n-ph]').forEach(el => {
+    el.placeholder = t(el.dataset.i18nPh);
+  });
+  host.querySelectorAll('[data-i18n-title]').forEach(el => {
+    el.title = t(el.dataset.i18nTitle);
+  });
+}
+
+function getLang() { return lang; }
+
+function setLang(next) {
+  if (next !== 'ru' && next !== 'en') return;
+  lang = next;
+  try { localStorage.setItem('briefly_lang', lang); } catch { /* noop */ }
+  applyI18n();
+  document.documentElement.lang = lang;
+  window.dispatchEvent(new CustomEvent('briefly-lang', { detail: lang }));
+}
+
+export { t, tf, getLang, setLang, applyI18n };

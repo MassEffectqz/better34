@@ -1,7 +1,7 @@
 import { App } from './state.js';
 App.onKeydown = function (e) {
   const { viewerOpen, settingsOpen, profileOpen, posts } = this.state;
-  const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+  const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
   const code = e.code;
 
   // Ctrl/Cmd+K — фокус поиска из любого места (в т.ч. из полей ввода).
@@ -34,6 +34,10 @@ App.onKeydown = function (e) {
   if (code === 'KeyF' && viewerOpen) { e.preventDefault(); this.toggleFullscreen(); return; }
 
   if (viewerOpen) {
+    // Не перехватываем клавиши, пока пользователь печатает в поле
+    // (комментарии, скорость слайдшоу): q/e/x/wasd и т.д. должны вводиться.
+    // Escape и Ctrl/Cmd+K обработаны выше и работают даже из поля ввода.
+    if (isInput) return;
     const img = this.els.viewerContent.querySelector('img');
     const isZoomed = img && this._zoomActive;
     // Для видео стрелки ←/→ перематывают (Shift+←/→ листают посты),

@@ -1,5 +1,6 @@
 import { App } from './state.js';
 import { esc } from './utils.js';
+import { t } from './i18n.js';
 App.confirmDialog = function (opts) {
   return new Promise((resolve) => {
     const el = this.els.confirmModal;
@@ -36,7 +37,7 @@ App.confirmDialog = function (opts) {
 
 App.showHelp = function () {
   const groups = [
-    { title: 'Лента', rows: [
+    { title: t('help.feed'), rows: [
       [['W', 'A', 'S', 'D', '←', '↑', '↓', '→'], 'Навигация по сетке'],
       [['Enter'], 'Открыть пост'],
       [['PageUp', 'PageDown'], 'Прокрутка по страницам'],
@@ -47,7 +48,7 @@ App.showHelp = function () {
       [['/', 'Ctrl K'], 'Фокус поиска'],
       [['L'], 'Локальные посты'],
     ] },
-    { title: 'Просмотр', rows: [
+    { title: t('help.view'), rows: [
       [['←', '→'], 'Предыдущий / следующий пост'],
       [['←', '→'], 'Перемотка видео ±5 с'],
       [['Shift', '←', '→'], 'Листать посты при видео'],
@@ -61,13 +62,13 @@ App.showHelp = function () {
       [['Q', 'E'], 'Лайк / Скрыть'],
       [['ESC'], 'Закрыть'],
     ] },
-    { title: 'Зум и панорама', rows: [
+    { title: t('help.zoom'), rows: [
       [['+', '−'], 'Приблизить / отдалить'],
       [['W', 'A', 'S', 'D', '←', '↑', '↓', '→'], 'Панорама'],
       [['PageUp', 'PageDown'], 'Листать по страницам'],
       [['Home', 'End'], 'Край изображения'],
     ] },
-    { title: 'Интерфейс', rows: [
+    { title: t('help.ui'), rows: [
       [['ESC'], 'Закрыть панели и меню'],
       [['?'], 'Эта справка'],
     ] },

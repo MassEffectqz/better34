@@ -383,6 +383,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 .viewer-loader{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:5;pointer-events:none;opacity:0;transition:opacity .2s}
 .viewer-loader.active{opacity:1}
+/* Пока видео буферизуется: постер (превью) виден под полупрозрачным лоадером */
+.viewer-content.video-loading .viewer-loader{background:rgba(0,0,0,.45)}
+.viewer-content.video-loading video{width:100%;height:100%}
 
 
 .toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:var(--radius);padding:10px 20px;font-size:.85rem;color:var(--text);z-index:2000;box-shadow:0 8px 28px rgba(0,0,0,.5),0 0 18px color-mix(in srgb,var(--accent) 14%,transparent);transition:opacity var(--transition);animation:toastIn .25s cubic-bezier(.22,1,.36,1)}
@@ -747,3 +750,85 @@ button,a{-webkit-tap-highlight-color:transparent}
 #scroll-progress{position:fixed;top:0;left:0;height:2px;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-dim));z-index:600;pointer-events:none;opacity:.9;transition:width .08s linear}
 #header{transition:transform .22s ease,margin-bottom .22s ease}
 #header.header-hidden{transform:translateY(-105%);margin-bottom:var(--hh,-58px)}
+
+/* --- коллекции: вкладка профиля --- */
+.collection-form{display:flex;gap:8px;margin-bottom:12px}
+.collection-form input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--text);font-size:.85rem;outline:none}
+.collection-form input:focus{border-color:var(--accent)}
+.collection-item{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;cursor:pointer;transition:all var(--transition);margin-bottom:6px;background:var(--surface2);border:1px solid var(--border)}
+.collection-item:hover{background:var(--hover);border-color:var(--accent-dim);transform:translateX(2px)}
+.collection-item .collection-ico{color:var(--accent);display:inline-flex;flex-shrink:0}
+.collection-item .collection-name{flex:1;font-size:.85rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.collection-item .collection-count{font-size:.72rem;color:var(--text-dim);background:var(--surface3);border-radius:10px;padding:2px 8px;flex-shrink:0}
+.collection-item .btn-icon-sm{opacity:0;transition:opacity var(--transition)}
+.collection-item:hover .btn-icon-sm,.collection-item:focus-within .btn-icon-sm{opacity:1}
+@media(hover:none){.collection-item .btn-icon-sm{opacity:1}}
+.collection-item .col-del:hover{color:var(--error);border-color:var(--error)}
+
+/* --- меню «в коллекцию» во вьюере --- */
+.collect-control{position:relative;display:flex;flex-shrink:0}
+.collect-control .btn-icon{pointer-events:auto}
+.collect-menu{position:absolute;top:calc(100% + 8px);right:-6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:1200;min-width:220px;max-width:min(280px,calc(100vw - 32px));max-height:min(320px,55vh);overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:2px}
+.collect-menu.hidden{display:none}
+.collect-menu-new{display:flex;gap:6px;margin-bottom:4px}
+.collect-menu-new input{flex:1;min-width:0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 10px;color:var(--text);font-size:.85rem;outline:none}
+.collect-menu-new input:focus{border-color:var(--accent)}
+.collect-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;background:none;border:none;border-radius:var(--radius-sm);color:var(--text);font-size:.83rem;text-align:left;cursor:pointer;transition:background var(--transition)}
+.collect-menu-item:hover{background:var(--hover)}
+.collect-menu-item.active{color:var(--accent)}
+.collect-menu-item .cm-check{width:15px;flex-shrink:0;display:inline-flex}
+.collect-menu-item .cm-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.collect-menu-item .cm-count{font-size:.7rem;color:var(--text-dim);flex-shrink:0}
+.collect-menu-empty{padding:8px 10px;font-size:.78rem;color:var(--text-dim)}
+
+/* --- персональная активность в модалке статистики --- */
+.act-chart{display:flex;align-items:flex-end;gap:5px;height:90px;padding:8px 4px 0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius)}
+.act-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0}
+.act-col i{display:block;width:70%;max-width:22px;min-height:2px;background:linear-gradient(180deg,var(--accent),var(--accent-dim));border-radius:3px 3px 0 0;opacity:.9}
+.act-col span{font-size:.56rem;color:var(--text-dim);margin-top:4px;white-space:nowrap}
+
+/* --- брендовый логотип: заливка управляется темой --- */
+.brand-logo-bg{fill:#161616}
+
+/* --- полировка светлой темы --- */
+[data-theme="light"] ::selection{background:color-mix(in srgb,var(--accent) 25%,transparent)}
+[data-theme="light"] .toast{box-shadow:0 8px 28px rgba(0,0,0,.18),0 0 18px color-mix(in srgb,var(--accent) 10%,transparent)}
+[data-theme="light"] .profile-avatar{box-shadow:0 8px 24px rgba(0,0,0,.22)}
+[data-theme="light"] .post-card.focused{box-shadow:0 0 0 3px var(--accent),0 6px 16px rgba(0,0,0,.18)}
+[data-theme="light"] .viewer-backdrop{background:rgba(20,20,24,.88)}
+[data-theme="light"] .auth-card{background:linear-gradient(180deg,rgba(255,255,255,.65),rgba(255,255,255,.35)),color-mix(in srgb,var(--surface) 88%,transparent);box-shadow:0 0 0 1px rgba(0,0,0,.06),0 24px 60px rgba(0,0,0,.14)}
+[data-theme="light"] #header::after{opacity:.35}
+
+/* --- дропдауны: не вылезают за правый край на любых экранах --- */
+.grid-menu{right:0;left:auto}
+.suggestions,.history-dropdown{overscroll-behavior:contain}
+
+/* --- мобильные экраны: хедер и дропдауны --- */
+@media(max-width:640px){
+  /* Меню источника прижато к правому краю и не шире вьюпорта */
+  #provider-control .grid-menu{right:0;left:auto;max-width:calc(100vw - 20px)}
+  .collect-menu{right:-2px}
+}
+@media(max-width:600px){
+  /* Полупрозрачный хедер с блюром: лента «просвечивает» мягко */
+  #header{background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  @supports not ((backdrop-filter:blur(4px)) or (-webkit-backdrop-filter:blur(4px))){
+    #header{background:var(--surface)}
+  }
+  .header-content{row-gap:8px}
+  /* Второй ряд: локальные | рейтинг | источник — рейтинг растягивается */
+  .header-actions{gap:8px}
+  .rating-toggle{flex:1;display:flex}
+  .rating-toggle .rt-btn{flex:1;padding:9px 6px;font-size:.72rem}
+  /* Дропдауны поиска: больше высоты и крупнее тапы */
+  .suggestions,.history-dropdown{max-height:min(46vh,340px)}
+  .suggestion-item,.history-item{padding:13px 14px;font-size:.95rem}
+  /* Предотвращаем авто-зум iOS: поля ввода >= 16px */
+  .preset-form input,.collection-form input,#tag-filter,
+  .tag-input-row input,.setting-group input[type="text"],
+  .setting-group input[type="number"],.vc-form input,
+  .collect-menu-new input,.preset-rename{font-size:16px}
+  /* Модалки/меню не упираются в края */
+  .modal-content{width:94vw}
+  .act-col span{font-size:.52rem}
+}

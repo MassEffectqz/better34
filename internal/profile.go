@@ -20,6 +20,15 @@ type Profile struct {
 	FavTags     map[string]bool `json:"fav_tags"`
 	HiddenTags  map[string]bool `json:"hidden_tags"`
 	RecDisliked map[string]int  `json:"rec_disliked,omitempty"`
+	Collections []Collection    `json:"collections,omitempty"`
+}
+
+// Collection — именованный альбом постов с сохранённым порядком добавления.
+type Collection struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Posts   []int  `json:"posts"`
+	CreatedAt int64 `json:"created_at,omitempty"`
 }
 
 type QueryPreset struct {
@@ -68,6 +77,7 @@ func NewProfile(path string) *Profile {
 		FavTags:     make(map[string]bool),
 		HiddenTags:  make(map[string]bool),
 		RecDisliked: make(map[string]int),
+		Collections: []Collection{},
 	}
 	p.load()
 	return p
@@ -84,6 +94,9 @@ func (p *Profile) load() {
 	}
 	if p.RecDisliked == nil {
 		p.RecDisliked = make(map[string]int)
+	}
+	if p.Collections == nil {
+		p.Collections = []Collection{}
 	}
 	p.ensurePresetIDs()
 }
@@ -296,4 +309,94 @@ func (p *Profile) MovePreset(id string, dir int) bool {
 		}
 	}
 	return false
+}
+
+// ── Коллекции: именованные группы постов ────────────────────────────────
+
+func (p *Profile) findCollectionLocked(id string) *Collection {
+	for i := range p.Collections {
+		if p.Collections[i].ID == id {
+			return &p.Collections[i]
+		}
+	}
+	return nil
+}
+
+// AddCollection создаёт коллекцию; при совпадении имени (без учёта регистра)
+// возвращает существующую. ok=false — имя пустое.
+func (p *Profile) AddCollection(name string) (Collection, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Collection{}, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, c := range p.Collections {
+		if strings.EqualFold(c.Name, name) {
+			return c, true
+		}
+	}
+	c := Collection{ID: newPresetID(), Name: name, Posts: []int{}, CreatedAt: time.Now().Unix()}
+	p.Collections = append(p.Collections, c)
+	return c, true
+}
+
+// RenameCollection переименовывает коллекцию. false — не найдена или пустое имя.
+func (p *Profile) RenameCollection(id, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	c := p.findCollectionLocked(id)
+	if c == nil {
+		return false
+	}
+	c.Name = name
+	return true
+}
+
+func (p *Profile) DeleteCollection(id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.Collections {
+		if p.Collections[i].ID == id {
+			p.Collections = append(p.Collections[:i], p.Collections[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// CollectionTogglePost добавляет/убирает пост из коллекции.
+// found=false — коллекции с таким id нет.
+func (p *Profile) CollectionTogglePost(id string, postID int) (added, found bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	c := p.findCollectionLocked(id)
+	if c == nil {
+		return false, false
+	}
+	for i, pid := range c.Posts {
+		if pid == postID {
+			c.Posts = append(c.Posts[:i], c.Posts[i+1:]...)
+			return false, true
+		}
+	}
+	c.Posts = append(c.Posts, postID)
+	return true, true
+}
+
+// CollectionPosts возвращает посты коллекции в порядке добавления.
+func (p *Profile) CollectionPosts(id string) ([]int, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	c := p.findCollectionLocked(id)
+	if c == nil {
+		return nil, false
+	}
+	out := make([]int, len(c.Posts))
+	copy(out, c.Posts)
+	return out, true
 }

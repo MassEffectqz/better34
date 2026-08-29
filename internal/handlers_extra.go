@@ -146,7 +146,7 @@ func (h *Handler) DownloadLiked(c *gin.Context) {
 			PostID:   p.ID,
 			FileURL:  p.FileURL,
 			FileType: p.FileType,
-			Referer:  h.provider().RefererURL(),
+			Referer:  h.refererForFileURL(p.FileURL),
 		})
 		queued++
 	}

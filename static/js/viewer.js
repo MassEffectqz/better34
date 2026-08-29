@@ -1,6 +1,7 @@
 import { App } from './state.js';
 import { icon, esc } from './utils.js';
 import { API } from './api.js';
+import { t } from './i18n.js';
 const VIEWER_X_ICO = icon('x', 9);
 const SS_PLAY_ICO = icon('play', 16, true) + ' Слайдшоу';
 const SS_PAUSE_ICO = icon('pause', 16, true) + ' Слайдшоу';
@@ -26,8 +27,10 @@ App.openViewer = function (index) {
   this._recMarkViewed(post ? post.id : null);
   this.scheduleRelated(post);
   if (post) this.pushState(this.state.query, post.id);
-  if (index + 1 < this.state.posts.length) this.preloadNeighbor(this.state.posts[index + 1]);
+  // Предзагрузка соседей: скрытый <video> один, поэтому последним
+  // запрашиваем следующего поста — его буфер важнее для листания вперёд.
   if (index - 1 >= 0) this.preloadNeighbor(this.state.posts[index - 1]);
+  if (index + 1 < this.state.posts.length) this.preloadNeighbor(this.state.posts[index + 1]);
   this.initViewerTouch();
 };
 
@@ -58,6 +61,7 @@ App.closeViewer = function () {
   this.els.viewer.classList.add('hidden');
   this.els.viewerRelated.classList.add('hidden');
   document.body.style.overflow = '';
+  this.els.viewerContent.classList.remove('video-loading');
   this.els.viewerContent.innerHTML = '';
   if (this.state.posts.length) {
     this.state.focusedIndex = Math.min(this.state.viewerIndex, this.state.posts.length - 1);
@@ -211,6 +215,9 @@ App._renderViewerTags = function () {
 
 App._loadViewerTagCounts = function (tags, spans) {
   if (!tags || !tags.length || !spans || !spans.length) return;
+  // Режим «Все сайты»: выдача смешанная, а счётчики считает только
+  // дефолтный источник — не показываем вводящие в заблуждение числа.
+  if (this.state.activeProvider === 'all') return;
   if (!this._tagCounts) this._tagCounts = {};
   if (this._countAbort) { this._countAbort.abort(); this._countAbort = null; }
   const ac = new AbortController();
@@ -257,6 +264,11 @@ App.renderViewer = function (force) {
 
   const isVideo = post.file_type === 'video';
   const fileUrl = post.downloaded && post.file_path ? `/api/file/${post.id}` : `/api/proxy?url=${encodeURIComponent(post.file_url || '')}`;
+  // Превью для постера видео: пока файл буферизуется, вместо чёрного
+  // экрана показываем ту же картинку, что и в карточке ленты.
+  const videoPosterUrl = post.preview_url
+    ? `/api/proxy?url=${encodeURIComponent(post.preview_url)}`
+    : `/api/thumb/${post.id}`;
   let resolvedFileUrl = fileUrl;
   try {
     const base = (typeof window !== 'undefined' && window.location) ? window.location.href : '';
@@ -274,33 +286,59 @@ App.renderViewer = function (force) {
   viewerLoader.classList.toggle('active', isLoading);
 
   if (isVideo) {
+    let adopted = false;
     if (!mediaEl || mediaEl.tagName !== 'VIDEO') {
+      const pre = this._adoptPreloadedVideo(resolvedFileUrl);
       viewerContent.innerHTML = '';
       viewerContent.appendChild(viewerLoader);
-      const v = document.createElement('video');
-      v.controls = true; v.autoplay = true; v.loop = true;
-      // iOS/Safari: без playsinline autoplay раскрывает видео на весь экран.
-      v.playsInline = true;
-      try { v.setAttribute('playsinline', ''); } catch { /* noop */ }
-      this._applyVideoPrefs(v);
-      this._bindVideoEvents(v);
-      viewerContent.appendChild(v);
-      mediaEl = v;
+      if (pre) {
+        // Сосед уже предзагружался — используем его буфер как есть.
+        pre.poster = videoPosterUrl;
+        this._applyVideoPrefs(pre);
+        this._bindVideoEvents(pre);
+        viewerContent.appendChild(pre);
+        mediaEl = pre;
+        adopted = true;
+      } else {
+        const v = document.createElement('video');
+        v.controls = true; v.autoplay = true; v.loop = true;
+        // iOS/Safari: без playsinline autoplay раскрывает видео на весь экран.
+        v.playsInline = true;
+        try { v.setAttribute('playsinline', ''); } catch { /* noop */ }
+        v.poster = videoPosterUrl;
+        this._applyVideoPrefs(v);
+        this._bindVideoEvents(v);
+        viewerContent.appendChild(v);
+        mediaEl = v;
+      }
     }
-    if (force || mediaEl.src !== resolvedFileUrl) {
+    if (!adopted && (force || mediaEl.src !== resolvedFileUrl)) {
+      // Постер + полупрозрачный лоадер (см. .viewer-content.video-loading):
+      // превью видно всю загрузку, спиннер лишь слегка затемняет его.
+      mediaEl.poster = videoPosterUrl;
+      viewerContent.classList.add('video-loading');
       mediaEl.src = fileUrl;
       this._applyVideoPrefs(mediaEl);
       mediaEl.addEventListener('loadedmetadata', () => this._resumeVideoPosition(post), { once: true });
-      mediaEl.addEventListener('loadeddata', () => viewerLoader.classList.remove('active'), { once: true });
+      const onVideoReady = () => { viewerLoader.classList.remove('active'); viewerContent.classList.remove('video-loading'); };
+      mediaEl.addEventListener('loadeddata', onVideoReady, { once: true });
       mediaEl.addEventListener('error', () => {
-        viewerLoader.classList.remove('active');
+        onVideoReady();
         this._showViewerMediaError(post);
       }, { once: true });
       this._autoplayVideo(mediaEl);
     } else {
+      viewerContent.classList.remove('video-loading');
       viewerLoader.classList.remove('active');
+      if (adopted) {
+        // Видео уже в буфере (метаданные скорее всего тоже) — позиция и запуск сразу.
+        if (mediaEl.readyState >= 1) this._resumeVideoPosition(post);
+        else mediaEl.addEventListener('loadedmetadata', () => this._resumeVideoPosition(post), { once: true });
+        this._autoplayVideo(mediaEl);
+      }
     }
   } else {
+    viewerContent.classList.remove('video-loading');
     if (!mediaEl || mediaEl.tagName !== 'IMG') {
       viewerContent.innerHTML = '';
       viewerContent.appendChild(viewerLoader);
@@ -365,9 +403,14 @@ App.renderViewer = function (force) {
     : icon('heart', 20);
   if (this.els.viewerLikeM) this.els.viewerLikeM.innerHTML = this.els.viewerLike.innerHTML;
 
-  viewerProgress.textContent = post.downloaded ? 'скачано' : 'нажми X для скачивания';
+  viewerProgress.textContent = post.downloaded ? t('viewer.downloaded') : t('viewer.pressX');
   this.updateNavButtons();
   if (typeof this.renderComments === 'function') this.renderComments(post.id);
+  if (typeof this.renderCollectMenu === 'function') {
+    const menu = this.els.collectMenu;
+    if (menu && !menu.classList.contains('hidden')) menu.classList.add('hidden');
+    this.renderCollectMenu(post.id).catch(() => {});
+  }
 };
 
 App.navigateViewer = function (dir) {
@@ -511,11 +554,54 @@ App.preloadVideo = function (post) {
   this._preloadDwellTimer = setTimeout(() => {
     this._preloadDwellTimer = null;
     if (this._preloadVideoUrl !== url || !this._preloadVideoEl) return;
+    // Не конкурируем за канал: пока текущее видео вьюера буферизуется,
+    // полную загрузку соседа откладываем (см. _schedulePreloadFull).
+    const cur = this.currentVideo();
+    if (cur && cur.readyState < 3) { this._schedulePreloadFull(url); return; }
     try {
       this._preloadVideoEl.preload = 'auto';
       this._preloadVideoEl.load();
     } catch { /* noop */ }
   }, App._preloadDwellMs || 1200);
+};
+
+// Отложенная полная буферизация соседа: ждём, пока текущее видео не
+// догрузится (readyState >= HAVE_FUTURE_DATA), иначе два параллельных
+// скачивания замедляют друг друга.
+App._schedulePreloadFull = function (url) {
+  clearTimeout(this._preloadDwellTimer);
+  this._preloadDwellTimer = setTimeout(() => {
+    this._preloadDwellTimer = null;
+    if (this._preloadVideoUrl !== url || !this._preloadVideoEl) return;
+    const cur = this.currentVideo();
+    if (cur && cur.readyState < 3) { this._schedulePreloadFull(url); return; }
+    try {
+      this._preloadVideoEl.preload = 'auto';
+      this._preloadVideoEl.load();
+    } catch { /* noop */ }
+  }, 1000);
+};
+
+// Забираем скрытый предзагружаемый <video>, если он как раз для этого поста:
+// переиспользуем элемент вместе с уже скачанными байтами, поэтому переход
+// на соседний пост стартует мгновенно (как ховер в ленте), без новой загрузки.
+App._adoptPreloadedVideo = function (absUrl) {
+  const pv = this._preloadVideoEl;
+  clearTimeout(this._preloadDwellTimer);
+  this._preloadDwellTimer = null;
+  this._preloadVideoEl = null;
+  this._preloadVideoUrl = null;
+  if (!pv || !absUrl || pv.src !== absUrl) return null;
+  try {
+    pv.removeAttribute('style');
+    pv.removeAttribute('id');
+    pv.controls = true;
+    pv.autoplay = true;
+    pv.loop = true;
+    pv.playsInline = true;
+    try { pv.setAttribute('playsinline', ''); } catch { /* noop */ }
+  } catch { return null; }
+  return pv;
 };
 
 // Предзагрузка соседнего поста: видео — скрытым <video> (метаданные сразу,

@@ -32,7 +32,7 @@ func (h *Handler) DownloadPost(c *gin.Context) {
 		PostID:   post.ID,
 		FileURL:  post.FileURL,
 		FileType: post.FileType,
-		Referer:  h.provider().RefererURL(),
+		Referer:  h.refererForFileURL(post.FileURL),
 	})
 
 	c.JSON(http.StatusAccepted, gin.H{"message": "download queued", "post_id": post.ID})
@@ -73,7 +73,7 @@ func (h *Handler) DownloadMultiple(c *gin.Context) {
 				PostID:   post.ID,
 				FileURL:  post.FileURL,
 				FileType: post.FileType,
-				Referer:  h.provider().RefererURL(),
+				Referer:  h.refererForFileURL(post.FileURL),
 			})
 			queued++
 		}

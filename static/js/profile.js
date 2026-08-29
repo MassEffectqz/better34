@@ -24,6 +24,7 @@ App.renderProfile = function () {
   this.renderPresetMenu();
   this.renderThumbs('likes', p.liked_posts);
   this.renderThumbs('hides', p.hidden_posts);
+  if (typeof this.renderCollections === 'function') this.renderCollections();
   this.renderTagLists();
   this._updateTagFilterCount();
   this.updateStats(p);
@@ -96,10 +97,13 @@ App.updateStats = function (p) {
   const likeN = (p.liked_posts || []).length;
   const hideN = (p.hidden_posts || []).length;
   const tagN = (p.fav_tags || []).length + (p.hidden_tags || []).length;
+  const colN = (p.collections || []).length;
   setNum('st-presets', presetN); setNum('tb-presets', presetN);
   setNum('st-likes', likeN); setNum('tb-likes', likeN);
   setNum('st-hides', hideN); setNum('tb-hides', hideN);
   setNum('st-tags', tagN); setNum('tb-tags', tagN);
+  const tbCol = document.getElementById('tb-collections');
+  if (tbCol) tbCol.textContent = colN;
 };
 
 App.renderPresets = function (presets) {

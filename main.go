@@ -70,6 +70,7 @@ func debugMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {
+			// Path без query: в query может приехать секрет (?token=).
 			log.Printf("REQUEST: %s %s -> %s", c.Request.Method, c.Request.URL.Path, c.FullPath())
 		}
 		c.Next()
@@ -106,7 +107,7 @@ func gzipMiddleware() gin.HandlerFunc {
 			return
 		}
 		lower := strings.ToLower(p)
-		for _, prefix := range []string{"/api/proxy", "/api/file/", "/api/thumb", "/api/events"} {
+		for _, prefix := range []string{"/api/proxy", "/api/file/", "/api/thumb", "/api/events", "/api/download-zip"} {
 			if strings.HasPrefix(lower, prefix) {
 				c.Next()
 				return
@@ -146,6 +147,26 @@ func staticCacheMiddleware() func(c *gin.Context) {
 	}
 }
 
+// maxBodyBytes — верхняя граница тела JSON-запросов к /api: без лимита
+// неавторизованный клиент читает в память произвольные объёмы (DoS).
+// Запас взят под самый крупный payload — импорт профиля и base64-аватар.
+const maxBodyBytes = 16 << 20
+
+func bodyLimitMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+		default:
+			c.Next()
+			return
+		}
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+		}
+		c.Next()
+	}
+}
+
 func debugEnabled() bool {
 	v := strings.ToLower(os.Getenv("BRIEFLY_DEBUG"))
 	return v == "1" || v == "true"
@@ -173,6 +194,7 @@ func main() {
 	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery())
 	r.Use(webSecurityMiddleware())
+	r.Use(bodyLimitMiddleware())
 	r.Use(staticCacheMiddleware())
 	r.Use(gzipMiddleware())
 	// Построчный лог каждого /api запроса — только при явном BRIEFLY_DEBUG=1.
@@ -240,8 +262,18 @@ func main() {
 		api.DELETE("/comments/:cid", handler.DeleteComment)
 		api.POST("/download-liked", handler.DownloadLiked)
 		api.GET("/files", handler.FindFiles)
+		api.GET("/download-zip", handler.DownloadZip)
 		api.GET("/dups", handler.FindDuplicates)
 		api.POST("/dups/clean", handler.CleanDuplicates)
+		api.GET("/collections", handler.ListCollections)
+		api.POST("/collection", handler.CreateCollection)
+		api.PATCH("/collection/:id", handler.RenameCollection)
+		api.DELETE("/collection/:id", handler.DeleteCollection)
+		api.POST("/collection/:id/post", handler.CollectionTogglePost)
+		api.GET("/collection/:id/posts", handler.CollectionPosts)
+		api.GET("/profile/export", handler.ExportProfile)
+		api.POST("/profile/import", handler.ImportProfile)
+		api.GET("/user-stats", handler.GetUserStats)
 	}
 
 	r.Static("/static", "static")
@@ -486,7 +518,10 @@ func serveIndex(c *gin.Context) {
 	}
 	v := staticVersion()
 	out := strings.ReplaceAll(string(html), "__VERSION__", v)
-	out = strings.ReplaceAll(out, "__BRIEFLY_TOKEN__", authToken)
+	// Legacy-токен (BRIEFLY_TOKEN) сознательно НЕ вшивается в HTML:
+	// страница отдаётся без проверки сессии, и любой посетитель LAN
+	// видел бы секрет, полностью обходящий аккаунты. Токен-режим
+	// работает только для клиентов, передающих заголовок сами.
 	c.Header("Cache-Control", "no-cache")
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(out))
 }

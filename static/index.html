@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>better34 — просмотрщик</title>
-<meta name="briefly-token" content="__BRIEFLY_TOKEN__">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23a78bfa'/><stop offset='1' stop-color='%237c5cbf'/></linearGradient></defs><rect x='4' y='4' width='92' height='92' rx='24' fill='%23161616'/><circle cx='45' cy='45' r='20' fill='none' stroke='url(%23g)' stroke-width='8'/><line x1='59' y1='59' x2='76' y2='76' stroke='url(%23g)' stroke-width='9' stroke-linecap='round'/></svg>">
 <link rel="manifest" href="/static/manifest.webmanifest">
 <meta name="theme-color" content="#0f0f0f">
@@ -18,8 +17,8 @@
 <div id="app">
   <header id="header">
     <div class="header-content">
-      <button id="btn-home" class="brand" title="На главную" aria-label="На главную">
-        <svg class="brand-logo" viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="brand-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c5cbf"/></linearGradient></defs><rect x="4" y="4" width="92" height="92" rx="24" fill="#161616"/><circle cx="45" cy="45" r="20" fill="none" stroke="url(#brand-g)" stroke-width="8"/><line x1="59" y1="59" x2="76" y2="76" stroke="url(#brand-g)" stroke-width="9" stroke-linecap="round"/></svg>
+      <button id="btn-home" class="brand" data-i18n-title="header.home" aria-label="На главную">
+        <svg class="brand-logo" viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="brand-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c5cbf"/></linearGradient></defs><rect x="4" y="4" width="92" height="92" rx="24" class="brand-logo-bg"/><circle cx="45" cy="45" r="20" fill="none" stroke="url(#brand-g)" stroke-width="8"/><line x1="59" y1="59" x2="76" y2="76" stroke="url(#brand-g)" stroke-width="9" stroke-linecap="round"/></svg>
         <span class="auth-name brand-name"><span>better</span><span class="auth-name-34">34</span></span>
       </button>
       <div class="search-box">
@@ -50,25 +49,25 @@
 
       <div id="header-menu" class="header-menu hidden">
         <div class="header-menu-group">
-          <div class="header-menu-title">Поиск</div>
-          <button class="header-menu-item" data-action="random"><i data-lucide="shuffle" data-size="16"></i> Случайный пост</button>
-          <button class="header-menu-item" data-action="recommend"><i data-lucide="star" data-size="16"></i> Рекомендации</button>
-          <button class="header-menu-item" data-action="presets"><i data-lucide="bookmark" data-size="16"></i> Пресеты</button>
-          <button class="header-menu-item" data-action="grid"><i data-lucide="grid" data-size="16"></i> Плотность сетки</button>
+          <div class="header-menu-title" data-i18n="menu.search">Поиск</div>
+          <button class="header-menu-item" data-action="random"><i data-lucide="shuffle" data-size="16"></i> <span data-i18n="menu.random">Случайный пост</span></button>
+          <button class="header-menu-item" data-action="recommend"><i data-lucide="star" data-size="16"></i> <span data-i18n="menu.recommend">Рекомендации</span></button>
+          <button class="header-menu-item" data-action="presets"><i data-lucide="bookmark" data-size="16"></i> <span data-i18n="menu.presets">Пресеты</span></button>
+          <button class="header-menu-item" data-action="grid"><i data-lucide="grid" data-size="16"></i> <span data-i18n="menu.grid">Плотность сетки</span></button>
         </div>
         <div class="header-menu-group">
-          <div class="header-menu-title">Разделы</div>
-          <button class="header-menu-item" data-action="profile"><i data-lucide="user" data-size="16"></i> Профиль</button>
-          <button class="header-menu-item" data-action="local"><i data-lucide="house" data-size="16"></i> Локальные</button>
-          <button class="header-menu-item" data-action="queue"><i data-lucide="list" data-size="16"></i> Очередь</button>
-          <button class="header-menu-item" data-action="stats"><i data-lucide="chart" data-size="16"></i> Статистика</button>
+          <div class="header-menu-title" data-i18n="menu.sections">Разделы</div>
+          <button class="header-menu-item" data-action="profile"><i data-lucide="user" data-size="16"></i> <span data-i18n="menu.profile">Профиль</span></button>
+          <button class="header-menu-item" data-action="local"><i data-lucide="house" data-size="16"></i> <span data-i18n="menu.local">Локальные</span></button>
+          <button class="header-menu-item" data-action="queue"><i data-lucide="list" data-size="16"></i> <span data-i18n="menu.queue">Очередь</span></button>
+          <button class="header-menu-item" data-action="stats"><i data-lucide="chart" data-size="16"></i> <span data-i18n="menu.stats">Статистика</span></button>
         </div>
         <div class="header-menu-group">
-          <div class="header-menu-title">Система</div>
-          <button class="header-menu-item" data-action="theme"><i data-lucide="moon" data-size="16"></i> Тема</button>
-          <button class="header-menu-item" data-action="settings"><i data-lucide="settings" data-size="16"></i> Настройки</button>
-          <button class="header-menu-item" data-action="help"><i data-lucide="help" data-size="16"></i> Справка</button>
-          <button class="header-menu-item" data-action="logout"><i data-lucide="logout" data-size="16"></i> Выйти</button>
+          <div class="header-menu-title" data-i18n="menu.system">Система</div>
+          <button class="header-menu-item" data-action="theme"><i data-lucide="moon" data-size="16"></i> <span data-i18n="menu.theme">Тема</span></button>
+          <button class="header-menu-item" data-action="settings"><i data-lucide="settings" data-size="16"></i> <span data-i18n="menu.settings">Настройки</span></button>
+          <button class="header-menu-item" data-action="help"><i data-lucide="help" data-size="16"></i> <span data-i18n="menu.help">Справка</span></button>
+          <button class="header-menu-item" data-action="logout"><i data-lucide="logout" data-size="16"></i> <span data-i18n="menu.logout">Выйти</span></button>
         </div>
       </div>
       <div id="feed-progress" class="feed-progress"><div class="feed-progress-bar"></div></div>
@@ -104,6 +103,10 @@
         </div>
         <button class="btn-icon" id="viewer-like" title="Лайк" aria-label="Лайк (Q)"><i data-lucide="heart" data-size="20"></i></button>
         <button class="btn-icon" id="viewer-hide" title="Дизлайк" aria-label="Скрыть (E)"><i data-lucide="heartOff" data-size="20"></i></button>
+        <div class="collect-control">
+          <button class="btn-icon" id="viewer-collect" title="В коллекцию" aria-label="В коллекцию"><i data-lucide="folder" data-size="20"></i></button>
+          <div id="collect-menu" class="collect-menu hidden"></div>
+        </div>
         <button class="btn-icon download-btn" id="viewer-download" title="Скачать (X)" aria-label="Скачать (X)"><i data-lucide="download" data-size="20"></i></button>
         <button class="btn-icon" id="viewer-fullscreen" title="На весь экран (F)" aria-label="Полноэкранный режим (F)"><i data-lucide="maximize" data-size="20"></i></button>
         <button class="btn-icon" id="viewer-close" title="Закрыть (ESC)" aria-label="Закрыть (ESC)"><i data-lucide="x" data-size="20"></i></button>
@@ -143,7 +146,7 @@
     <div class="profile-hero">
       <div class="profile-hero-glow" aria-hidden="true"></div>
       <div class="profile-hero-top">
-        <span class="profile-panel-title">Профиль</span>
+        <span class="profile-panel-title" data-i18n="pf.title">Профиль</span>
         <button class="btn-icon" id="profile-close" title="Закрыть (Esc)"><i data-lucide="x" data-size="18"></i></button>
       </div>
       <div class="profile-identity">
@@ -155,48 +158,56 @@
         <input type="text" id="profile-nickname" placeholder="Ваш ник" maxlength="30" spellcheck="false">
       </div>
       <div class="profile-stats">
-        <button class="stat" data-goto="presets"><span class="stat-icon"><i data-lucide="bookmark"></i></span><span class="stat-num" id="st-presets">0</span><span class="stat-label">Пресеты</span></button>
-        <button class="stat" data-goto="likes"><span class="stat-icon"><i data-lucide="heart"></i></span><span class="stat-num" id="st-likes">0</span><span class="stat-label">Лайки</span></button>
-        <button class="stat" data-goto="hides"><span class="stat-icon"><i data-lucide="eyeOff"></i></span><span class="stat-num" id="st-hides">0</span><span class="stat-label">Скрыто</span></button>
-        <button class="stat" data-goto="tags"><span class="stat-icon"><i data-lucide="hash"></i></span><span class="stat-num" id="st-tags">0</span><span class="stat-label">Теги</span></button>
+        <button class="stat" data-goto="presets"><span class="stat-icon"><i data-lucide="bookmark"></i></span><span class="stat-num" id="st-presets">0</span><span class="stat-label" data-i18n="stat.presets">Пресеты</span></button>
+        <button class="stat" data-goto="likes"><span class="stat-icon"><i data-lucide="heart"></i></span><span class="stat-num" id="st-likes">0</span><span class="stat-label" data-i18n="stat.likes">Лайки</span></button>
+        <button class="stat" data-goto="hides"><span class="stat-icon"><i data-lucide="eyeOff"></i></span><span class="stat-num" id="st-hides">0</span><span class="stat-label" data-i18n="stat.hides">Скрыто</span></button>
+        <button class="stat" data-goto="tags"><span class="stat-icon"><i data-lucide="hash"></i></span><span class="stat-num" id="st-tags">0</span><span class="stat-label" data-i18n="stat.tags">Теги</span></button>
       </div>
     </div>
     <div class="profile-tabs">
-      <button class="profile-tab active" data-tab="presets">Пресеты <span class="tab-badge" id="tb-presets">0</span></button>
-      <button class="profile-tab" data-tab="likes">Лайки <span class="tab-badge" id="tb-likes">0</span></button>
-      <button class="profile-tab" data-tab="hides">Скрытые <span class="tab-badge" id="tb-hides">0</span></button>
-      <button class="profile-tab" data-tab="tags">Теги <span class="tab-badge" id="tb-tags">0</span></button>
+      <button class="profile-tab active" data-tab="presets"><span data-i18n="tab.presets">Пресеты</span> <span class="tab-badge" id="tb-presets">0</span></button>
+      <button class="profile-tab" data-tab="likes"><span data-i18n="tab.likes">Лайки</span> <span class="tab-badge" id="tb-likes">0</span></button>
+      <button class="profile-tab" data-tab="hides"><span data-i18n="tab.hides">Скрытые</span> <span class="tab-badge" id="tb-hides">0</span></button>
+      <button class="profile-tab" data-tab="collections"><span data-i18n="tab.collections">Коллекции</span> <span class="tab-badge" id="tb-collections">0</span></button>
+      <button class="profile-tab" data-tab="tags"><span data-i18n="tab.tags">Теги</span> <span class="tab-badge" id="tb-tags">0</span></button>
     </div>
     <div class="profile-body">
       <div class="profile-tab-content active" id="tab-presets">
         <div class="preset-form">
           <input type="text" id="preset-name" placeholder="Название пресета" maxlength="60">
-          <button id="btn-save-preset" class="btn-primary btn-sm"><i data-lucide="save" data-size="14"></i> Сохранить</button>
+          <button id="btn-save-preset" class="btn-primary btn-sm"><i data-lucide="save" data-size="14"></i> <span data-i18n="btn.save">Сохранить</span></button>
         </div>
         <div id="preset-current" class="preset-current"></div>
         <div class="preset-tag-row">
-          <button id="btn-save-hidden-preset" class="btn-sm preset-tag-btn preset-tag-hidden" title="Сохранить текущие скрытые теги как пресет"><i data-lucide="eyeOff" data-size="13"></i> Скрытые теги → пресет</button>
-          <button id="btn-save-fav-preset" class="btn-sm preset-tag-btn preset-tag-fav" title="Сохранить текущие избранные теги как пресет"><i data-lucide="star" data-size="13"></i> Избранные теги → пресет</button>
+          <button id="btn-save-hidden-preset" class="btn-sm preset-tag-btn preset-tag-hidden" title="Сохранить текущие скрытые теги как пресет"><i data-lucide="eyeOff" data-size="13"></i> <span data-i18n="preset.hiddenToPreset">Скрытые теги → пресет</span></button>
+          <button id="btn-save-fav-preset" class="btn-sm preset-tag-btn preset-tag-fav" title="Сохранить текущие избранные теги как пресет"><i data-lucide="star" data-size="13"></i> <span data-i18n="preset.favToPreset">Избранные теги → пресет</span></button>
         </div>
         <div id="presets-list" class="presets-list"></div>
         <div class="preset-export-row">
-          <button id="btn-export-presets" class="btn-primary btn-sm"><i data-lucide="download" data-size="14"></i> Экспорт</button>
-          <button id="btn-import-presets" class="btn-primary btn-sm"><i data-lucide="upload" data-size="14"></i> Импорт</button>
+          <button id="btn-export-presets" class="btn-primary btn-sm"><i data-lucide="download" data-size="14"></i> <span data-i18n="btn.export">Экспорт</span></button>
+          <button id="btn-import-presets" class="btn-primary btn-sm"><i data-lucide="upload" data-size="14"></i> <span data-i18n="btn.import">Импорт</span></button>
           <input type="file" id="preset-import-file" accept=".json" hidden>
         </div>
       </div>
       <div class="profile-tab-content" id="tab-likes">
-        <p class="profile-empty" id="likes-empty"><span class="empty-icon"><i data-lucide="heart" data-size="26"></i></span><br>Нет лайков</p>
+        <p class="profile-empty" id="likes-empty"><span class="empty-icon"><i data-lucide="heart" data-size="26"></i></span><br><span data-i18n="likes.empty">Нет лайков</span></p>
         <div id="likes-list" class="profile-thumbs"></div>
-        <button id="btn-likes-grid" class="btn-primary btn-sm pf-grid-btn" style="display:none">Показать всё в сетке</button>
-        <button id="btn-likes-download" class="btn-primary btn-sm pf-grid-btn" style="display:none">Скачать все лайки</button>
-        <button id="btn-likes-more" class="btn-primary btn-sm pf-more" style="display:none">Показать ещё</button>
+        <button id="btn-likes-grid" class="btn-primary btn-sm pf-grid-btn" style="display:none"><span data-i18n="btn.showGrid">Показать всё в сетке</span></button>
+        <button id="btn-likes-download" class="btn-primary btn-sm pf-grid-btn" style="display:none"><span data-i18n="btn.downloadLikes">Скачать все лайки</span></button>
+        <button id="btn-likes-more" class="btn-primary btn-sm pf-more" style="display:none"><span data-i18n="btn.more">Показать ещё</span></button>
       </div>
       <div class="profile-tab-content" id="tab-hides">
-        <p class="profile-empty" id="hides-empty"><span class="empty-icon"><i data-lucide="eyeOff" data-size="26"></i></span><br>Нет скрытых</p>
+        <p class="profile-empty" id="hides-empty"><span class="empty-icon"><i data-lucide="eyeOff" data-size="26"></i></span><br><span data-i18n="hides.empty">Нет скрытых</span></p>
         <div id="hides-list" class="profile-thumbs"></div>
-        <button id="btn-hides-grid" class="btn-primary btn-sm pf-grid-btn" style="display:none">Показать всё в сетке</button>
-        <button id="btn-hides-more" class="btn-primary btn-sm pf-more" style="display:none">Показать ещё</button>
+        <button id="btn-hides-grid" class="btn-primary btn-sm pf-grid-btn" style="display:none"><span data-i18n="btn.showGrid">Показать всё в сетке</span></button>
+        <button id="btn-hides-more" class="btn-primary btn-sm pf-more" style="display:none"><span data-i18n="btn.more">Показать ещё</span></button>
+      </div>
+      <div class="profile-tab-content" id="tab-collections">
+        <div class="collection-form">
+          <input type="text" id="collection-name" placeholder="Новая коллекция…" maxlength="60">
+          <button id="btn-create-collection" class="btn-primary btn-sm"><i data-lucide="plus" data-size="14"></i> <span data-i18n="btn.create">Создать</span></button>
+        </div>
+        <div id="collections-list" class="collections-list"></div>
       </div>
       <div class="profile-tab-content" id="tab-tags">
         <div class="tag-filter-row">
@@ -205,8 +216,8 @@
         </div>
         <div class="tag-mgmt">
           <div class="tag-mgmt-head">
-            <h3>Избранные теги <span class="hint">(+) в поиске</span></h3>
-            <button class="btn-clear-tags" id="btn-clear-fav-tags">Очистить</button>
+            <h3><span data-i18n="tags.favHead">Избранные теги</span> <span class="hint">(+) в поиске</span></h3>
+            <button class="btn-clear-tags" id="btn-clear-fav-tags" data-i18n="btn.clear">Очистить</button>
           </div>
           <div class="tag-preset-row">
             <span class="tag-preset-label">Избр:</span>
@@ -221,8 +232,8 @@
         </div>
         <div class="tag-mgmt">
           <div class="tag-mgmt-head">
-            <h3>Скрытые теги <span class="hint">(-) в поиске</span></h3>
-            <button class="btn-clear-tags" id="btn-clear-hidden-tags">Очистить</button>
+            <h3><span data-i18n="tags.hiddenHead">Скрытые теги</span> <span class="hint">(-) в поиске</span></h3>
+            <button class="btn-clear-tags" id="btn-clear-hidden-tags" data-i18n="btn.clear">Очистить</button>
           </div>
           <div class="tag-preset-row">
             <span class="tag-preset-label">Скрыт:</span>
@@ -244,38 +255,46 @@
     <div class="profile-hero">
       <div class="profile-hero-glow" aria-hidden="true"></div>
       <div class="profile-hero-top">
-        <span class="profile-panel-title">Настройки</span>
+        <span class="profile-panel-title" data-i18n="set.title">Настройки</span>
         <button class="btn-icon" id="settings-close"><i data-lucide="x" data-size="18"></i></button>
       </div>
     </div>
     <div class="profile-tabs">
-      <button class="profile-tab active" data-tab="appearance">Оформление</button>
-      <button class="profile-tab" data-tab="network">Сеть</button>
-      <button class="profile-tab" data-tab="download">Скачивание</button>
-      <button class="profile-tab" data-tab="maintenance">Обслуживание</button>
+      <button class="profile-tab active" data-tab="appearance"><span data-i18n="stab.appearance">Оформление</span></button>
+      <button class="profile-tab" data-tab="network"><span data-i18n="stab.network">Сеть</span></button>
+      <button class="profile-tab" data-tab="download"><span data-i18n="stab.download">Скачивание</span></button>
+      <button class="profile-tab" data-tab="maintenance"><span data-i18n="stab.maintenance">Обслуживание</span></button>
     </div>
     <div class="profile-body">
       <div class="profile-tab-content active" id="stab-appearance">
         <label class="setting-group">
-          <span class="setting-label">Тема</span>
-          <select id="setting-theme" class="tag-preset-select">
-            <option value="dark">Тёмная</option>
-            <option value="light">Светлая</option>
+          <span class="setting-label" data-i18n="set.lang">Язык интерфейса</span>
+          <select id="setting-lang" class="tag-preset-select">
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
           </select>
         </label>
         <label class="setting-group">
-          <span class="setting-label">Плотность сетки</span>
+          <span class="setting-label" data-i18n="set.theme">Тема</span>
+          <select id="setting-theme" class="tag-preset-select">
+            <option value="auto" data-i18n="theme.auto">Авто (системная)</option>
+            <option value="dark" data-i18n="theme.dark">Тёмная</option>
+            <option value="light" data-i18n="theme.light">Светлая</option>
+          </select>
+        </label>
+        <label class="setting-group">
+          <span class="setting-label" data-i18n="set.grid">Плотность сетки</span>
           <select id="setting-grid" class="tag-preset-select">
-            <option value="auto">Авто</option>
-            <option value="2">2 колонки</option>
-            <option value="3">3 колонки</option>
-            <option value="4">4 колонки</option>
-            <option value="5">5 колонок</option>
-            <option value="6">6 колонок</option>
+            <option value="auto" data-i18n="grid.auto">Авто</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
           </select>
         </label>
         <div class="setting-group">
-          <span class="setting-label">Акцентный цвет</span>
+          <span class="setting-label" data-i18n="set.accent">Акцентный цвет</span>
           <div class="accent-row" id="setting-accent">
             <button class="accent-swatch" data-accent="purple" style="--sw:#a78bfa" title="Фиолетовый"></button>
             <button class="accent-swatch" data-accent="blue" style="--sw:#60a5fa" title="Синий"></button>
@@ -289,46 +308,55 @@
       </div>
       <div class="profile-tab-content" id="stab-network">
         <label class="setting-group">
-          <span class="setting-label">Источник постов</span>
+          <span class="setting-label" data-i18n="set.provider">Источник постов</span>
           <select id="setting-provider" class="tag-preset-select"></select>
-          <span class="setting-hint">Сайт, с которого ищутся и скачиваются посты</span>
+          <span class="setting-hint" data-i18n="set.providerHint">Сайт, с которого ищутся и скачиваются посты</span>
         </label>
         <div class="setting-group">
-          <span class="setting-label">API ключи <span class="hint">каждый ключ со своим user_id, чередуются</span></span>
+          <span class="setting-label"><span data-i18n="set.apikeys">API ключи</span> <span class="hint" data-i18n="set.apikeysHint">каждый ключ со своим user_id, чередуются</span></span>
           <div id="api-keys-list"></div>
-          <button type="button" class="btn-primary btn-sm" id="btn-add-api-key"><i data-lucide="plus" data-size="14"></i> Добавить API</button>
+          <button type="button" class="btn-primary btn-sm" id="btn-add-api-key"><i data-lucide="plus" data-size="14"></i> <span data-i18n="btn.addApi">Добавить API</span></button>
         </div>
         <label class="setting-group">
-          <span class="setting-label">Прокси (SOCKS5)</span>
+          <span class="setting-label" data-i18n="set.proxy">Прокси (SOCKS5)</span>
           <input type="text" id="setting-proxy" placeholder="1.2.3.4:1080">
-          <span class="setting-hint">SOCKS5 прокси для обхода блокировок</span>
+          <span class="setting-hint" data-i18n="set.proxyHint">SOCKS5 прокси для обхода блокировок</span>
         </label>
       </div>
       <div class="profile-tab-content" id="stab-download">
         <label class="setting-group">
-          <span class="setting-label">Путь сохранения</span>
+          <span class="setting-label" data-i18n="set.savepath">Путь сохранения</span>
           <input type="text" id="setting-savepath" placeholder="data/posts">
         </label>
         <label class="setting-group">
-          <span class="setting-label">Одновременных загрузок</span>
+          <span class="setting-label" data-i18n="set.concurrent">Одновременных загрузок</span>
           <input type="number" id="setting-concurrent" min="1" max="10">
         </label>
       </div>
       <div class="profile-tab-content" id="stab-maintenance">
         <label class="setting-group">
-          <span class="setting-label">База данных</span>
-          <button id="btn-clean-db" class="btn-primary btn-sm">Очистить нескачанные</button>
+          <span class="setting-label" data-i18n="maint.db">База данных</span>
+          <button id="btn-clean-db" class="btn-primary btn-sm"><span data-i18n="btn.cleanDb">Очистить нескачанные</span></button>
         </label>
         <div class="setting-group">
-          <span class="setting-label">Дубликаты</span>
-          <button id="btn-find-dups" class="btn-primary btn-sm">Найти дубликаты</button>
+          <span class="setting-label" data-i18n="maint.dups">Дубликаты</span>
+          <button id="btn-find-dups" class="btn-primary btn-sm"><span data-i18n="btn.findDups">Найти дубликаты</span></button>
           <span id="dups-info" class="dups-info hidden"></span>
-          <button id="btn-clean-dups" class="btn-primary btn-sm hidden">Удалить дубликаты</button>
+          <button id="btn-clean-dups" class="btn-primary btn-sm hidden"><span data-i18n="btn.cleanDups">Удалить дубликаты</span></button>
+        </div>
+        <div class="setting-group">
+          <span class="setting-label" data-i18n="set.backup">Полный бэкап профиля</span>
+          <span class="setting-hint" data-i18n="set.backupHint">Лайки, скрытия, пресеты, теги, коллекции и ваши комментарии</span>
+          <div class="preset-export-row">
+            <button id="btn-export-profile" class="btn-primary btn-sm"><i data-lucide="download" data-size="14"></i> <span data-i18n="btn.exportProfile">Экспорт профиля</span></button>
+            <button id="btn-import-profile" class="btn-primary btn-sm"><i data-lucide="upload" data-size="14"></i> <span data-i18n="btn.importProfile">Импорт профиля</span></button>
+            <input type="file" id="profile-import-file" accept=".json" hidden>
+          </div>
         </div>
       </div>
     </div>
     <div class="settings-foot">
-      <button id="btn-save-settings" class="btn-primary">Сохранить</button>
+      <button id="btn-save-settings" class="btn-primary" data-i18n="btn.saveSettings">Сохранить</button>
     </div>
   </div>
 
@@ -336,7 +364,7 @@
     <div class="modal-backdrop"></div>
     <div class="modal-content">
       <div class="modal-head">
-        <h2>Статистика</h2>
+        <h2 data-i18n="stats.title">Статистика</h2>
         <button class="btn-icon" id="stats-close"><i data-lucide="x" data-size="18"></i></button>
       </div>
       <div id="stats-body" class="stats-body"></div>
@@ -347,7 +375,7 @@
     <div class="modal-backdrop"></div>
     <div class="modal-content">
       <div class="modal-head">
-        <h2>Очередь загрузок</h2>
+        <h2 data-i18n="queue.title">Очередь загрузок</h2>
         <button class="btn-icon" id="queue-close"><i data-lucide="x" data-size="18"></i></button>
       </div>
       <div id="queue-body" class="queue-body"></div>
@@ -358,13 +386,13 @@
     <div class="modal-backdrop" id="confirm-backdrop"></div>
     <div class="modal-content">
       <div class="modal-head">
-        <h2 id="confirm-title">Подтверждение</h2>
+        <h2 id="confirm-title" data-i18n="confirm.title">Подтверждение</h2>
         <button class="btn-icon" id="confirm-close"><i data-lucide="x" data-size="18"></i></button>
       </div>
       <div class="confirm-body"><p id="confirm-message"></p></div>
       <div class="confirm-actions">
-        <button id="confirm-cancel" class="btn-primary btn-sm">Отмена</button>
-        <button id="confirm-ok" class="btn-primary btn-sm">Подтвердить</button>
+        <button id="confirm-cancel" class="btn-primary btn-sm" data-i18n="confirm.cancel">Отмена</button>
+        <button id="confirm-ok" class="btn-primary btn-sm" data-i18n="confirm.ok">Подтвердить</button>
       </div>
     </div>
   </div>
@@ -373,7 +401,7 @@
     <div class="modal-backdrop" id="help-backdrop"></div>
     <div class="modal-content">
       <div class="modal-head">
-        <h2>Горячие клавиши</h2>
+        <h2 data-i18n="help.title">Горячие клавиши</h2>
         <button class="btn-icon" id="help-close"><i data-lucide="x" data-size="18"></i></button>
       </div>
       <div id="help-body" class="help-body"></div>
@@ -438,8 +466,9 @@
 
   <div id="batch-bar" class="batch-bar">
     <span id="batch-count" class="batch-count">Выбрано: 0</span>
-    <button class="btn-primary btn-sm" id="batch-download"><i data-lucide="download" data-size="14"></i> Скачать</button>
-    <button class="btn-primary btn-sm" id="batch-hide"><i data-lucide="eyeOff" data-size="14"></i> Скрыть</button>
+    <button class="btn-primary btn-sm" id="batch-download"><i data-lucide="download" data-size="14"></i> <span data-i18n="batch.download">Скачать</span></button>
+    <button class="btn-primary btn-sm" id="batch-zip"><i data-lucide="folder" data-size="14"></i> <span data-i18n="batch.zip">ZIP-архив</span></button>
+    <button class="btn-primary btn-sm" id="batch-hide"><i data-lucide="eyeOff" data-size="14"></i> <span data-i18n="batch.hide">Скрыть</span></button>
     <button class="btn-icon btn-icon-sm" id="batch-clear" title="Снять выделение"><i data-lucide="x" data-size="16"></i></button>
   </div>
 

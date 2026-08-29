@@ -134,18 +134,39 @@ App.switchProvider = async function (value) {
 App.showStats = async function () {
   if (this.state.viewerOpen) this.closeViewer();
   try {
-    const [d, tagD] = await Promise.all([API.get('/stats'), API.get('/tag-stats')]);
+    const [d, tagD, user] = await Promise.all([API.get('/stats'), API.get('/tag-stats'), API.get('/user-stats').catch(() => null)]);
     const tags = tagD.tags || {};
-    const tagHtml = Object.entries(tags).slice(0, 30).map(([t, c]) =>
-      `<span class="stat-tag"><span class="stat-tag-name">${esc(t)}</span><span class="stat-tag-count">${c}</span></span>`
+    const tagHtml = Object.entries(tags).slice(0, 30).map(([tag, c]) =>
+      `<span class="stat-tag"><span class="stat-tag-name">${esc(tag)}</span><span class="stat-tag-count">${c}</span></span>`
     ).join('');
+    let userHtml = '';
+    if (user) {
+      const cards = `
+        <div class="stat-card"><div class="stat-value">${user.likes || 0}</div><div class="stat-label">Лайки</div></div>
+        <div class="stat-card"><div class="stat-value">${user.comments || 0}</div><div class="stat-label">Комментарии</div></div>
+        <div class="stat-card"><div class="stat-value">${user.collections || 0}</div><div class="stat-label">Коллекции</div></div>
+        <div class="stat-card"><div class="stat-value">${user.downloaded_likes || 0}</div><div class="stat-label">Скачано из лайков</div></div>`;
+      const topTags = (user.top_tags || []).map(x =>
+        `<span class="stat-tag"><span class="stat-tag-name">${esc(x.tag)}</span><span class="stat-tag-count">${x.count}</span></span>`
+      ).join('');
+      const maxAct = Math.max(1, ...(user.activity || []).map(a => a.count));
+      const bars = (user.activity || []).map(a =>
+        `<div class="act-col" title="${esc(a.date)}: ${a.count}"><i style="height:${Math.round((a.count / maxAct) * 100)}%"></i><span>${esc(a.date.slice(0, 5))}</span></div>`
+      ).join('');
+      userHtml = `
+        <h3 class="stat-tags-title">Моя активность</h3>
+        <div class="stat-cards">${cards}</div>
+        ${(user.top_tags || []).length ? `<div class="stat-tags">${topTags}</div>` : ''}
+        <div class="act-chart">${bars}</div>`;
+    }
     this.els.statsBody.innerHTML = `
       <div class="stat-cards"><div class="stat-card"><div class="stat-value">${d.total_searched || 0}</div><div class="stat-label">Найдено</div></div>
       <div class="stat-card"><div class="stat-value">${d.total_downloaded || 0}</div><div class="stat-label">Скачано</div></div>
       <div class="stat-card"><div class="stat-value">${d.thumbnails || 0}</div><div class="stat-label">Миниатюр</div></div>
       <div class="stat-card"><div class="stat-value">${d.disk_usage_mb || '0'}</div><div class="stat-label">Занято (MB)</div></div></div>
       <h3 class="stat-tags-title">Топ теги (скачанные)</h3>
-      <div class="stat-tags">${tagHtml || '<p style="color:var(--text-dim);font-size:.8rem">Нет данных</p>'}</div>`;
+      <div class="stat-tags">${tagHtml || '<p style="color:var(--text-dim);font-size:.8rem">Нет данных</p>'}</div>
+      ${userHtml}`;
     this.els.statsModal.classList.remove('hidden');
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
 };
@@ -206,4 +227,29 @@ App.cleanDuplicates = async function () {
     this.els.btnCleanDups.classList.add('hidden');
     this._dupsTotal = 0;
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+};
+
+// ── Полный бэкап профиля ────────────────────────────────────────────────
+
+App.exportProfile = function () {
+  const a = document.createElement('a');
+  a.href = '/api/profile/export';
+  a.download = 'briefly-profile.json';
+  a.click();
+  this.showToast('Профиль экспортирован', 'success');
+};
+
+App.importProfile = async function (ev) {
+  const file = ev.target.files[0];
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!data || typeof data !== 'object' || !data.profile) throw new Error('Неверный формат файла');
+    const r = await API.post('/profile/import', { profile: data.profile, comments: data.comments || [] });
+    const n = r.imported || {};
+    API.invalidate('/profile');
+    await this.loadProfile();
+    this.showToast(`Импорт: лайков ${n.liked_posts || 0}, скрытий ${n.hidden_posts || 0}, пресетов ${n.presets || 0}, коллекций ${n.collections || 0}, комментариев ${n.comments || 0}`, 'success');
+  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+  ev.target.value = '';
 };

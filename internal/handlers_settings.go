@@ -17,10 +17,7 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	for _, p := range knownProviders {
 		providers = append(providers, gin.H{"value": p.Name, "name": p.DisplayName})
 	}
-	maxQueryLen := 3800
-	if p := h.provider(); p != nil {
-		maxQueryLen = p.MaxQueryLen()
-	}
+	maxQueryLen := h.effectiveMaxQueryLen()
 	c.JSON(http.StatusOK, gin.H{
 		"api_keys":             cfg.GetAPICredentials(),
 		"proxy_url":            cfg.GetProxyURL(),
@@ -115,6 +112,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		if h.downloader != nil {
 			h.downloader.RebuildClient()
 		}
+		RebuildMediaClient()
 	}
 	if req.Provider != "" {
 		cfg.SetProvider(req.Provider)

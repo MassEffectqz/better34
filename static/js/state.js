@@ -2,6 +2,7 @@
 // и вешают свои методы на него; циклических импортов нет (state тянет только utils/api).
 import { _, esc, go, icon } from './utils.js';
 import { API } from './api.js';
+import { t, getLang, setLang } from './i18n.js';
 
 export const App = {
   state: {
@@ -14,6 +15,8 @@ export const App = {
     sortBy: '',
     displayMode: 'search', displayIds: [], theme: 'dark',
     gridCols: null,
+    // Активный источник (заполняется из /settings): 'all' — режим «Все сайты».
+    activeProvider: 'rule34', ratingFilter: '',
   },
   els: {},
 
@@ -42,6 +45,7 @@ export const App = {
       settingProvider: _('setting-provider'),
       settingConcurrent: _('setting-concurrent'),
       settingTheme: _('setting-theme'), settingGrid: _('setting-grid'), settingAccent: _('setting-accent'),
+      settingLang: _('setting-lang'),
       profilePanel: _('profile-panel'), profileClose: _('profile-close'),
       presetName: _('preset-name'), btnSavePreset: _('btn-save-preset'), presetCurrent: _('preset-current'),
       presetsList: _('presets-list'), likesList: _('likes-list'), hidesList: _('hides-list'),
@@ -80,6 +84,10 @@ export const App = {
       confirmOk: _('confirm-ok'), confirmCancel: _('confirm-cancel'), confirmClose: _('confirm-close'), confirmBackdrop: _('confirm-backdrop'),
       helpModal: _('help-modal'), helpBody: _('help-body'), helpClose: _('help-close'), helpBackdrop: _('help-backdrop'),
       btnFindDups: _('btn-find-dups'), btnCleanDups: _('btn-clean-dups'), dupsInfo: _('dups-info'),
+      viewerCollect: _('viewer-collect'), collectMenu: _('collect-menu'),
+      collectionName: _('collection-name'), btnCreateCollection: _('btn-create-collection'), collectionsList: _('collections-list'), tbCollections: _('tb-collections'),
+      batchZip: _('batch-zip'),
+      btnExportProfile: _('btn-export-profile'), btnImportProfile: _('btn-import-profile'), profileImportFile: _('profile-import-file'),
     };
     this.loadTheme();
     this.loadGridSetting();
@@ -252,6 +260,7 @@ export const App = {
         try { localStorage.setItem('briefly-rating', b.dataset.rating); } catch {}
         e.ratingToggle.querySelectorAll('.rt-btn').forEach(x => x.classList.toggle('active', x === b));
         API.invalidate('/');
+        this.updateQueryMeta(this.els.searchInput ? this.els.searchInput.value : '');
         this.loadPosts(true, null, true);
       });
     }
@@ -261,6 +270,10 @@ export const App = {
     e.dlPause.addEventListener('click', () => go(this.pauseDownloads()));
     e.dlResume.addEventListener('click', () => go(this.resumeDownloads()));
     e.btnSaveSettings.addEventListener('click', () => go(this.saveSettings()));
+    if (e.settingLang) {
+      e.settingLang.value = getLang();
+      e.settingLang.addEventListener('change', () => setLang(e.settingLang.value));
+    }
     e.settingTheme.addEventListener('change', () => this.setTheme(e.settingTheme.value));
     e.settingGrid.addEventListener('change', () => this.setGridSetting(e.settingGrid.value));
     e.settingAccent.addEventListener('click', (ev) => {
@@ -289,6 +302,60 @@ export const App = {
     e.helpBackdrop.addEventListener('click', () => this.hideHelp());
     e.btnFindDups.addEventListener('click', () => go(this.findDuplicates()));
     e.btnCleanDups.addEventListener('click', () => go(this.cleanDuplicates()));
+    if (e.batchZip) e.batchZip.addEventListener('click', () => this.batchZipDownload());
+    if (e.viewerCollect) {
+      e.viewerCollect.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (!this.state.viewerOpen) return;
+        const post = this.state.posts[this.state.viewerIndex];
+        if (!post) return;
+        this.toggleCollectMenu(post.id);
+      });
+      document.addEventListener('click', (ev) => {
+        if (e.collectMenu && !e.collectMenu.classList.contains('hidden') &&
+            !e.collectMenu.contains(ev.target) && !e.viewerCollect.contains(ev.target)) {
+          e.collectMenu.classList.add('hidden');
+        }
+      });
+      e.collectMenu.addEventListener('click', async (ev) => {
+        const item = ev.target.closest('.collect-menu-item');
+        const createBtn = ev.target.closest('.collect-menu-create-btn');
+        ev.stopPropagation();
+        if (createBtn) {
+          const inp = e.collectMenu.querySelector('.collect-menu-new-input');
+          const name = (inp ? inp.value : '').trim();
+          if (!name) return;
+          try {
+            await API.post('/collection', { name });
+            if (inp) inp.value = '';
+            const post = this.state.posts[this.state.viewerIndex];
+            this.renderCollectMenu(post ? post.id : null);
+            API.invalidate('/profile');
+            this.loadProfile();
+          } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+          return;
+        }
+        if (!item) return;
+        const post = this.state.posts[this.state.viewerIndex];
+        if (!post) return;
+        try {
+          await API.post(`/collection/${item.dataset.colId}/post`, { id: post.id });
+          this.renderCollectMenu(post.id);
+          API.invalidate('/profile');
+          this.loadProfile();
+        } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+      });
+    }
+    if (e.btnCreateCollection) {
+      e.btnCreateCollection.addEventListener('click', () => go(this.createCollection()));
+      e.collectionName.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); go(this.createCollection()); }
+      });
+    }
+    if (e.collectionsList) e.collectionsList.addEventListener('click', (ev) => this.onCollectionsListClick(ev));
+    if (e.btnExportProfile) e.btnExportProfile.addEventListener('click', () => this.exportProfile());
+    if (e.btnImportProfile) e.btnImportProfile.addEventListener('click', () => e.profileImportFile.click());
+    if (e.profileImportFile) e.profileImportFile.addEventListener('change', (ev) => go(this.importProfile(ev)));
     if (e.slideshowBtn) e.slideshowBtn.addEventListener('click', () => this.toggleSlideshow());
     if (e.btnHome) e.btnHome.addEventListener('click', () => this.goHome());
     e.ssSpeedInput.addEventListener('change', () => {
@@ -306,6 +373,8 @@ export const App = {
         _(`tab-${tab.dataset.tab}`).classList.add('active');
         if (tab.dataset.tab === 'likes' || tab.dataset.tab === 'hides') {
           this.renderThumbs(tab.dataset.tab, this.state.profile[tab.dataset.tab === 'likes' ? 'liked_posts' : 'hidden_posts']);
+        } else if (tab.dataset.tab === 'collections' && typeof this.renderCollections === 'function') {
+          this.renderCollections();
         }
       });
     });
@@ -371,10 +440,46 @@ export const App = {
   },
 
   loadTheme() {
-    let theme = 'dark';
-    try { theme = localStorage.getItem('briefly_theme') || 'dark'; } catch {}
+    let theme = 'auto';
+    try { theme = localStorage.getItem('briefly_theme') || 'auto'; } catch {}
+    if (theme !== 'dark' && theme !== 'light' && theme !== 'auto') theme = 'auto';
     this.state.theme = theme;
-    document.documentElement.setAttribute('data-theme', theme);
+    this.applyResolvedTheme();
+    // Режим «Авто»: следим за системной темой вживую.
+    if (window.matchMedia) {
+      if (!this._themeMQ) {
+        this._themeMQ = window.matchMedia('(prefers-color-scheme: light)');
+        const onChange = () => {
+          if (this.state.theme === 'auto') this.applyResolvedTheme();
+        };
+        if (this._themeMQ.addEventListener) this._themeMQ.addEventListener('change', onChange);
+        else if (this._themeMQ.addListener) this._themeMQ.addListener(onChange);
+      }
+    }
+  },
+
+  resolvedTheme() {
+    if (this.state.theme !== 'auto') return this.state.theme;
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
+    } catch { /* noop */ }
+    return 'dark';
+  },
+
+  applyResolvedTheme() {
+    document.documentElement.setAttribute('data-theme', this.resolvedTheme());
+  },
+
+  setTheme(theme) {
+    if (theme !== 'dark' && theme !== 'light' && theme !== 'auto') return;
+    this.state.theme = theme;
+    this.applyResolvedTheme();
+    try { localStorage.setItem('briefly_theme', theme); } catch {}
+  },
+
+  toggleTheme() {
+    const next = this.resolvedTheme() === 'dark' ? 'light' : 'dark';
+    this.setTheme(next);
   },
 
   loadGridSetting() {
@@ -463,17 +568,6 @@ export const App = {
     document.querySelectorAll('.accent-swatch').forEach((/** @type {HTMLElement} */ b) => {
       b.classList.toggle('active', b.dataset.accent === this.state.accent);
     });
-  },
-
-  setTheme(theme) {
-    if (theme !== 'dark' && theme !== 'light') return;
-    this.state.theme = theme;
-    document.documentElement.setAttribute('data-theme', theme);
-    try { localStorage.setItem('briefly_theme', theme); } catch {}
-  },
-
-  toggleTheme() {
-    this.setTheme(this.state.theme === 'dark' ? 'light' : 'dark');
   },
 
   pushState(query, postId) {
@@ -709,7 +803,7 @@ export const App = {
         this.els.dlProgressText.textContent = (d.active || 0) > 0 ? `${d.done || 0}/${total}` : `готово: ${d.done || 0}`;
         if ((d.done || 0) > lastDone && this.state.viewerOpen) {
           const p = this.state.posts[this.state.viewerIndex];
-          if (p && (d.done_ids || []).includes(p.id)) this.els.viewerProgress.textContent = 'скачано';
+          if (p && (d.done_ids || []).includes(p.id)) this.els.viewerProgress.textContent = t('viewer.downloaded');
         }
       } else if (total > 0) {
         this.els.dlProgress.classList.remove('hidden');
@@ -717,7 +811,7 @@ export const App = {
         this.els.dlProgressText.textContent = `готово: ${d.done || 0}`;
         if ((d.done || 0) > lastDone && this.state.viewerOpen) {
           const p = this.state.posts[this.state.viewerIndex];
-          if (p && (d.done_ids || []).includes(p.id)) this.els.viewerProgress.textContent = 'скачано';
+          if (p && (d.done_ids || []).includes(p.id)) this.els.viewerProgress.textContent = t('viewer.downloaded');
         }
         clearTimeout(hideTimer);
         hideTimer = setTimeout(hideProgress, 3000);

@@ -69,12 +69,18 @@ func (h *Handler) GetProfileData(c *gin.Context) {
 		}
 	}
 
+	cols := make([]gin.H, 0, len(p.Collections))
+	for _, col := range p.Collections {
+		cols = append(cols, gin.H{"id": col.ID, "name": col.Name, "count": len(col.Posts)})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"liked_posts":  likes,
 		"hidden_posts": hides,
 		"presets":      p.Presets,
 		"fav_tags":     favTags,
 		"hidden_tags":  hiddenTags,
+		"collections":  cols,
 		"nickname":     nickname,
 		"avatar":       avatar,
 	})

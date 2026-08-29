@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -38,6 +39,7 @@ var (
 	ErrBadPassword  = errors.New("пароль: минимум 6 символов")
 	ErrBadLogin     = errors.New("неверный логин или пароль")
 	ErrAvatarTooBig = errors.New("аватар слишком большой (макс. 3 МБ)")
+	ErrBadAvatar    = errors.New("аватар: только data:image/* или http(s) URL")
 )
 
 // briefToken — токен из BRIEFLY_TOKEN (режим одного пользователя на удалённом
@@ -185,6 +187,17 @@ func (a *Accounts) Users() []*Account {
 	return out
 }
 
+// IsAdmin: администратор — первый зарегистрированный пользователь
+// (минимальный CreatedAt). Производное свойство: миграция существующих
+// данных не нужна, а потеря/порча поля роли ничего не ломает.
+func (a *Accounts) IsAdmin(username string) bool {
+	users := a.Users()
+	if len(users) == 0 {
+		return false
+	}
+	return users[0].Username == username
+}
+
 func validateUsername(name string) error {
 	name = strings.TrimSpace(name)
 	if !usernameRe.MatchString(name) {
@@ -230,6 +243,11 @@ func (a *Accounts) Register(username, password string) (*Account, error) {
 	a.mu.Unlock()
 
 	if err := a.saveUsers(); err != nil {
+		// Откатываем in-memory вставку: иначе юзер «существует» до
+		// рестарта, но отсутствует в users.json (рассинхрон).
+		a.mu.Lock()
+		delete(a.users, username)
+		a.mu.Unlock()
 		return nil, err
 	}
 	if first {
@@ -305,9 +323,26 @@ func (a *Accounts) DeleteSession(token string) {
 	_ = a.saveSessions()
 }
 
+// validAvatar пропускает только data:image/... и абсолютные http(s)-URL:
+// аватар вставляется в <img src> у всех клиентов, прочие схемы
+// (javascript:, data:text/html и т.п.) — вектор XSS.
+func validAvatar(avatar string) bool {
+	if strings.HasPrefix(avatar, "data:image/") {
+		return true
+	}
+	u, err := url.Parse(avatar)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Scheme == "http" || u.Scheme == "https"
+}
+
 func (a *Accounts) SetMeta(username, nickname, avatar string) error {
 	if len(avatar) > maxAvatarLen {
 		return ErrAvatarTooBig
+	}
+	if avatar != "" && !validAvatar(avatar) {
+		return ErrBadAvatar
 	}
 	a.mu.Lock()
 	user, ok := a.users[username]

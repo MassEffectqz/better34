@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,7 +40,8 @@ type Post struct {
 // стали no-op (запись синхронная), Close закрывает соединение.
 type PostDB struct {
 	mu   sync.Mutex // сериализация транзакций: modernc/sqlite — один писатель
-	db   *sql.DB
+	db   *sql.DB    // запись: одно соединение, убирает SQLITE_BUSY между горутинами
+	read *sql.DB    // чтение: пул поверх WAL — читатели не ждут писателя
 	path string
 }
 
@@ -100,6 +102,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_downloaded ON posts(downloaded, id);
 CREATE INDEX IF NOT EXISTS idx_tags_post ON tags(post_id);
 CREATE INDEX IF NOT EXISTS idx_posts_md5 ON posts(md5) WHERE downloaded=1;
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id, id);
+CREATE INDEX IF NOT EXISTS idx_comments_user ON comments(username);
 `
 
 func NewPostDB(path string) *PostDB {
@@ -133,7 +136,27 @@ func NewPostDB(path string) *PostDB {
 		log.Printf("[db] indexes: %v", err)
 		panic(err)
 	}
-	return &PostDB{db: sqlDB, path: path}
+
+	// Отдельный пул для чтения: в режиме WAL читатели работают
+	// параллельно с писателем, поэтому тяжёлые SELECT'ы (статистика
+	// профиля, поиск по тегам) не блокируют записи коллекций/комментариев.
+	// Схема и миграции уже применены записывающим соединением.
+	readDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		log.Printf("[db] open read pool %s: %v", path, err)
+		panic(err)
+	}
+	n := runtime.NumCPU()
+	if n < 2 {
+		n = 2
+	}
+	if n > 8 {
+		n = 8
+	}
+	readDB.SetMaxOpenConns(n)
+	readDB.SetMaxIdleConns(n)
+
+	return &PostDB{db: sqlDB, read: readDB, path: path}
 }
 
 // importLegacyJSON разово переносит старый data/db.json в SQLite и
@@ -149,7 +172,7 @@ func (db *PostDB) importLegacyJSON(jsonPath string) {
 		return
 	}
 	var existing int
-	_ = db.db.QueryRow(`SELECT COUNT(*) FROM posts`).Scan(&existing)
+	_ = db.read.QueryRow(`SELECT COUNT(*) FROM posts`).Scan(&existing)
 	if existing > 0 {
 		log.Printf("[db] sqlite уже содержит %d постов — legacy-импорт пропущен", existing)
 		return
@@ -236,7 +259,12 @@ func (db *PostDB) Save() error { return nil }
 func (db *PostDB) BumpSave() {}
 
 // Close закрывает соединение (WAL-чейкпоинт выполняется автоматически).
-func (db *PostDB) Close() { _ = db.db.Close() }
+func (db *PostDB) Close() {
+	_ = db.db.Close()
+	if db.read != nil {
+		_ = db.read.Close()
+	}
+}
 
 func (db *PostDB) AddOrUpdate(post *Post) {
 	if post == nil {
@@ -294,7 +322,7 @@ func getTx(tx *sql.Tx, id int) (*Post, error) {
 
 // Get возвращает копию поста либо nil.
 func (db *PostDB) Get(id int) *Post {
-	row := db.db.QueryRow(`SELECT `+postCols+` FROM posts WHERE id=?`, id)
+	row := db.read.QueryRow(`SELECT `+postCols+` FROM posts WHERE id=?`, id)
 	p, err := scanPost(row.Scan)
 	if err != nil {
 		return nil
@@ -303,7 +331,7 @@ func (db *PostDB) Get(id int) *Post {
 }
 
 func (db *PostDB) queryPosts(query string, args ...any) []*Post {
-	rows, err := db.db.Query(query, args...)
+	rows, err := db.read.Query(query, args...)
 	if err != nil {
 		log.Printf("[db] query: %v", err)
 		return nil
@@ -324,22 +352,49 @@ func (db *PostDB) GetDownloaded() []*Post {
 	return db.queryPosts(`SELECT ` + postCols + ` FROM posts WHERE downloaded=1 ORDER BY id DESC`)
 }
 
-// SearchDownloaded: группы через '|', внутри группы — AND по всем тегам.
-// Пост матчится, если подошла хотя бы одна группа.
+// SearchDownloaded: группы через '|', внутри группы — AND по всем тегам,
+// минус-теги ("-tag") исключают посты, мета-токены ("rating:…", "sort:…")
+// игнорируются (локальный поиск их не поддерживает). Пост матчится, если
+// подошла хотя бы одна группа. Группа без позитивных тегов ("-1boy") —
+// это фильтр по всему скачанному набору.
 func (db *PostDB) SearchDownloaded(tags string) []*Post {
 	var conds []string
 	var args []any
 	for _, g := range strings.Split(tags, "|") {
-		list := strings.Fields(strings.ToLower(g))
-		if len(list) == 0 {
+		var pos, neg []string
+		for _, t := range strings.Fields(strings.ToLower(g)) {
+			if strings.HasPrefix(t, "-") {
+				if t = strings.TrimLeft(t, "-"); t != "" && !strings.Contains(t, ":") {
+					neg = append(neg, t)
+				}
+				continue
+			}
+			if strings.Contains(t, ":") { // rating:…/sort:… и пр. мета-синтаксис
+				continue
+			}
+			pos = append(pos, t)
+		}
+		if len(pos) == 0 && len(neg) == 0 {
 			continue
 		}
-		ph := strings.TrimSuffix(strings.Repeat("?,", len(list)), ",")
-		conds = append(conds, fmt.Sprintf(
-			"(SELECT COUNT(DISTINCT tag) FROM tags WHERE post_id=p.id AND tag IN (%s)) = %d", ph, len(list)))
-		for _, t := range list {
-			args = append(args, t)
+		var parts []string
+		if len(pos) > 0 {
+			ph := strings.TrimSuffix(strings.Repeat("?,", len(pos)), ",")
+			parts = append(parts, fmt.Sprintf(
+				"(SELECT COUNT(DISTINCT tag) FROM tags WHERE post_id=p.id AND tag IN (%s)) = %d", ph, len(pos)))
+			for _, t := range pos {
+				args = append(args, t)
+			}
 		}
+		if len(neg) > 0 {
+			ph := strings.TrimSuffix(strings.Repeat("?,", len(neg)), ",")
+			parts = append(parts, fmt.Sprintf(
+				"NOT EXISTS (SELECT 1 FROM tags WHERE post_id=p.id AND tag IN (%s))", ph))
+			for _, t := range neg {
+				args = append(args, t)
+			}
+		}
+		conds = append(conds, "("+strings.Join(parts, " AND ")+")")
 	}
 	if len(conds) == 0 {
 		return db.GetDownloaded()
@@ -349,9 +404,10 @@ func (db *PostDB) SearchDownloaded(tags string) []*Post {
 	return db.queryPosts(query, args...)
 }
 
+
 func (db *PostDB) PostExists(id int) bool {
 	var one int
-	err := db.db.QueryRow(`SELECT 1 FROM posts WHERE id=?`, id).Scan(&one)
+	err := db.read.QueryRow(`SELECT 1 FROM posts WHERE id=?`, id).Scan(&one)
 	return err == nil
 }
 
@@ -392,7 +448,7 @@ func (db *PostDB) CleanNonDownloaded() int {
 
 func (db *PostDB) Stats() map[string]int {
 	var total, downloaded int
-	_ = db.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(downloaded),0) FROM posts`).Scan(&total, &downloaded)
+	_ = db.read.QueryRow(`SELECT COUNT(*), COALESCE(SUM(downloaded),0) FROM posts`).Scan(&total, &downloaded)
 	return map[string]int{"total": total, "downloaded": downloaded}
 }
 
@@ -408,7 +464,7 @@ func (db *PostDB) FindDownloadedByMd5(md5sum string, excludeID int) int {
 		return 0
 	}
 	var id int
-	err := db.db.QueryRow(
+	err := db.read.QueryRow(
 		`SELECT id FROM posts WHERE downloaded=1 AND md5=? AND id<>? LIMIT 1`, md5sum, excludeID).Scan(&id)
 	if err != nil {
 		return 0
@@ -430,7 +486,7 @@ func (db *PostDB) SuggestTagsLocal(prefix string, limit int) []TagSuggestion {
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := db.db.Query(`
+	rows, err := db.read.Query(`
 		SELECT t.tag, COUNT(*) AS c
 		FROM tags t JOIN posts p ON p.id = t.post_id AND p.downloaded = 1
 		WHERE t.tag LIKE ? ESCAPE '\'
@@ -472,7 +528,7 @@ func (db *PostDB) TagStats(limit int) map[string]int {
 }
 
 func (db *PostDB) tagCounts(query string, args []any, limit int) map[string]int {
-	rows, err := db.db.Query(query, args...)
+	rows, err := db.read.Query(query, args...)
 	if err != nil {
 		log.Printf("[db] tagcounts: %v", err)
 		return map[string]int{}
@@ -525,7 +581,7 @@ func (db *PostDB) AddComment(postID int, username, text string) (*Comment, error
 }
 
 func (db *PostDB) Comments(postID int) []*Comment {
-	rows, err := db.db.Query(
+	rows, err := db.read.Query(
 		`SELECT id, post_id, username, text, created_at FROM comments WHERE post_id=? ORDER BY id ASC`, postID)
 	if err != nil {
 		return nil
@@ -549,6 +605,68 @@ func (db *PostDB) DeleteComment(id int) bool {
 	}
 	n, _ := res.RowsAffected()
 	return n > 0
+}
+
+// CountCommentsByUser — число комментариев автора.
+func (db *PostDB) CountCommentsByUser(username string) int {
+	var n int
+	if err := db.read.QueryRow(`SELECT COUNT(*) FROM comments WHERE username=?`, username).Scan(&n); err != nil {
+		return 0
+	}
+	return n
+}
+
+// CommentsByUser возвращает все комментарии автора (для бэкапа профиля).
+func (db *PostDB) CommentsByUser(username string) []*Comment {
+	rows, err := db.read.Query(
+		`SELECT id, post_id, username, text, created_at FROM comments WHERE username=? ORDER BY id ASC`, username)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []*Comment
+	for rows.Next() {
+		cm := &Comment{}
+		if err := rows.Scan(&cm.ID, &cm.PostID, &cm.Username, &cm.Text, &cm.CreatedAt); err == nil {
+			out = append(out, cm)
+		}
+	}
+	return out
+}
+
+// ImportComments переносит комментарии из бэкапа, пропуская дубликаты
+// (тот же пост + текст + время). Возвращает число добавленных.
+func (db *PostDB) ImportComments(username string, in []*Comment) int {
+	if len(in) == 0 {
+		return 0
+	}
+	added := 0
+	_ = db.withTx(func(tx *sql.Tx) error {
+		for _, cm := range in {
+			if cm.Text == "" || cm.PostID <= 0 {
+				continue
+			}
+			var one int
+			err := tx.QueryRow(
+				`SELECT 1 FROM comments WHERE post_id=? AND username=? AND text=? AND created_at=?`,
+				cm.PostID, username, cm.Text, cm.CreatedAt).Scan(&one)
+			if err == nil {
+				continue // уже есть
+			}
+			createdAt := cm.CreatedAt
+			if createdAt == "" {
+				createdAt = time.Now().UTC().Format(time.RFC3339)
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO comments(post_id, username, text, created_at) VALUES (?,?,?,?)`,
+				cm.PostID, username, cm.Text, createdAt); err != nil {
+				continue
+			}
+			added++
+		}
+		return nil
+	})
+	return added
 }
 
 func (p *Post) String() string {

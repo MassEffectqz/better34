@@ -2,6 +2,7 @@ import { App } from './state.js';
 import { icon, getHistory, addHistory, removeHistory, togglePinHistory, clearHistory } from './utils.js';
 import { API } from './api.js';
 App._suggestSeq = 0;
+App._profileSuggestSeq = 0;
 
 App.onSearchInput = function () {
   const q = this.els.searchInput.value;
@@ -66,7 +67,22 @@ App.updateQueryMeta = function (q) {
   if (!query) { el.classList.remove('visible'); return; }
   const terms = query.split(/\s+/).filter(Boolean).length;
   const hidden = (this.state.profile && this.state.profile.hidden_tags) || [];
-  let budget = (this.state.maxQueryLen || 3800) - query.length;
+  // Сервер prepend'ит rating-метатеги к запросу (в первую | группу) до
+  // подсчёта бюджета MaxQueryLen — учитываем. Бюджет применяется к каждой
+  // группе отдельно, поэтому берём худшую группу: длина группы + метатеги
+  // (для первой) вместо длины всего запроса.
+  const ratingTerms = {
+    sfw: ['-rating:explicit', '-rating:questionable', '-rating:sensitive'],
+    nsfw: ['-rating:general', '-rating:safe'],
+  };
+  const rt = ratingTerms[this.state.ratingFilter] || [];
+  const ratingLen = rt.reduce((n, t) => n + t.length + 1, 0); // тег + пробел
+  const groups = query.split('|').map(s => s.trim()).filter(Boolean);
+  let worstLen = 0;
+  groups.forEach((g, i) => {
+    worstLen = Math.max(worstLen, g.length + (i === 0 ? ratingLen : 0));
+  });
+  let budget = (this.state.maxQueryLen || 3800) - worstLen;
   let local = 0;
   for (const t of hidden) {
     if (budget - (t.length + 2) >= 0) { budget -= t.length + 2; }
@@ -295,14 +311,16 @@ App.suggestProfileTag = function (type) {
   const el = type === 'fav' ? this.els.favSuggestions : this.els.profileSuggestions;
   const q = input.value.trim();
   if (q.length < 2) {
-    this._suggestSeq++;
+    this._profileSuggestSeq++;
     el.classList.remove('active');
     el.innerHTML = '';
     return;
   }
-  const seq = ++this._suggestSeq;
+  // Отдельный счётчик (не _suggestSeq): набор в поисковой строке не должен
+  // отбрасывать in-flight подсказки профиля и наоборот.
+  const seq = ++this._profileSuggestSeq;
   API.get(`/suggest?q=${encodeURIComponent(q)}`).then(d => {
-    if (this._suggestSeq !== seq) return; // устаревший ответ — набрали другой тег
+    if (this._profileSuggestSeq !== seq) return; // устаревший ответ — набрали другой тег
     el.innerHTML = '';
     if (!d.tags || !d.tags.length) { el.classList.remove('active'); return; }
     el.classList.add('active');

@@ -1,12 +1,17 @@
 package internal
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -60,7 +65,8 @@ func (h *Handler) SuggestLocal(c *gin.Context) {
 
 func (h *Handler) SuggestTags(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("q"))
-	if q == "" || len(q) < 2 {
+	// Считаем по рунам, а не байтам: один кириллический символ — 2 байта.
+	if q == "" || utf8.RuneCountInString(q) < 2 {
 		c.JSON(http.StatusOK, gin.H{"tags": []interface{}{}})
 		return
 	}
@@ -97,6 +103,85 @@ var tagCountCache = struct {
 const tagCountTTL = 12 * time.Hour
 const tagCountCacheMax = 2000
 
+// ── Персист счётчиков тегов ─────────────────────────────────────────────
+// Без файла после каждого рестарта кэш пуст и первые запросы заново
+// штурмуют autocomplete («будут из кэша» в логах). Формат — тот же
+// подход, что у поискового кэша: атомарная запись JSON с debounce.
+
+var (
+	tagCountsFile        = filepath.Join("data", "cache", "tag_counts.json")
+	tagCountLoadOnce     sync.Once
+	tagCountsSaveMu      sync.Mutex
+	tagCountsSavePending atomic.Bool
+)
+
+func tagCountsLoad() {
+	tagCountLoadOnce.Do(func() {
+		data, err := os.ReadFile(tagCountsFile)
+		if err != nil {
+			return
+		}
+		var snap struct {
+			Entries map[string]struct {
+				Count int       `json:"count"`
+				Saved time.Time `json:"saved"`
+			} `json:"entries"`
+		}
+		if json.Unmarshal(data, &snap) != nil {
+			return
+		}
+		now := time.Now()
+		tagCountCache.Lock()
+		for k, e := range snap.Entries {
+			if e.Count <= 0 || now.Sub(e.Saved) >= tagCountTTL {
+				continue
+			}
+			tagCountCache.m[k] = e.Count
+			tagCountCache.ts[k] = e.Saved
+		}
+		tagCountCache.Unlock()
+	})
+}
+
+func tagCountsScheduleSave() {
+	if !tagCountsSavePending.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		time.Sleep(3 * time.Second) // собрать пачку записей
+		tagCountsSavePending.Store(false)
+		tagCountsSave()
+	}()
+}
+
+func tagCountsSave() {
+	now := time.Now()
+	type entry struct {
+		Count int       `json:"count"`
+		Saved time.Time `json:"saved"`
+	}
+	snap := struct {
+		Entries map[string]entry `json:"entries"`
+	}{Entries: make(map[string]entry)}
+	tagCountCache.RLock()
+	for k, cnt := range tagCountCache.m {
+		ts := tagCountCache.ts[k]
+		if now.Sub(ts) >= tagCountTTL {
+			continue
+		}
+		snap.Entries[k] = entry{Count: cnt, Saved: ts}
+	}
+	tagCountCache.RUnlock()
+
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return
+	}
+	tagCountsSaveMu.Lock()
+	defer tagCountsSaveMu.Unlock()
+	atomicWriteFile(tagCountsFile, data, 0644)
+}
+
 func tagCountStore(provider, tag string, count int) {
 	tagCountCache.Lock()
 	defer tagCountCache.Unlock()
@@ -122,6 +207,7 @@ func tagCountStore(provider, tag string, count int) {
 	}
 	tagCountCache.m[key] = count
 	tagCountCache.ts[key] = time.Now()
+	tagCountsScheduleSave()
 }
 
 func (h *Handler) GetTagCounts(c *gin.Context) {
@@ -137,10 +223,13 @@ func (h *Handler) GetTagCounts(c *gin.Context) {
 	now := time.Now()
 	providerName := h.provider().Name()
 
+	tagCountsLoad()
+
 	tagCountCache.RLock()
 	for _, tag := range tagList {
 		tag = strings.TrimSpace(tag)
-		if tag == "" || len(tag) < 2 {
+		// Пропускаем только пустые: односимвольные теги на бокорах валидны.
+		if tag == "" {
 			continue
 		}
 		key := providerName + "|" + tag

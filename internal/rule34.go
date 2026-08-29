@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/net/proxy"
 )
@@ -73,10 +74,15 @@ type Provider interface {
 
 const defaultProviderName = "rule34"
 
+// allProvidersName — псевдо-источник «все сайты сразу»: поиск идёт
+// параллельно по всем провайдерам с дедупликацией по md5.
+const allProvidersName = "all"
+
 var knownProviders = []struct {
 	Name        string `json:"value"`
 	DisplayName string `json:"name"`
 }{
+	{"all", "Все сайты"},
 	{"rule34", "rule34.xxx"},
 	{"gelbooru", "Gelbooru"},
 	{"safebooru", "Safebooru"},
@@ -85,6 +91,9 @@ var knownProviders = []struct {
 
 func isKnownProvider(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
+	if name == allProvidersName {
+		return true
+	}
 	for _, p := range knownProviders {
 		if p.Name == name {
 			return true
@@ -92,6 +101,9 @@ func isKnownProvider(name string) bool {
 	}
 	return false
 }
+
+// multiProviderOrder — детерминированный порядок опроса сайтов в режиме «all».
+var multiProviderOrder = []string{"rule34", "gelbooru", "safebooru", "hypnohub"}
 
 // siteSpec описывает Gelbooru-0.2-совместимый сайт: один протокол dapi,
 // разные домены и мелкие отличия в параметрах/форме ответа.
@@ -364,6 +376,41 @@ func (g *singleflightGroup) Do(key string, fn func() ([]Rule34Post, error)) ([]R
 	return c.posts, c.err
 }
 
+// suggestFlightGroup — singleflight для подсказок: при быстрой печати
+// одинаковые префиксы (to → tou → touh) дедуплицируются в один запрос,
+// вместо параллельного шторма по autocomplete.php.
+type suggestFlightGroup struct {
+	mu sync.Mutex
+	m  map[string]*suggFlightCall
+}
+
+type suggFlightCall struct {
+	done chan struct{}
+	tags []TagSuggestion
+	err  error
+}
+
+func (g *suggestFlightGroup) Do(key string, fn func() ([]TagSuggestion, error)) ([]TagSuggestion, error) {
+	g.mu.Lock()
+	if c, ok := g.m[key]; ok {
+		g.mu.Unlock()
+		<-c.done
+		return c.tags, c.err
+	}
+	c := &suggFlightCall{done: make(chan struct{})}
+	if g.m == nil {
+		g.m = make(map[string]*suggFlightCall)
+	}
+	g.m[key] = c
+	g.mu.Unlock()
+	c.tags, c.err = fn()
+	g.mu.Lock()
+	delete(g.m, key)
+	close(c.done)
+	g.mu.Unlock()
+	return c.tags, c.err
+}
+
 // circuitBreaker останавливает запросы к API после серии ошибок.
 type circuitBreaker struct {
 	mu        sync.Mutex
@@ -583,21 +630,79 @@ func jitteredBackoff(attempt int) time.Duration {
 	return base + time.Duration(rand.Intn(150))*time.Millisecond
 }
 
+// Глобальный троттлинг на сайт (token bucket): сглаживает всплески —
+// fan-out tag-count, подсказки на каждое нажатие клавиши, ретраи —
+// чтобы апстрим не отвечал 429. Значения — package-level переменные,
+// чтобы тесты могли их отпустить.
+var (
+	apiRatePerSecond = 2.5
+	apiRateBurst     = 5.0
+)
+
+// logAPIKeyDebug — включается BRIEFLY_DEBUG_API=1. Лог [api-key-check]
+// нужен только при отладке ротации ключей: в обычном режиме он пишет
+// строку на каждый API-запрос и захламляет журнал.
+var logAPIKeyDebug = os.Getenv("BRIEFLY_DEBUG_API") == "1"
+
+type rateLimiter struct {
+	mu     sync.Mutex
+	tokens float64
+	last   time.Time
+	perSec float64
+	burst  float64
+}
+
+func newRateLimiter() *rateLimiter {
+	return &rateLimiter{tokens: apiRateBurst, last: time.Now(), perSec: apiRatePerSecond, burst: apiRateBurst}
+}
+
+// Wait nil-безопасен: клиенты из тестов с limiter=nil не троттлятся.
+func (r *rateLimiter) Wait() {
+	if r == nil {
+		return
+	}
+	for {
+		r.mu.Lock()
+		now := time.Now()
+		r.tokens += now.Sub(r.last).Seconds() * r.perSec
+		if r.tokens > r.burst {
+			r.tokens = r.burst
+		}
+		r.last = now
+		if r.tokens >= 1 {
+			r.tokens--
+			r.mu.Unlock()
+			return
+		}
+		wait := time.Duration((1 - r.tokens) / r.perSec * float64(time.Second))
+		r.mu.Unlock()
+		time.Sleep(wait)
+	}
+}
+
 var errAPI403 = errors.New("API returned 403")
 
 // errAPIAuth — обёртка над 401/403: ключ невалиден для этого сайта.
 var errAPIAuth = errors.New("API key rejected")
 
+// errAPITransient — исчерпаны ретраи из-за 429: рейт-лимит апстрима —
+// следствие нашего всплеска, а не отказ сервиса; брейкер за это
+// наказывать не должен (иначе автодополнение блокирует весь API).
+var errAPITransient = errors.New("API rate limited")
+
 // booruClient — общий клиент для всех Gelbooru-0.2-совместимых сайтов.
 // Вся инфраструктура (кэши, брейкер, ротация ключей, singleflight)
 // изолирована по экземпляру, т.е. по сайту.
 type booruClient struct {
-	spec       siteSpec
-	httpClient atomic.Value
-	breaker    circuitBreaker
-	keys       keyManager
-	sf         singleflightGroup
-	cache      *booruCache
+	spec        siteSpec
+	httpClient  atomic.Value
+	breaker     circuitBreaker
+	suggBreaker circuitBreaker // отдельный: сбои автодополнения не блокируют поиск
+	keys        keyManager
+	sf          singleflightGroup
+	suggSF      suggestFlightGroup
+	limiter     *rateLimiter
+	cache       *booruCache
 
 	suggMu sync.Mutex
 	suggM  map[string]suggestionCacheEntry
@@ -605,8 +710,9 @@ type booruClient struct {
 
 func newBooruClient(spec siteSpec) *booruClient {
 	c := &booruClient{
-		spec:  spec,
-		suggM: make(map[string]suggestionCacheEntry),
+		spec:    spec,
+		suggM:   make(map[string]suggestionCacheEntry),
+		limiter: newRateLimiter(),
 	}
 	var legacy []string
 	if spec.name == defaultProviderName {
@@ -642,8 +748,13 @@ func buildAPIHTTPClient() *http.Client {
 }
 
 func buildTransport() *http.Transport {
-	transport := NewResolveTransport("https://cloudflare-dns.com/dns-query")
+	transport := NewResolveTransport()
 	raw := GetConfig().GetProxyURL()
+	// BRIEFLY_PROXY_URL перекрывает настройку из UI: быстрый способ сменить
+	// или подставить рабочий прокси на время запуска, не трогая конфиг.
+	if v := strings.TrimSpace(os.Getenv("BRIEFLY_PROXY_URL")); v != "" {
+		raw = v
+	}
 	if raw == "" {
 		return transport
 	}
@@ -653,6 +764,7 @@ func buildTransport() *http.Transport {
 	}
 	u, err := url.Parse(addr)
 	if err != nil || (u.Scheme != "socks5" && u.Scheme != "socks5h") {
+		log.Printf("[proxy] адрес %q не распознан как socks5://host:port — прокси игнорируется", raw)
 		return transport
 	}
 	dialer, err := proxy.SOCKS5("tcp", u.Host, nil, &net.Dialer{Timeout: 3 * time.Second})
@@ -661,10 +773,26 @@ func buildTransport() *http.Transport {
 	}
 
 	origDial := transport.DialContext
+
+	warnMu := new(sync.Mutex)
+	lastWarn := new(time.Time)
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		conn, err := dialer.Dial(network, addr)
 		if err == nil {
 			return conn, nil
+		}
+		// Мёртвый прокси раньше молча отбрасывал трафик на прямой канал:
+		// в журнале оставались только загадочные обрывы «удалённой стороной»,
+		// и непонятно было, что прокси вообще не работает. Логируем откаты
+		// не чаще раза в минуту — ретраи идут часто.
+		warnMu.Lock()
+		loud := time.Since(*lastWarn) > time.Minute
+		if loud {
+			*lastWarn = time.Now()
+		}
+		warnMu.Unlock()
+		if loud {
+			log.Printf("[proxy] socks %s недоступен (%v) — откат на прямое соединение", u.Host, err)
 		}
 		return origDial(ctx, network, addr)
 	}
@@ -731,7 +859,7 @@ func (c *booruClient) SearchPosts(tags string, page, limit, minID int) ([]Rule34
 		}
 		posts, err := c.fetchPosts(ckey, tags, pid, limit, minID)
 		if err != nil {
-			if !errors.Is(err, errAPIAuth) && !errors.Is(err, errAPI403) {
+			if !errors.Is(err, errAPIAuth) && !errors.Is(err, errAPI403) && !errors.Is(err, errAPITransient) {
 				c.breaker.Fail(c.spec.name)
 			}
 		} else {
@@ -754,7 +882,13 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 		baseV.Set("id", strings.TrimPrefix(tags, "id:"))
 		restTags = ""
 	} else if restTags != "" {
-		baseV.Set("tags", strings.ReplaceAll(restTags, "+", ""))
+		// Пользовательский синтаксис "+tag" (форс-включение) снимаем только
+		// в начале токена: "+" внутри тега (например, "c++") валиден.
+		fields := strings.Fields(restTags)
+		for i, t := range fields {
+			fields[i] = strings.TrimLeft(t, "+")
+		}
+		baseV.Set("tags", strings.Join(fields, " "))
 	}
 	if c.spec.supportsMinID && minID > 0 {
 		baseV.Set("min_id", fmt.Sprintf("%d", minID))
@@ -798,9 +932,12 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 			v.Set("user_id", userID)
 		}
 		reqURL := fmt.Sprintf("%s?%s", c.spec.apiURL, v.Encode())
-		log.Printf("[api-key-check] %s request tags=%q uses key ...%s user_id=%q (attempt %d/%d)",
-			c.spec.name, restTags, keyTail(key), userID, attempt, attempts)
+		if logAPIKeyDebug {
+			log.Printf("[api-key-check] %s request tags=%q uses key ...%s user_id=%q (attempt %d/%d)",
+				c.spec.name, restTags, keyTail(key), userID, attempt, attempts)
+		}
 
+		c.limiter.Wait()
 		req, err := http.NewRequest("GET", reqURL, nil)
 		if err != nil {
 			return nil, err
@@ -843,9 +980,11 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 				time.Sleep(150 * time.Millisecond)
 			}
 			continue
-		case resp.StatusCode == 429 || resp.StatusCode >= 500:
+		case resp.StatusCode == 429:
+			// Рейт-лимит: уважаем Retry-After, ретраим, но после
+			// исчерпания попыток НЕ считаем аварией (errAPITransient).
 			c.keys.report(key, false, "transient")
-			lastErr = fmt.Errorf("API returned status %d (body: %s)", resp.StatusCode, string(body))
+			lastErr = fmt.Errorf("%w: status 429 (body: %s)", errAPITransient, string(body))
 			if attempt < attempts {
 				delay := jitteredBackoff(attempt)
 				if ra := resp.Header.Get("Retry-After"); ra != "" {
@@ -853,6 +992,15 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 						delay = time.Duration(min(secs, 10)) * time.Second
 					}
 				}
+				log.Printf("API retry %d/%d for %q: status 429 (sleep %s)", attempt, attempts, restTags, delay)
+				time.Sleep(delay)
+			}
+			continue
+		case resp.StatusCode >= 500:
+			c.keys.report(key, false, "transient")
+			lastErr = fmt.Errorf("API returned status %d (body: %s)", resp.StatusCode, string(body))
+			if attempt < attempts {
+				delay := jitteredBackoff(attempt)
 				log.Printf("API retry %d/%d for %q: status %d (sleep %s)", attempt, attempts, restTags, resp.StatusCode, delay)
 				time.Sleep(delay)
 			}
@@ -1030,7 +1178,8 @@ func (c *booruClient) suggestionCachePut(key string, items []TagSuggestion) {
 }
 
 func (c *booruClient) SuggestTags(query string) ([]TagSuggestion, error) {
-	if len(query) < 2 {
+	// По рунам, а не байтам: один кириллический символ — 2 байта.
+	if utf8.RuneCountInString(strings.TrimSpace(query)) < 2 {
 		return []TagSuggestion{}, nil
 	}
 
@@ -1039,83 +1188,91 @@ func (c *booruClient) SuggestTags(query string) ([]TagSuggestion, error) {
 		return cached, nil
 	}
 
-	if !c.breaker.Allow() {
-		return nil, fmt.Errorf("%s API временно недоступен — слишком много ошибок подряд, пауза %dс", c.spec.name, int(breakerCoolDown.Seconds()))
-	}
-
-	c.keys.syncFromConfig(c.spec.name)
-	attempts := 2
-	if n := len(credentialsForSite(GetConfig().GetAPICredentials(), c.spec.name)); n > attempts {
-		attempts = n
-	}
-
-	var lastErr error
-	for attempt := 1; attempt <= attempts; attempt++ {
-		if !c.breaker.Allow() {
-			return nil, fmt.Errorf("%s API временно недоступен (брейкер открыт)", c.spec.name)
+	return c.suggSF.Do(ckey, func() ([]TagSuggestion, error) {
+		// Двойная проверка кэша: пока мы ждали лидера, он мог
+		// уже положить результат.
+		if cached, ok := c.suggestionCacheGet(ckey); ok {
+			return cached, nil
 		}
-		cred, ok := c.keys.pickCred()
-		if !ok {
-			if c.spec.requireAuth {
-				return nil, fmt.Errorf("нет доступных API ключей — все на карантине")
+
+		if !c.suggBreaker.Allow() {
+			return nil, fmt.Errorf("%s автодополнение временно недоступно — слишком много ошибок подряд, пауза %dс", c.spec.name, int(breakerCoolDown.Seconds()))
+		}
+
+		c.keys.syncFromConfig(c.spec.name)
+		attempts := 2
+		if n := len(credentialsForSite(GetConfig().GetAPICredentials(), c.spec.name)); n > attempts {
+			attempts = n
+		}
+
+		var lastErr error
+		for attempt := 1; attempt <= attempts; attempt++ {
+			if !c.suggBreaker.Allow() {
+				return nil, fmt.Errorf("%s автодополнение временно недоступно (брейкер открыт)", c.spec.name)
 			}
-			cred = APICredential{}
-		}
+			cred, ok := c.keys.pickCred()
+			if !ok {
+				if c.spec.requireAuth {
+					return nil, fmt.Errorf("нет доступных API ключей — все на карантине")
+				}
+				cred = APICredential{}
+			}
 
-		v := url.Values{}
-		switch c.spec.suggestMode {
-		case "tagindex":
-			// Префиксный поиск по индексу тегов (MySQL LIKE): name_pattern=cat%
-			v.Set("page", "dapi")
-			v.Set("s", "tag")
-			v.Set("q", "index")
-			v.Set("json", "1")
-			v.Set("name_pattern", query+"%")
-			v.Set("limit", "20")
-		default:
-			apiBase := strings.TrimSuffix(strings.Replace(c.spec.apiURL, "/index.php", "", 1), "/")
-			v = url.Values{"q": {query}}
-			req0 := fmt.Sprintf("%s/autocomplete.php?%s", apiBase, v.Encode())
-			sugg, err := c.fetchSuggest(req0, cred, query)
+			v := url.Values{}
+			switch c.spec.suggestMode {
+			case "tagindex":
+				// Префиксный поиск по индексу тегов (MySQL LIKE): name_pattern=cat%
+				v.Set("page", "dapi")
+				v.Set("s", "tag")
+				v.Set("q", "index")
+				v.Set("json", "1")
+				v.Set("name_pattern", query+"%")
+				v.Set("limit", "20")
+			default:
+				apiBase := strings.TrimSuffix(strings.Replace(c.spec.apiURL, "/index.php", "", 1), "/")
+				v = url.Values{"q": {query}}
+				req0 := fmt.Sprintf("%s/autocomplete.php?%s", apiBase, v.Encode())
+				sugg, err := c.fetchSuggest(req0, cred, query)
+				if err != nil {
+					lastErr = err
+					if errors.Is(err, errAPI403) || errors.Is(err, errAPIAuth) {
+						c.keys.report(cred.APIKey, false, "auth")
+						continue
+					}
+					return nil, err
+				}
+				c.keys.report(cred.APIKey, true, "")
+				c.suggestionCachePut(ckey, sugg)
+				return sugg, nil
+			}
+			if cred.APIKey != "" {
+				v.Set("api_key", cred.APIKey)
+			}
+			if cred.UserID != "" {
+				v.Set("user_id", cred.UserID)
+			}
+			reqURL := fmt.Sprintf("%s?%s", c.spec.apiURL, v.Encode())
+
+			sugg, err := c.fetchSuggest(reqURL, cred, query)
 			if err != nil {
 				lastErr = err
-				if errors.Is(err, errAPI403) || errors.Is(err, errAPIAuth) {
+				if errors.Is(err, errAPIAuth) || errors.Is(err, errAPI403) {
 					c.keys.report(cred.APIKey, false, "auth")
+					log.Printf("API key ...%s rejected in tag suggest, switching key (attempt %d/%d)",
+						keyTail(cred.APIKey), attempt+1, attempts)
 					continue
 				}
-				return nil, err
+				if !errors.Is(err, errSuggestTransient) {
+					return nil, err
+				}
+				continue
 			}
 			c.keys.report(cred.APIKey, true, "")
 			c.suggestionCachePut(ckey, sugg)
 			return sugg, nil
 		}
-		if cred.APIKey != "" {
-			v.Set("api_key", cred.APIKey)
-		}
-		if cred.UserID != "" {
-			v.Set("user_id", cred.UserID)
-		}
-		reqURL := fmt.Sprintf("%s?%s", c.spec.apiURL, v.Encode())
-
-		sugg, err := c.fetchSuggest(reqURL, cred, query)
-		if err != nil {
-			lastErr = err
-			if errors.Is(err, errAPIAuth) || errors.Is(err, errAPI403) {
-				c.keys.report(cred.APIKey, false, "auth")
-				log.Printf("API key ...%s rejected in tag suggest, switching key (attempt %d/%d)",
-					keyTail(cred.APIKey), attempt+1, attempts)
-				continue
-			}
-			if !errors.Is(err, errSuggestTransient) {
-				return nil, err
-			}
-			continue
-		}
-		c.keys.report(cred.APIKey, true, "")
-		c.suggestionCachePut(ckey, sugg)
-		return sugg, nil
-	}
-	return nil, lastErr
+		return nil, lastErr
+	})
 }
 
 // errSuggestTransient — 429/5xx: стоит повторить с другим ключом.
@@ -1129,9 +1286,10 @@ func (c *booruClient) fetchSuggest(reqURL string, cred APICredential, query stri
 	req.Header.Set("User-Agent", "Briefly/1.0")
 	req.Header.Set("Accept", "application/json")
 
+	c.limiter.Wait()
 	resp, err := c.HTTPClient().Do(req)
 	if err != nil {
-		c.breaker.Fail(c.spec.name)
+		c.suggBreaker.Fail(c.spec.name)
 		return nil, fmt.Errorf("tag suggest failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -1142,8 +1300,13 @@ func (c *booruClient) fetchSuggest(reqURL string, cred APICredential, query stri
 	if resp.StatusCode == 403 {
 		return nil, fmt.Errorf("%w: tag suggest 403", errAPI403)
 	}
-	if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-		c.breaker.Fail(c.spec.name)
+	if resp.StatusCode == 429 {
+		// Рейт-лимит — наша вина (всплеск), а не отказ API: брейкер
+		// открывать нельзя, иначе автодополнение блокирует весь сайт.
+		return nil, fmt.Errorf("%w: status 429", errSuggestTransient)
+	}
+	if resp.StatusCode >= 500 {
+		c.suggBreaker.Fail(c.spec.name)
 		return nil, fmt.Errorf("%w: status %d", errSuggestTransient, resp.StatusCode)
 	}
 
@@ -1151,7 +1314,7 @@ func (c *booruClient) fetchSuggest(reqURL string, cred APICredential, query stri
 	if err != nil {
 		return nil, err
 	}
-	c.breaker.Success()
+	c.suggBreaker.Success()
 
 	sugg := c.parseSuggestions(body)
 

@@ -28,6 +28,17 @@ func (tg *ThumbnailGenerator) ThumbPath(postID int) string {
 	return filepath.Join(tg.thumbDir, fmt.Sprintf("%d.jpg", postID))
 }
 
+// downscaleForThumb — двухступенчатый даунскейл: для очень больших
+// исходников сначала быстрый box-фильтр до ~2x цели, потом Lanczos на
+// малой картинке. На итоговых 200–500px разница с чистым Lanczos
+// незаметна, а скорость на 4000×8000 исходниках — в разы.
+func downscaleForThumb(src image.Image, size int) image.Image {
+	if b := src.Bounds(); b.Dx() > size*4 || b.Dy() > size*4 {
+		src = imaging.Resize(src, size*2, 0, imaging.Box)
+	}
+	return src
+}
+
 func (tg *ThumbnailGenerator) Generate(sourcePath string, postID int) (string, error) {
 	thumbPath := tg.ThumbPath(postID)
 
@@ -46,8 +57,9 @@ func (tg *ThumbnailGenerator) Generate(sourcePath string, postID int) (string, e
 	}
 
 	size := GetConfig().GetThumbSize()
-	thumb := imaging.Fit(srcImg, size, size, imaging.Lanczos)
+	thumb := imaging.Fit(downscaleForThumb(srcImg, size), size, size, imaging.Lanczos)
 
+	os.MkdirAll(tg.thumbDir, 0o755)
 	if err := imaging.Save(thumb, thumbPath, imaging.JPEGQuality(80)); err != nil {
 		return "", fmt.Errorf("failed to save thumbnail: %w", err)
 	}
@@ -63,8 +75,9 @@ func (tg *ThumbnailGenerator) GenerateFromReader(r image.Image, postID int) (str
 	}
 
 	size := GetConfig().GetThumbSize()
-	thumb := imaging.Fit(r, size, size, imaging.Lanczos)
+	thumb := imaging.Fit(downscaleForThumb(r, size), size, size, imaging.Lanczos)
 
+	os.MkdirAll(tg.thumbDir, 0o755)
 	if err := imaging.Save(thumb, thumbPath, imaging.JPEGQuality(80)); err != nil {
 		return "", fmt.Errorf("failed to save thumbnail: %w", err)
 	}

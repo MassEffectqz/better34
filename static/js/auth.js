@@ -13,6 +13,7 @@ App.initAuth = async function () {
   if (me && me.authed && me.user) {
     this.state.user = me.user;
     this._usersExist = true;
+    this.hideAuth(); // дизейблим поля логин-формы (см. hideAuth)
     this._resolveAuth();
     return;
   }
@@ -25,6 +26,8 @@ App.showAuth = function (mode) {
   this._authMode = mode === 'register' ? 'register' : 'login';
   const o = _('auth-overlay');
   o.classList.remove('hidden');
+  // Пока форма скрыта, поля задизейблены (см. hideAuth) — возвращаем.
+  ['auth-username', 'auth-password', 'auth-password2'].forEach(id => { _(id).disabled = false; });
   _('auth-title').textContent = this._authMode === 'register' ? 'Создание аккаунта' : 'Вход';
   _('auth-submit').textContent = this._authMode === 'register' ? 'Создать аккаунт' : 'Войти';
   _('auth-toggle').textContent = this._authMode === 'register' ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Создать';
@@ -212,6 +215,15 @@ App.renderPopularTags = function () {
 };
 
 App.hideAuth = function () {
+  // Очищаем пароли и дизейблим поля формы: пока аккаунт авторизован,
+  // форма входа не должна выглядеть для браузера как «активная логин-форма»,
+  // иначе он постоянно предлагает «Сохранить пароль?» при любом вводе.
+  ['auth-username', 'auth-password', 'auth-password2'].forEach((id) => {
+    const el = _(id);
+    el.value = '';
+    el.disabled = true;
+    if (el === document.activeElement) el.blur();
+  });
   _('auth-overlay').classList.add('hidden');
 };
 

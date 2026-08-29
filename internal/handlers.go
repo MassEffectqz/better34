@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -50,6 +50,37 @@ func (h *Handler) SetDownloader(d *Downloader) {
 	h.downloader = d
 }
 
+// effectiveMaxQueryLen — безопасная длина tags для активного режима поиска.
+// В режиме «Все сайты» действует самый строгий лимит среди провайдеров.
+func (h *Handler) effectiveMaxQueryLen() int {
+	if GetConfig().GetProvider() != allProvidersName {
+		return h.provider().MaxQueryLen()
+	}
+	minLen := 0
+	for _, name := range multiProviderOrder {
+		if p, ok := h.providers[name]; ok {
+			n := p.MaxQueryLen()
+			if minLen == 0 || n < minLen {
+				minLen = n
+			}
+		}
+	}
+	if minLen == 0 {
+		return h.provider().MaxQueryLen()
+	}
+	return minLen
+}
+
+// refererForFileURL подбирает Referer под хост файла поста: в режиме
+// «Все сайты» (и после смены источника) активный сайт не совпадает с
+// сайтом конкретного поста.
+func (h *Handler) refererForFileURL(fileURL string) string {
+	if u, err := url.Parse(fileURL); err == nil && u.Hostname() != "" {
+		return h.refererForHost(u.Hostname())
+	}
+	return h.provider().RefererURL()
+}
+
 func (h *Handler) SearchPosts(c *gin.Context) {
 	tags := c.Query("tags")
 
@@ -90,16 +121,40 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 		}
 	}
 
+	// Режим «Все сайты»: параллельный опрос всех провайдеров со слиянием
+	// выдачи (дедуп по md5-хэшу файла и защита от коллизий числовых id).
+	multi := cfg.GetProvider() == allProvidersName
+	provs := make([]Provider, 0, len(h.providers))
+	if multi {
+		for _, name := range multiProviderOrder {
+			if p, ok := h.providers[name]; ok {
+				provs = append(provs, p)
+			}
+		}
+		if len(provs) <= 1 {
+			multi = false
+		}
+	}
+
 	type qResult struct {
 		query   string
 		omitted []string
 	}
 	maxQueryLen := h.provider().MaxQueryLen()
+	if multi {
+		for _, pr := range provs {
+			if n := pr.MaxQueryLen(); n < maxQueryLen {
+				maxQueryLen = n
+			}
+		}
+	}
 	buildQuery := func(q string) qResult {
 		seen := make(map[string]bool)
 		var omitted []string
 		for _, t := range hiddenTags {
-			norm := strings.ReplaceAll(strings.TrimLeft(t, "+-"), "&#039;", "'")
+			// Приводим к нижнему регистру: посты приходят от API в lowercase,
+			// а filterOmitted сравнивает токены точно (см. GetLocalPosts).
+			norm := strings.ToLower(strings.ReplaceAll(strings.TrimLeft(t, "+-"), "&#039;", "'"))
 			if seen[norm] {
 				continue
 			}
@@ -122,7 +177,7 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 		for _, p := range posts {
 			bad := false
 			for _, ht := range omitted {
-				for _, tok := range strings.Fields(p.Tags) {
+				for _, tok := range strings.Fields(strings.ToLower(p.Tags)) {
 					if strings.ReplaceAll(tok, "&#039;", "'") == ht {
 						bad = true
 						break
@@ -139,61 +194,124 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 		return keep
 	}
 
+
 	var posts []Rule34Post
+
+	// searchAcross опрашивает провайдеров параллельно (один вызов на каждый),
+	// возвращает списки постов и признак «хотя бы один ответил».
+	searchAcross := func(query string, perProvLimit int) ([][]Rule34Post, bool) {
+		lists := make([][]Rule34Post, len(provs))
+		errs := make([]error, len(provs))
+		var wg sync.WaitGroup
+		for i, pr := range provs {
+			wg.Add(1)
+			go func(i int, pr Provider) {
+				defer wg.Done()
+				ps, e := pr.SearchPosts(query, page, perProvLimit, minID)
+				lists[i], errs[i] = ps, e
+			}(i, pr)
+		}
+		wg.Wait()
+		ok := false
+		for _, e := range errs {
+			if e == nil {
+				ok = true
+			}
+		}
+		return lists, ok
+	}
+
+	// mergeMulti сливает выдачу сайтов «по кругу», выкидывая дубликаты
+	// файлов по md5-хэшу и коллизии числовых id между сайтами.
+	mergeMulti := func(lists [][]Rule34Post) []Rule34Post {
+		total := 0
+		for _, l := range lists {
+			total += len(l)
+		}
+		out := make([]Rule34Post, 0, total)
+		seenMD5 := make(map[string]bool, total)
+		seenID := make(map[int]bool, total)
+		for pos := 0; ; pos++ {
+			empty := true
+			for _, l := range lists {
+				if pos < len(l) {
+					empty = false
+					p := l[pos]
+					if !seenID[p.ID] && (p.Hash == "" || !seenMD5[p.Hash]) {
+						seenID[p.ID] = true
+						if p.Hash != "" {
+							seenMD5[p.Hash] = true
+						}
+						out = append(out, p)
+					}
+				}
+			}
+			if empty {
+				break
+			}
+		}
+		return out
+	}
 
 	if strings.Contains(tags, "|") {
 		parts := strings.Split(tags, "|")
 		n := len(parts)
 		totalTarget := limit * 2
-		perPart := (totalTarget + n - 1) / n
-		if perPart < 1 {
-			perPart = 1
+		perPartLimit := (totalTarget + n - 1) / n
+		if perPartLimit < 1 {
+			perPartLimit = 1
 		}
-		type result struct {
-			posts   []Rule34Post
-			omitted []string
-			err     error
-		}
-		ch := make(chan result, n)
+		calls := 0
+		failedCalls := 0
+		var partResults [][]Rule34Post
 		for _, part := range parts {
-			q := buildQuery(strings.TrimSpace(part))
-			go func(r qResult) {
-				p, e := h.provider().SearchPosts(r.query, page, perPart, minID)
-				ch <- result{posts: p, omitted: r.omitted, err: e}
-			}(q)
-		}
-		seen := make(map[int]bool)
-		failed := 0
-		for i := 0; i < n; i++ {
-			r := <-ch
-			if r.err != nil {
-				failed++
-				continue
-			}
-			for _, p := range filterOmitted(r.posts, r.omitted) {
-				if !seen[p.ID] {
-					seen[p.ID] = true
-					posts = append(posts, p)
+			rq := buildQuery(strings.TrimSpace(part))
+			if multi {
+				lists, anyOK := searchAcross(rq.query, perPartLimit)
+				calls++
+				if !anyOK {
+					failedCalls++
+					continue
 				}
+				partResults = append(partResults, filterOmitted(mergeMulti(lists), rq.omitted))
+			} else {
+				calls++
+				p, e := h.provider().SearchPosts(rq.query, page, perPartLimit, minID)
+				if e != nil {
+					failedCalls++
+					continue
+				}
+				partResults = append(partResults, filterOmitted(p, rq.omitted))
 			}
 		}
 		// Частичный сбой даёт неполные результаты, но когда упали ВСЕ части —
 		// молча отдавать «ничего не найдено» нельзя: сообщаем об ошибке.
-		if failed == n {
+		if failedCalls == calls {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "источник постов недоступен: все части запроса завершились ошибкой"})
 			return
 		}
-		rand.Shuffle(len(posts), func(i, j int) {
-			posts[i], posts[j] = posts[j], posts[i]
-		})
+		// Детерминированное слияние групп «по кругу»: в отличие от прежнего
+		// rand.Shuffle порядок стабилен между запросами страниц (иначе
+		// пагинация дублировала/теряла посты).
+		posts = mergeMulti(partResults)
 	} else {
-		r := buildQuery(tags)
-		posts, err = h.provider().SearchPosts(r.query, page, limit, minID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+		rq := buildQuery(tags)
+		if multi {
+			lists, anyOK := searchAcross(rq.query, limit)
+			if !anyOK {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "источники постов недоступны: все сайты завершили запрос ошибкой"})
+				return
+			}
+			posts = mergeMulti(lists)
+		} else {
+			var err error
+			posts, err = h.provider().SearchPosts(rq.query, page, limit, minID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
 		}
-		posts = filterOmitted(posts, r.omitted)
+		posts = filterOmitted(posts, rq.omitted)
 	}
 
 	if len(ratingExcl) > 0 {
