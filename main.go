@@ -2,11 +2,24 @@ package main
 
 import (
 	"briefly/internal"
+	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"errors"
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
+	"github.com/quic-go/quic-go/http3"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -87,6 +100,10 @@ func (g *gzipWriter) Write(p []byte) (int, error) {
 	return g.gz.Write(p)
 }
 
+func (g *gzipWriter) WriteString(s string) (int, error) {
+	return g.Write([]byte(s))
+}
+
 func (g *gzipWriter) WriteHeader(code int) {
 	g.Header().Del("Content-Length")
 	g.ResponseWriter.WriteHeader(code)
@@ -99,10 +116,40 @@ func (g *gzipWriter) Flush() {
 	}
 }
 
+type brotliWriter struct {
+	gin.ResponseWriter
+	bw *brotli.Writer
+}
+
+func (b *brotliWriter) Write(p []byte) (int, error) {
+	b.Header().Del("Content-Length")
+	return b.bw.Write(p)
+}
+
+func (b *brotliWriter) WriteString(s string) (int, error) {
+	return b.Write([]byte(s))
+}
+
+func (b *brotliWriter) WriteHeader(code int) {
+	b.Header().Del("Content-Length")
+	b.ResponseWriter.WriteHeader(code)
+}
+
+func (b *brotliWriter) Flush() {
+	_ = b.bw.Flush()
+	if f, ok := b.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// gzipMiddleware сжимает текстовые ответы: для статики и HTML — brotli
+// (клиенты, не умеющие br, получают gzip), для /api/* — gzip на уровне
+// BestSpeed: JSON-ответы идут через прокси на каждый запрос, там важнее
+// минимальная CPU-задержка, чем максимальная степень сжатия.
 func gzipMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if c.Request.Method != "GET" || !strings.Contains(c.Request.Header.Get("Accept-Encoding"), "gzip") {
+		if c.Request.Method != "GET" {
 			c.Next()
 			return
 		}
@@ -119,12 +166,34 @@ func gzipMiddleware() gin.HandlerFunc {
 				return
 			}
 		}
-		gz := gzip.NewWriter(c.Writer)
-		c.Header("Content-Encoding", "gzip")
-		c.Header("Vary", "Accept-Encoding")
-		c.Writer = &gzipWriter{ResponseWriter: c.Writer, gz: gz}
-		c.Next()
-		_ = gz.Close()
+		ace := c.Request.Header.Get("Accept-Encoding")
+		isAPI := strings.HasPrefix(lower, "/api/")
+		switch {
+		case !isAPI && strings.Contains(ace, "br"):
+			bw := brotli.NewWriterLevel(c.Writer, 6)
+			c.Header("Content-Encoding", "br")
+			c.Header("Vary", "Accept-Encoding")
+			c.Writer = &brotliWriter{ResponseWriter: c.Writer, bw: bw}
+			c.Next()
+			_ = bw.Close()
+		case strings.Contains(ace, "gzip"):
+			level := gzip.DefaultCompression
+			if isAPI {
+				level = gzip.BestSpeed
+			}
+			gz, err := gzip.NewWriterLevel(c.Writer, level)
+			if err != nil {
+				c.Next()
+				return
+			}
+			c.Header("Content-Encoding", "gzip")
+			c.Header("Vary", "Accept-Encoding")
+			c.Writer = &gzipWriter{ResponseWriter: c.Writer, gz: gz}
+			c.Next()
+			_ = gz.Close()
+		default:
+			c.Next()
+		}
 	}
 }
 
@@ -138,7 +207,11 @@ func staticCacheMiddleware() func(c *gin.Context) {
 		// JS-модули импортируются по фиксированным URL (?v= есть только у
 		// точки входа) — им ревалидация по Last-Modified (304), остальной
 		// статике с версионированными ссылками — длинный immutable-кэш.
-		if strings.HasSuffix(lower, ".js") || strings.HasSuffix(lower, ".css") {
+		// Сборка esbuild (static/js/dist/) всегда версионируется ?v= у
+		// точки входа — ей тоже immutable.
+		if strings.Contains(lower, "/dist/") {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		} else if strings.HasSuffix(lower, ".js") || strings.HasSuffix(lower, ".css") {
 			c.Header("Cache-Control", "no-cache")
 		} else {
 			c.Header("Cache-Control", "public, max-age=31536000, immutable")
@@ -172,6 +245,174 @@ func debugEnabled() bool {
 	return v == "1" || v == "true"
 }
 
+// tlsEnabled включает HTTPS + HTTP/2: браузеры открывают HTTP/2 только
+// поверх TLS, а без него лимит 6 соединений на хост сериализует ленту
+// из десятков миниатюр. Сертификат self-signed (BRIEFLY_TLS=1).
+func tlsEnabled() bool {
+	v := strings.ToLower(os.Getenv("BRIEFLY_TLS"))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+const (
+	// Слэши намеренно: пакет os в Go принимает "/" и на Windows.
+	tlsCertPath = "data/tls/cert.pem"
+	tlsKeyPath  = "data/tls/key.pem"
+)
+
+// loadOrGenerateCert возвращает self-signed сертификат, покрывающий все
+// разрешённые хосты (allowedHosts). Сертификат сохраняется в data/tls и
+// переиспользуется: постоянный отпечаток означает, что браузер (особенно
+// на телефоне) принимает предупреждение о самоподписанном сертификате
+// один раз, а не после каждого перезапуска сервера.
+func loadOrGenerateCert() (tls.Certificate, error) {
+	if cert, err := tls.LoadX509KeyPair(tlsCertPath, tlsKeyPath); err == nil {
+		return cert, nil
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	tmpl := x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "briefly-local"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	for _, h := range allowedHosts {
+		if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
+			tmpl.IPAddresses = append(tmpl.IPAddresses, ip)
+		} else {
+			tmpl.DNSNames = append(tmpl.DNSNames, h)
+		}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	var certPEM, keyPEM bytes.Buffer
+	if err := pem.Encode(&certPEM, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
+		return tls.Certificate{}, err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if err := pem.Encode(&keyPEM, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+		return tls.Certificate{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(tlsCertPath), 0700); err == nil {
+		// Ошибки записи не критичны: сертификат просто перегенерируется
+		// при следующем запуске.
+		_ = os.WriteFile(tlsCertPath, certPEM.Bytes(), 0644)
+		_ = os.WriteFile(tlsKeyPath, keyPEM.Bytes(), 0600)
+	}
+	return tls.X509KeyPair(certPEM.Bytes(), keyPEM.Bytes())
+}
+
+// ── Один порт: TLS и plain HTTP одновременно ─────────────────────────────
+// Порт один, а клиенты бывают разные: телефон со старой закладкой/PWA
+// стучится по http:// и получает загадочную ошибку TLS handshake. Поэтому
+// первый байт соединения подглядывается: 0x16 (TLS ClientHello) — в
+// HTTPS-сервер (с HTTP/2), любой другой — в крошечный редиректор на https.
+// Старые http-ссылки продолжают работать сами собой.
+
+type peekConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (c *peekConn) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+type chanListener struct {
+	addr net.Addr
+	ch   chan net.Conn
+	done chan struct{}
+	once sync.Once
+}
+
+func newChanListener(addr net.Addr, buf int) *chanListener {
+	return &chanListener{addr: addr, ch: make(chan net.Conn, buf), done: make(chan struct{})}
+}
+
+func (l *chanListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.ch:
+		return c, nil
+	case <-l.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *chanListener) Close() error {
+	l.once.Do(func() { close(l.done) })
+	return nil
+}
+
+func (l *chanListener) Addr() net.Addr { return l.addr }
+
+// demuxAccept раскладывает соединения основного листенера по двум
+// каналам-листенерам. Дедлайн на Peek обязателен: молчащее соединение
+// (сканер, зависший клиент) иначе навсегда блокировало бы accept-цикл.
+func demuxAccept(ln net.Listener, tlsLn, plainLn *chanListener) {
+	defer ln.Close()
+	defer tlsLn.Close()
+	defer plainLn.Close()
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		br := bufio.NewReader(conn)
+		first, perr := br.Peek(1)
+		_ = conn.SetReadDeadline(time.Time{})
+		pc := &peekConn{Conn: conn, r: br}
+		if perr == nil && first[0] == 0x16 {
+			tlsLn.ch <- pc
+		} else {
+			// Не TLS (включая обрывы): редиректор ответит или закроет сам.
+			plainLn.ch <- pc
+		}
+	}
+}
+
+// altSvcMiddleware рекламирует HTTP/3 на том же порту: современные браузеры
+// по Alt-Svc сами переключаются на QUIC, когда сеть его поддерживает.
+func altSvcMiddleware() gin.HandlerFunc {
+	h3Active := strings.ToLower(strings.TrimSpace(os.Getenv("BRIEFLY_H3"))) != "0"
+	if !tlsEnabled() || !h3Active {
+		return func(c *gin.Context) { c.Next() }
+	}
+	return func(c *gin.Context) {
+		if c.Request.TLS != nil {
+			c.Header("Alt-Svc", `h3=":`+os.Getenv("BRIEFLY_PORT")+`"; ma=86400`)
+		}
+		c.Next()
+	}
+}
+
+// httpsRedirectHandler отправляет plain HTTP на тот же хост/порт по https.
+// 307 (временный) — чтобы браузер не «залипал» на редиректе, если TLS
+// потом отключат.
+func httpsRedirectHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !hostAllowed(r) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+	})
+}
+
 func main() {
 	internal.SetBriefToken(authToken)
 	log.SetOutput(io.MultiWriter(os.Stdout, newRotatingWriter("data/briefly.log", 10<<20)))
@@ -197,6 +438,8 @@ func main() {
 	r.Use(bodyLimitMiddleware())
 	r.Use(staticCacheMiddleware())
 	r.Use(gzipMiddleware())
+	// Задача 10: рекламируем HTTP/3 (если сервер реально его слушает).
+	r.Use(altSvcMiddleware())
 	// Построчный лог каждого /api запроса — только при явном BRIEFLY_DEBUG=1.
 	if v := strings.ToLower(os.Getenv("BRIEFLY_DEBUG")); v == "1" || v == "true" {
 		r.Use(debugMiddleware())
@@ -208,6 +451,13 @@ func main() {
 		api.POST("/auth/login", handler.AuthLogin)
 		api.POST("/auth/logout", handler.AuthLogout)
 		api.GET("/auth/me", handler.AuthMe)
+		api.GET("/auth/qr/create", handler.QRCreate)
+		api.GET("/auth/qr/svg", handler.QRSVG)
+		api.POST("/auth/qr/claim", handler.QRClaim)
+		api.POST("/auth/qr/session", handler.QRCreateSession)
+		api.GET("/auth/qr/poll", handler.QRPollSession)
+		api.POST("/auth/qr/exchange", handler.QRExchangeSession)
+		api.GET("/auth/qr/image", handler.QRImagePublic)
 		api.POST("/profile/meta", handler.UpdateProfileMeta)
 		api.GET("/posts", handler.SearchPosts)
 		api.GET("/recommend", handler.Recommend)
@@ -237,6 +487,7 @@ func main() {
 		api.DELETE("/posts/:id", handler.DeletePost)
 		api.GET("/suggest", handler.SuggestTags)
 		api.GET("/suggest-local", handler.SuggestLocal)
+		api.GET("/nl-search", handler.NlSearch)
 		api.GET("/tag-counts", handler.GetTagCounts)
 		api.GET("/tag-stats", handler.GetLocalTagStats)
 		api.GET("/tags/popular", handler.GetPopularTags)
@@ -257,6 +508,8 @@ func main() {
 		api.POST("/db/clean", handler.CleanDB)
 		api.GET("/random", handler.SearchRandom)
 		api.GET("/related", handler.GetRelated)
+		api.GET("/similar/:id", handler.GetSimilar)
+		api.POST("/remote/push", handler.RemotePush)
 		api.GET("/comments/:id", handler.GetComments)
 		api.POST("/comments/:id", handler.AddComment)
 		api.DELETE("/comments/:cid", handler.DeleteComment)
@@ -279,6 +532,7 @@ func main() {
 	r.Static("/static", "static")
 	// Service worker обязан отдаваться с корня (scope /), иначе PWA не работает.
 	r.StaticFile("/sw.js", "static/sw.js")
+	r.GET("/qr", handler.QRPage)
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
@@ -313,16 +567,80 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	scheme := "http"
+	var rawLn net.Listener
+	var tlsLn, plainLn *chanListener
+	var plainSrv *http.Server
+	var h3Server *http3.Server
+	if tlsEnabled() {
+		cert, err := loadOrGenerateCert()
+		if err != nil {
+			log.Printf("BRIEFLY_TLS: не удалось подготовить сертификат (%v) — работаю по HTTP", err)
+		} else {
+			srv.TLSConfig = &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				MinVersion:   tls.VersionTLS12,
+				NextProtos:   []string{"h2", "http/1.1"},
+			}
+			scheme = "https"
+			rawLn, err = net.Listen("tcp", addr)
+			if err != nil {
+				log.Fatalf("Server failed: %v", err)
+			}
+			tlsLn = newChanListener(rawLn.Addr(), 64)
+			plainLn = newChanListener(rawLn.Addr(), 64)
+			go demuxAccept(rawLn, tlsLn, plainLn)
+			plainSrv = &http.Server{
+				Handler:           httpsRedirectHandler(),
+				ReadHeaderTimeout: 5 * time.Second,
+				IdleTimeout:       120 * time.Second,
+			}
+			go func() {
+				// Ошибки редиректора (в т.ч. остановка) не критичны.
+				_ = plainSrv.Serve(plainLn)
+			}()
+			// Задача 10: HTTP/3 (QUIC) — отдельный UDP-сокет на том же порту.
+			// Браузер видит Alt-Svc и сам уходит на h3, если сеть позволяет.
+			if strings.ToLower(strings.TrimSpace(os.Getenv("BRIEFLY_H3"))) != "0" {
+				h3Server = &http3.Server{
+					Addr:    addr,
+					Handler: r,
+					TLSConfig: &tls.Config{
+						MinVersion: tls.VersionTLS12,
+						NextProtos: []string{"h3"},
+					},
+				}
+				go func() {
+					if err := h3Server.ListenAndServeTLS(tlsCertPath, tlsKeyPath); err != nil &&
+						!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+						log.Printf("HTTP/3: %v (QUIC недоступен — продолжаем по TCP)", err)
+					}
+				}()
+			}
+		}
+	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		log.Printf("Server starting on http://%s", addr)
+		log.Printf("Server starting on %s://%s", scheme, addr)
+		if scheme == "https" {
+			log.Printf("  самоподписанный сертификат: при первом открытии браузер предупредит — примите исключение (на телефоне: «Дополнительно» → «Перейти на сайт»)")
+			log.Printf("  http:// на тот же порт автоматически перенаправляется на https (старые ссылки работают)")
+		}
 		for _, a := range allowedHosts {
 			if a != "localhost" && a != "127.0.0.1" && a != "::1" && !strings.Contains(a, ":") {
-				log.Printf("  в локальной сети: http://%s:%s", a, port)
+				log.Printf("  в локальной сети: %s://%s:%s", scheme, a, port)
 			}
 		}
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		switch {
+		case scheme == "https":
+			// Пустые пути — сертификат берётся из srv.TLSConfig.
+			err = srv.ServeTLS(tlsLn, "", "")
+		default:
+			err = srv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed && !errors.Is(err, net.ErrClosed) {
 			log.Fatalf("Server failed: %v", err)
 		}
 	}()
@@ -332,6 +650,12 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("Server forced to shutdown: %v", err)
+	}
+	if plainSrv != nil {
+		_ = plainSrv.Shutdown(ctx)
+	}
+	if h3Server != nil {
+		_ = h3Server.Close()
 	}
 	downloader.Close()
 	db.Close()
@@ -458,7 +782,9 @@ func webSecurityMiddleware() gin.HandlerFunc {
 
 func sameOriginHost(r *http.Request) string {
 	scheme := "http"
-	if v := r.Header.Get("X-Forwarded-Proto"); v == "https" {
+	if r.TLS != nil {
+		scheme = "https"
+	} else if v := r.Header.Get("X-Forwarded-Proto"); v == "https" {
 		scheme = v
 	}
 	return scheme + "://" + r.Host
@@ -471,6 +797,12 @@ var (
 	versionMu  sync.Mutex
 	versionVal string
 	lastWalk   time.Time
+	// distBundleOK — собран ли esbuild-бандл (static/js/dist/app.js).
+	// Обновляется вместе с перечитыванием index.html: пересборка бандла
+	// меняет mtime дерева static/ и, значит, версию.
+	distBundleOK bool
+	// distAppJSPath — точка входа фронтенда в собранном виде.
+	distAppJSPath = filepath.Join("static", "js", "dist", "app.js")
 )
 
 func staticVersion() string {
@@ -499,6 +831,8 @@ func staticVersion() string {
 		versionVal = v
 		indexOnce = sync.Once{}
 		indexHTML, indexError = os.ReadFile("static/index.html")
+		_, distErr := os.Stat(distAppJSPath)
+		distBundleOK = distErr == nil
 	}
 	return v
 }
@@ -517,7 +851,16 @@ func serveIndex(c *gin.Context) {
 		return
 	}
 	v := staticVersion()
-	out := strings.ReplaceAll(string(html), "__VERSION__", v)
+	out := string(html)
+	// Без BRIEFLY_DEBUG отдаём собранный esbuild-бандл вместо графа из
+	// ~16 ES-модулей: один запрос вместо каскада 304-ревалидаций (на
+	// мобильном интернете/слабом Wi-Fi это секунды до старта приложения).
+	if distBundleOK && !debugEnabled() {
+		out = strings.Replace(out,
+			`<script type="module" src="/static/js/app.js?v=__VERSION__"></script>`,
+			`<script type="module" src="/static/js/dist/app.js?v=__VERSION__"></script>`, 1)
+	}
+	out = strings.ReplaceAll(out, "__VERSION__", v)
 	// Legacy-токен (BRIEFLY_TOKEN) сознательно НЕ вшивается в HTML:
 	// страница отдаётся без проверки сессии, и любой посетитель LAN
 	// видел бы секрет, полностью обходящий аккаунты. Токен-режим

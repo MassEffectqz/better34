@@ -94,7 +94,7 @@ func isKnownProvider(name string) bool {
 	if name == allProvidersName {
 		return true
 	}
-	for _, p := range knownProviders {
+	for _, p := range allProviderDescriptors() {
 		if p.Name == name {
 			return true
 		}

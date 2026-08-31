@@ -1,3 +1,5 @@
+import { enqueueMutation } from './offline.js';
+
 export const API = {
   _cache: {},
   _inflight: {},
@@ -92,8 +94,44 @@ export const API = {
     keys.sort((a, b) => (this._cache[a].ts || 0) - (this._cache[b].ts || 0));
     while (Object.keys(this._cache).length > this._cacheMax) delete this._cache[keys.shift()];
   },
-  async post(e, b, extraHeaders) { const r = await fetch(`/api${e}`, { method:'POST', headers:{'Content-Type':'application/json', ...this._headers(), ...(extraHeaders || {})}, body:JSON.stringify(b) }); if (!r.ok) throw new Error(await this._err(r)); const ct = r.headers.get('content-type') || ''; if (!ct.includes('application/json')) { console.error('[API.post] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct }); throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`); } return r.json(); },
-  async del(e) { const r = await fetch(`/api${e}`, { method:'DELETE', headers:this._headers() }); if (!r.ok) throw new Error(await this._err(r)); const ct = r.headers.get('content-type') || ''; if (!ct.includes('application/json')) { console.error('[API.del] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct }); throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`); } return r.json(); },
-  async patch(e, b) { const r = await fetch(`/api${e}`, { method:'PATCH', headers:{'Content-Type':'application/json', ...this._headers()}, body:JSON.stringify(b) }); if (!r.ok) throw new Error(await this._err(r)); const ct = r.headers.get('content-type') || ''; if (!ct.includes('application/json')) { console.error('[API.patch] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct }); throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`); } return r.json(); },
+  async post(e, b, extraHeaders) {
+    try {
+      const r = await fetch(`/api${e}`, { method:'POST', headers:{'Content-Type':'application/json', ...this._headers(), ...(extraHeaders || {})}, body:JSON.stringify(b) });
+      if (!r.ok) throw new Error(await this._err(r));
+      const ct = r.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) { console.error('[API.post] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct }); throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`); }
+      return r.json();
+    } catch (err) {
+      // Оффлайн (задача 1): честные мутации не теряем, а ставим в очередь.
+      if (err && err.name !== 'AbortError' && await enqueueMutation('POST', e, b)) {
+        return { ok: true, offline: true };
+      }
+      throw err;
+    }
+  },
+  async del(e) {
+    try {
+      const r = await fetch(`/api${e}`, { method:'DELETE', headers:this._headers() });
+      if (!r.ok) throw new Error(await this._err(r));
+      const ct = r.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) { console.error('[API.del] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct }); throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`); }
+      return r.json();
+    } catch (err) {
+      if (err && err.name !== 'AbortError' && await enqueueMutation('DELETE', e)) return { ok: true, offline: true };
+      throw err;
+    }
+  },
+  async patch(e, b) {
+    try {
+      const r = await fetch(`/api${e}`, { method:'PATCH', headers:{'Content-Type':'application/json', ...this._headers()}, body:JSON.stringify(b) });
+      if (!r.ok) throw new Error(await this._err(r));
+      const ct = r.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) { console.error('[API.patch] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct }); throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`); }
+      return r.json();
+    } catch (err) {
+      if (err && err.name !== 'AbortError' && await enqueueMutation('PATCH', e, b)) return { ok: true, offline: true };
+      throw err;
+    }
+  },
   invalidate(pattern) { Object.keys(this._cache).forEach(k => { if (k.includes(pattern)) delete this._cache[k]; }); },
 };

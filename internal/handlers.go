@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,14 +22,20 @@ type Handler struct {
 }
 
 func NewHandler() *Handler {
-	return &Handler{
-		providers: map[string]Provider{
-			rule34Site.name:    NewRule34Client(),
-			gelbooruSite.name:  NewGelbooruClient(),
-			safebooruSite.name: NewSafebooruClient(),
-			hypnohubSite.name:  NewHypnohubClient(),
-		},
+	providers := map[string]Provider{
+		rule34Site.name:    NewRule34Client(),
+		gelbooruSite.name:  NewGelbooruClient(),
+		safebooruSite.name: NewSafebooruClient(),
+		hypnohubSite.name:  NewHypnohubClient(),
 	}
+	// Плагинные сайты из data/providers.json (задача 9) — без кода.
+	for _, spec := range loadDynamicProviderSpecs() {
+		if _, exists := providers[spec.name]; exists {
+			continue // имя занято встроенным — динамическая запись игнорируется
+		}
+		providers[spec.name] = newBooruClient(spec)
+	}
+	return &Handler{providers: providers}
 }
 
 // provider возвращает активный источник постов (выбирается в настройках,
@@ -130,6 +137,18 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 			if p, ok := h.providers[name]; ok {
 				provs = append(provs, p)
 			}
+		}
+		// Плагинные сайты (data/providers.json) не зашиты в multiProviderOrder —
+		// добираем их детерминированно по имени.
+		extra := make([]string, 0, 4)
+		for name := range h.providers {
+			if !slices.Contains(multiProviderOrder, name) {
+				extra = append(extra, name)
+			}
+		}
+		sort.Strings(extra)
+		for _, name := range extra {
+			provs = append(provs, h.providers[name])
 		}
 		if len(provs) <= 1 {
 			multi = false

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -107,6 +108,7 @@ func NewDownloader(workers int, onResult func(DownloadResult)) *Downloader {
 				db := GetDB()
 				db.SetDownloaded(result.PostID, result.FilePath, result.ThumbPath)
 				db.BumpSave()
+				go d.analyzeMedia(result.PostID, result.FilePath, result.ThumbPath)
 			}
 			payload := map[string]any{
 				"type":    "result",
@@ -438,6 +440,7 @@ func (d *Downloader) checkDuplicate(path string, postID int) int {
 	return 0
 }
 
+// md5File считает md5 локального файла.
 func md5File(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -449,6 +452,26 @@ func md5File(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// analyzeMedia в фоне считает визуальные фичи скачанного файла: pHash
+// оригинала (только картинки — видео декодировать нечем) и blurhash
+// миниатюры. Результаты пишутся в БД; используются «похожими» (задача 2)
+// и мгновенными плейсхолдерами (задача 4). Best effort: любые ошибки
+// глотаются, на скачивание не влияет.
+func (d *Downloader) analyzeMedia(postID int, filePath, thumbPath string) {
+	defer func() { _ = recover() }()
+	if !DBReady() {
+		return
+	}
+	db := GetDB()
+	switch strings.ToLower(filepath.Ext(filePath)) {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff":
+		db.SetPostPHash(postID, PerceptualHashFile(filePath))
+	}
+	if bh := BlurHashFile(thumbPath); bh != "" {
+		db.SetPostBlurhash(postID, bh)
+	}
 }
 
 func (d *Downloader) Submit(job DownloadJob) {

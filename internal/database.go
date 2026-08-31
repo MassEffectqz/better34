@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,8 @@ type Post struct {
 	FilePath   string `json:"file_path"`
 	ThumbPath  string `json:"thumb_path"`
 	MD5        string `json:"md5"`
+	Phash      string `json:"phash,omitempty"`     // perceptual hash (пусто у видео)
+	Blurhash   string `json:"blurhash,omitempty"`  // placeholder-строка BlurHash
 }
 
 // PostDB — SQLite-хранилище постов (modernc.org/sqlite, без CGO).
@@ -79,7 +82,9 @@ CREATE TABLE IF NOT EXISTS posts (
 	downloaded  INTEGER NOT NULL DEFAULT 0,
 	file_path   TEXT NOT NULL DEFAULT '',
 	thumb_path  TEXT NOT NULL DEFAULT '',
-	md5         TEXT NOT NULL DEFAULT ''
+	md5         TEXT NOT NULL DEFAULT '',
+	phash       TEXT NOT NULL DEFAULT '',
+	blurhash    TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS tags (
 	tag     TEXT NOT NULL COLLATE NOCASE,
@@ -131,6 +136,13 @@ func NewPostDB(path string) *PostDB {
 	// Миграция существующих БД: колонка md5 для дедупликации скачиваний.
 	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN md5 TEXT NOT NULL DEFAULT ''`); err == nil {
 		log.Printf("[db] добавлена колонка md5")
+	}
+	// phash — визуальный отпечаток для «похожих», blurhash — плейсхолдер.
+	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN phash TEXT NOT NULL DEFAULT ''`); err == nil {
+		log.Printf("[db] добавлена колонка phash")
+	}
+	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN blurhash TEXT NOT NULL DEFAULT ''`); err == nil {
+		log.Printf("[db] добавлена колонка blurhash")
 	}
 	if _, err := sqlDB.Exec(postsIndexes); err != nil {
 		log.Printf("[db] indexes: %v", err)
@@ -210,13 +222,13 @@ func (db *PostDB) withTx(fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-const postCols = `id, tags, file_url, preview_url, file_type, width, height, file_size, score, rating, downloaded, file_path, thumb_path, md5`
+const postCols = `id, tags, file_url, preview_url, file_type, width, height, file_size, score, rating, downloaded, file_path, thumb_path, md5, phash, blurhash`
 
 func scanPost(scan func(...any) error) (*Post, error) {
 	p := &Post{}
 	var dl int
 	err := scan(&p.ID, &p.Tags, &p.FileURL, &p.PreviewURL, &p.FileType,
-		&p.Width, &p.Height, &p.FileSize, &p.Score, &p.Rating, &dl, &p.FilePath, &p.ThumbPath, &p.MD5)
+		&p.Width, &p.Height, &p.FileSize, &p.Score, &p.Rating, &dl, &p.FilePath, &p.ThumbPath, &p.MD5, &p.Phash, &p.Blurhash)
 	if err != nil {
 		return nil, err
 	}
@@ -226,14 +238,15 @@ func scanPost(scan func(...any) error) (*Post, error) {
 
 // upsertPostTx полностью заменяет запись + теги (семантика старого AddOrUpdate).
 func upsertPostTx(tx *sql.Tx, p *Post) error {
-	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET tags=excluded.tags, file_url=excluded.file_url,
 		 preview_url=excluded.preview_url, file_type=excluded.file_type, width=excluded.width,
 		 height=excluded.height, file_size=excluded.file_size, score=excluded.score,
 		 rating=excluded.rating, downloaded=excluded.downloaded, file_path=excluded.file_path,
-		 thumb_path=excluded.thumb_path`,
+		 thumb_path=excluded.thumb_path, phash=excluded.phash, blurhash=excluded.blurhash`,
 		p.ID, p.Tags, p.FileURL, p.PreviewURL, p.FileType, p.Width, p.Height,
-		p.FileSize, p.Score, p.Rating, boolToInt(p.Downloaded), p.FilePath, p.ThumbPath, p.MD5)
+		p.FileSize, p.Score, p.Rating, boolToInt(p.Downloaded), p.FilePath, p.ThumbPath, p.MD5,
+		p.Phash, p.Blurhash)
 	if err != nil {
 		return err
 	}
@@ -455,6 +468,65 @@ func (db *PostDB) Stats() map[string]int {
 // SetPostMD5 запоминает хэш содержимого поста (после успешного скачивания).
 func (db *PostDB) SetPostMD5(id int, md5sum string) {
 	_, _ = db.db.Exec(`UPDATE posts SET md5=? WHERE id=?`, md5sum, id)
+}
+
+// SetPostPHash сохраняет perceptual hash локальной картинки.
+func (db *PostDB) SetPostPHash(id int, phash string) {
+	if phash == "" {
+		return
+	}
+	_, _ = db.db.Exec(`UPDATE posts SET phash=? WHERE id=?`, phash, id)
+}
+
+// SetPostBlurhash сохраняет placeholder-строку для мгновенной отрисовки.
+func (db *PostDB) SetPostBlurhash(id int, bh string) {
+	if bh == "" {
+		return
+	}
+	_, _ = db.db.Exec(`UPDATE posts SET blurhash=? WHERE id=?`, bh, id)
+}
+
+// SimilarPHash возвращает скачанные посты, визуально похожие на данный
+// (расстояние Хэмминга pHash ≤ maxDist). Отдельные записи не индексируются:
+// 49k строк хэшей грузятся в память и кэшируются выше по стеку.
+func (db *PostDB) SimilarPHash(phash string, excludeID, limit, maxDist int) []*Post {
+	target, ok := decodePHash(phash)
+	if !ok {
+		return nil
+	}
+	rows, err := db.read.Query(`SELECT `+postCols+` FROM posts WHERE downloaded=1 AND phash<>'' AND id<>?`, excludeID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	type scored struct {
+		p     *Post
+		dist  int
+	}
+	var candidates []scored
+	for rows.Next() {
+		p, err := scanPost(rows.Scan)
+		if err != nil {
+			continue
+		}
+		other, ok := decodePHash(p.Phash)
+		if !ok {
+			continue
+		}
+		d := math_popcount(target ^ other)
+		if d <= maxDist {
+			candidates = append(candidates, scored{p, d})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	out := make([]*Post, 0, len(candidates))
+	for _, c := range candidates {
+		out = append(out, c.p)
+	}
+	return out
 }
 
 // FindDownloadedByMd5 возвращает id уже скачанного поста с таким же хэшем

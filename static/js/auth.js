@@ -270,6 +270,126 @@ App.authSubmit = async function () {
   }
 };
 
+// QR-вход с экрана авторизации: телефон сканирует QR, показанный ПК
+// (ПК залогинен → Настройки → Показать QR). Телефон считывает ссылку
+// /qr?t=TOKEN и переходит на неё — дальше страница /qr сама обработает.
+App.authQR = async function () {
+  this.setAuthError('');
+  if (!('BarcodeDetector' in window) && !navigator.mediaDevices?.getUserMedia) {
+    this.setAuthError('Камера недоступна — откройте ссылку вручную');
+    return;
+  }
+  const ov = document.createElement('div');
+  ov.id = 'auth-qr-scan-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:#000;z-index:3100;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#eee;font-family:system-ui';
+  ov.innerHTML =
+    '<div style="font-size:15px;font-weight:600;margin-bottom:12px">Сканируйте QR с ПК</div>' +
+    '<video id="auth-qr-video" autoplay playsinline style="width:260px;height:260px;border-radius:12px;object-fit:cover;background:#222"></video>' +
+    '<div id="auth-qr-scan-status" style="font-size:12px;opacity:.7;margin-top:10px">Наведите камеру на QR</div>' +
+    '<button id="auth-qr-scan-cancel" style="margin-top:14px;padding:8px 20px;border:none;border-radius:8px;background:#555;color:#eee;cursor:pointer;font-size:13px">Отмена</button>';
+  document.body.appendChild(ov);
+  this._qrScanOverlay = ov;
+
+  let stream = null;
+  let scanning = true;
+  const cleanup = () => {
+    scanning = false;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    if (ov.parentNode) ov.remove();
+  };
+  ov.querySelector('#auth-qr-scan-cancel').addEventListener('click', cleanup);
+  ov.addEventListener('click', (e) => { if (e.target === ov) cleanup(); });
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const video = ov.querySelector('#auth-qr-video');
+    video.srcObject = stream;
+    await video.play();
+
+    const detect = async () => {
+      if (!scanning) return;
+      if ('BarcodeDetector' in window) {
+        try {
+          const barcodes = await new BarcodeDetector({ formats: ['qr_code'] }).detect(video);
+          if (barcodes.length) {
+            const val = barcodes[0].rawValue;
+            if (val && val.includes('/qr?t=')) {
+              cleanup();
+              location.href = val;
+              return;
+            }
+          }
+        } catch {}
+      }
+      requestAnimationFrame(detect);
+    };
+    if ('BarcodeDetector' in window) {
+      detect();
+    } else {
+      ov.querySelector('#auth-qr-scan-status').textContent =
+        'BarcodeDetector недоступен — откройте ссылку вручную';
+    }
+  } catch (err) {
+    cleanup();
+    this.setAuthError('Не удалось открыть камеру: ' + (err.message || err));
+  }
+};
+
+App.showQRModal = function (token) {
+  this.closeQRModal();
+  const scheme = location.protocol === 'https:' ? 'https' : 'http';
+  const qrUrl = scheme + '://' + location.host + '/qr?t=' + token;
+  const ov = document.createElement('div');
+  ov.id = 'auth-qr-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:3100;display:flex;align-items:center;justify-content:center;';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#1a1a1a;border-radius:16px;padding:24px;text-align:center;max-width:320px;color:#eee;box-shadow:0 8px 40px rgba(0,0,0,.5);';
+  card.innerHTML =
+    '<div style="font-weight:600;margin-bottom:10px">Войти по QR</div>' +
+    '<img id="auth-qr-img" alt="QR" style="width:240px;height:240px;border-radius:8px;background:#fff">' +
+    '<div id="auth-qr-status" style="font-size:12px;opacity:.7;margin-top:10px">Отсканируйте камерой телефона</div>' +
+    '<div style="font-size:11px;opacity:.5;margin-top:6px;word-break:break-all">' + qrUrl + '</div>' +
+    '<button id="auth-qr-cancel" class="btn-primary btn-sm" style="margin-top:12px">Отмена</button>';
+  ov.appendChild(card);
+  document.body.appendChild(ov);
+  this._qrOverlay = ov;
+  const img = card.querySelector('#auth-qr-img');
+  img.src = '/api/auth/qr/image?t=' + encodeURIComponent(token);
+  img.onerror = () => {
+    img.style.display = 'none';
+    card.querySelector('#auth-qr-status').textContent = 'QR не загрузился — откройте ссылку на телефоне';
+  };
+  card.querySelector('#auth-qr-cancel').addEventListener('click', () => {
+    this._qrStop = true;
+    this.closeQRModal();
+  });
+  ov.addEventListener('click', (e) => { if (e.target === ov) { this._qrStop = true; this.closeQRModal(); } });
+};
+
+App.closeQRModal = function () {
+  if (this._qrOverlay) { this._qrOverlay.remove(); this._qrOverlay = null; }
+};
+
+App.pollQR = function (token) {
+  return new Promise((resolve, reject) => {
+    let attempts = 0;
+    const maxAttempts = 60;
+    const tick = async () => {
+      if (this._qrStop) { reject(new Error('cancelled')); return; }
+      attempts++;
+      try {
+        const r = await fetch('/api/auth/qr/poll?token=' + encodeURIComponent(token));
+        const d = await r.json();
+        if (d.status === 'claimed' && d.exchange_code) { resolve(d.exchange_code); return; }
+        if (d.status === 'expired' || d.status === 'exchanged') { reject(new Error('QR истёк')); return; }
+      } catch { /* сеть моргнула — продолжаем */ }
+      if (attempts >= maxAttempts) { reject(new Error('QR истёк')); return; }
+      this._qrTimer = setTimeout(tick, 5000);
+    };
+    tick();
+  });
+};
+
 App.afterLogin = async function () {
   await this.loadProfile();
   this.updateAuthUI();

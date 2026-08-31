@@ -253,3 +253,32 @@ App.importProfile = async function (ev) {
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
   ev.target.value = '';
 };
+
+// ── QR-вход на другом устройстве ──────────────────────────────────────────
+App.showQRLogin = function () {
+  let overlay = document.getElementById('qr-login-overlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'qr-login-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:1200;display:flex;align-items:center;justify-content:center;';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#1a1a1a;border-radius:16px;padding:24px;text-align:center;max-width:320px;color:#eee;box-shadow:0 8px 40px rgba(0,0,0,.5);';
+  card.innerHTML = `
+    <div style="font-weight:600;margin-bottom:12px">QR-вход на другом устройстве</div>
+    <img id="qr-login-img" alt="QR" style="width:256px;height:256px;border-radius:8px;background:#fff">
+    <div id="qr-login-hint" style="font-size:12px;opacity:.7;margin-top:12px">Отсканируйте камерой телефона. Код действует 5 минут и сгорает после входа.</div>
+    <button id="qr-login-close" class="btn-primary btn-sm" style="margin-top:14px">Закрыть</button>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const close = () => { document.removeEventListener('keydown', onKey); overlay.remove(); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  card.querySelector('#qr-login-close').addEventListener('click', close);
+  const img = card.querySelector('#qr-login-img');
+  img.src = '/api/auth/qr/svg?t=' + Date.now();
+  img.onerror = () => {
+    img.style.display = 'none';
+    card.querySelector('#qr-login-hint').textContent = 'Не удалось получить QR — проверьте, что вы залогинены.';
+  };
+};

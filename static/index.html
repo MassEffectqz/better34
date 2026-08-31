@@ -103,6 +103,8 @@
         </div>
         <button class="btn-icon" id="viewer-like" title="Лайк" aria-label="Лайк (Q)"><i data-lucide="heart" data-size="20"></i></button>
         <button class="btn-icon" id="viewer-hide" title="Дизлайк" aria-label="Скрыть (E)"><i data-lucide="heartOff" data-size="20"></i></button>
+        <button class="btn-icon" id="viewer-similar" title="Похожие (по картинке)" aria-label="Похожие посты"><i data-lucide="images" data-size="20"></i></button>
+        <button class="btn-icon" id="btn-remote-push" title="Показать на других устройствах" aria-label="Показать на других устройствах"><i data-lucide="cast" data-size="20"></i></button>
         <div class="collect-control">
           <button class="btn-icon" id="viewer-collect" title="В коллекцию" aria-label="В коллекцию"><i data-lucide="folder" data-size="20"></i></button>
           <div id="collect-menu" class="collect-menu hidden"></div>
@@ -353,6 +355,15 @@
             <input type="file" id="profile-import-file" accept=".json" hidden>
           </div>
         </div>
+        <div class="setting-group">
+          <span class="setting-label" data-i18n="set.qrLogin">QR-вход на другом устройстве</span>
+          <span class="setting-hint" data-i18n="set.qrLoginHint">Покажите QR и отсканируйте камерой телефона — сессия перенесётся без ввода пароля</span>
+          <button id="btn-qr-login" class="btn-primary btn-sm"><i data-lucide="qrCode" data-size="14"></i> <span data-i18n="btn.qrLogin">Показать QR</span></button>
+        </div>
+        <label class="setting-group" style="flex-direction:row;align-items:center;gap:10px;cursor:pointer">
+          <input type="checkbox" id="setting-remote-follow">
+          <span class="setting-label" style="margin:0">Открывать посты, отправленные с других устройств («пульт»)</span>
+        </label>
       </div>
     </div>
     <div class="settings-foot">
@@ -461,6 +472,7 @@
       </form>
       <div class="auth-divider"><span>или</span></div>
       <button id="auth-toggle" class="auth-toggle"></button>
+      <button id="btn-auth-qr" class="btn-auth btn-auth-qr"><i data-lucide="qrCode" data-size="16"></i> <span data-i18n="btn.qrLoginIn">Войти по QR</span></button>
     </div>
   </div>
 
@@ -484,7 +496,7 @@
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('/sw.js').catch(function () {});
+    navigator.serviceWorker.register('/sw.js?v=6').catch(function () {});
   });
 }
 </script>

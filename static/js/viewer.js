@@ -2,6 +2,7 @@ import { App } from './state.js';
 import { icon, esc } from './utils.js';
 import { API } from './api.js';
 import { t } from './i18n.js';
+import { decodeBlurHash } from './blurhash.js';
 const VIEWER_X_ICO = icon('x', 9);
 const SS_PLAY_ICO = icon('play', 16, true) + ' Слайдшоу';
 const SS_PAUSE_ICO = icon('pause', 16, true) + ' Слайдшоу';
@@ -349,13 +350,19 @@ App.renderViewer = function (force) {
       mediaEl = img;
     }
     if (mediaEl.src !== resolvedFileUrl) {
+      this._showBlurhashPlaceholder(post, viewerContent);
       mediaEl.src = fileUrl;
       mediaEl.classList.remove('fade-in');
       void mediaEl.offsetWidth;
       mediaEl.classList.add('fade-in');
-      mediaEl.addEventListener('load', () => { viewerLoader.classList.remove('active'); this.applyZoomTransform(); }, { once: true });
-      mediaEl.addEventListener('error', () => viewerLoader.classList.remove('active'), { once: true });
+      mediaEl.addEventListener('load', () => {
+        this._hideBlurhashPlaceholder(viewerContent);
+        viewerLoader.classList.remove('active');
+        this.applyZoomTransform();
+      }, { once: true });
+      mediaEl.addEventListener('error', () => this._hideBlurhashPlaceholder(viewerContent), { once: true });
     } else {
+      this._hideBlurhashPlaceholder(viewerContent);
       viewerLoader.classList.remove('active');
     }
   }
@@ -512,6 +519,31 @@ App._warmImage = function (url) {
     img.decoding = 'async';
     img.src = url;
   } catch {  }
+};
+
+// ── Blurhash-плейсхолдер (задача 4) ──────────────────────────────────────
+// Пока полное изображение грузится, под ним рисуется размытая 32×32
+// «подложка» из blurhash — пост «виден» сразу, без белого экрана.
+App._showBlurhashPlaceholder = function (post, container) {
+  this._hideBlurhashPlaceholder(container);
+  if (!post || !post.blurhash) return;
+  try {
+    const data = decodeBlurHash(post.blurhash, 32, 32);
+    if (!data) return;
+    const canvas = document.createElement('canvas');
+    canvas.id = 'viewer-blurhash';
+    canvas.width = 32;
+    canvas.height = 32;
+    canvas.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;z-index:0;pointer-events:none;';
+    canvas.getContext('2d').putImageData(data, 0, 0);
+    container.insertBefore(canvas, container.firstChild);
+  } catch { /* blurhash битый — просто остаётся спиннер */ }
+};
+
+App._hideBlurhashPlaceholder = function (container) {
+  if (!container || typeof container.querySelector !== 'function') return;
+  const c = container.querySelector('#viewer-blurhash');
+  if (c && typeof c.remove === 'function') c.remove();
 };
 
 App.preloadImage = function (post) {

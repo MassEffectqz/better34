@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -567,7 +568,22 @@ var (
 
 const mediaCacheMaxItem = 256 << 20 // не кэшируем файлы больше 256MB
 
-var mediaCacheMaxDisk = int64(2 << 30) // суммарный бюджет диска: 2GB
+// mediaCacheDiskBudget — суммарный бюджет диска под media-cache.
+// BRIEFLY_MEDIA_CACHE_GB (целое, GB) позволяет поднять его: кэш общий
+// для всех устройств в LAN, чем он больше, тем чаще второй клиент
+// (телефон) получает контент с локального диска, а не с CDN.
+func mediaCacheDiskBudget() int64 {
+	const defGB = 2
+	if v := strings.TrimSpace(os.Getenv("BRIEFLY_MEDIA_CACHE_GB")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return int64(n) << 30
+		}
+		log.Printf("BRIEFLY_MEDIA_CACHE_GB=%q не распознано, использую %dGB", v, defGB)
+	}
+	return int64(defGB) << 30
+}
+
+var mediaCacheMaxDisk = mediaCacheDiskBudget()
 
 func mediaCacheInit() {
 	mediaDiskOnce.Do(func() {

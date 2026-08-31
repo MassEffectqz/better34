@@ -4,12 +4,22 @@
  *  - навигация — сеть, при неудаче кэш страницы, иначе офлайн-заглушка;
  *  - /static/* — cache-first (URL версионирован ?v=..., immutable).
  */
-const CACHE = 'briefly-static-v3';
+const CACHE = 'briefly-static-v6';
+const API_CACHE = 'briefly-api-v1';
 const PRECACHE = ['/static/offline.html'];
 
 // JS/CSS не кэшируем жёстко: URL модулей фиксированы (?v= только у входа),
 // поэтому код всегда тянем из сети и лишь fallback'ом держим в кэше.
-const NO_HARD_CACHE = /\.(js|css)(\?|$)/;
+// Исключение — собранный esbuild-бандл (/static/js/dist/): его URL
+// версионируется ?v= вместе с точкой входа, ему положен cache-first.
+const NO_HARD_CACHE = /\/static\/(?!js\/dist\/).+\.(js|css)$/;
+
+// Ответы ленты (задача 1, offline-first): network-first, при обрыве —
+// отдаём последний успешный ответ (лента листается и без сервера).
+const API_NETWORK_FIRST = /^\/api\/(posts|posts-by-ids|local|profile)(\?|$)/;
+
+// Миниатюры неизменяемы по построению (JPEG по id) — их кэшируем намертво.
+const API_THUMB_FIRST = /^\/api\/thumb\//;
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
@@ -22,7 +32,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
     const names = await caches.keys();
-    await Promise.all(names.filter((n) => n !== CACHE).map((n) => caches.delete(n)));
+    await Promise.all(names.filter((n) => n !== CACHE && n !== API_CACHE).map((n) => caches.delete(n)));
     await self.clients.claim();
   })());
 });
@@ -34,8 +44,44 @@ self.addEventListener('fetch', (e) => {
   try { url = new URL(req.url); } catch { return; }
   if (url.origin !== self.location.origin) return;
 
-  // API и SSE — только сеть.
-  if (url.pathname.startsWith('/api/') || url.pathname === '/api/events') return;
+  // API и SSE — только сеть (данные всегда свежие, свои ошибки UI).
+  if (url.pathname.startsWith('/api/events')) return;
+
+  // Лента офлайн (задача 1): network-first, при обрыве — последний ответ.
+  if (req.method === 'GET' && API_NETWORK_FIRST.test(url.pathname)) {
+    e.respondWith((async () => {
+      const cache = await caches.open(API_CACHE);
+      try {
+        const res = await fetch(req);
+        if (res.ok) cache.put(req, res.clone());
+        return res;
+      } catch {
+        const cached = await cache.match(req);
+        return cached || Response.error();
+      }
+    })());
+    return;
+  }
+
+  // Миниатюры: cache-first (они неизменяемы по построению).
+  if (req.method === 'GET' && API_THUMB_FIRST.test(url.pathname)) {
+    e.respondWith((async () => {
+      const cache = await caches.open(API_CACHE);
+      const cached = await cache.match(req);
+      if (cached) return cached;
+      try {
+        const res = await fetch(req);
+        if (res.ok) cache.put(req, res.clone());
+        return res;
+      } catch {
+        return Response.error();
+      }
+    })());
+    return;
+  }
+
+  // Прочие API — только сеть (данные всегда свежие, свои ошибки UI).
+  if (url.pathname.startsWith('/api/')) return;
 
   // Навигация: сеть -> кэш -> офлайн-заглушка.
   if (req.mode === 'navigate') {

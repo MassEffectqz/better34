@@ -3,6 +3,7 @@
 import { _, esc, go, icon } from './utils.js';
 import { API } from './api.js';
 import { t, getLang, setLang } from './i18n.js';
+import { flushOfflineQueue } from './offline.js';
 
 export const App = {
   state: {
@@ -88,6 +89,7 @@ export const App = {
       collectionName: _('collection-name'), btnCreateCollection: _('btn-create-collection'), collectionsList: _('collections-list'), tbCollections: _('tb-collections'),
       batchZip: _('batch-zip'),
       btnExportProfile: _('btn-export-profile'), btnImportProfile: _('btn-import-profile'), profileImportFile: _('profile-import-file'),
+      btnQRLogin: _('btn-qr-login'), btnRemotePush: _('btn-remote-push'), viewerSimilar: _('viewer-similar'),
     };
     this.loadTheme();
     this.loadGridSetting();
@@ -356,6 +358,17 @@ export const App = {
     if (e.btnExportProfile) e.btnExportProfile.addEventListener('click', () => this.exportProfile());
     if (e.btnImportProfile) e.btnImportProfile.addEventListener('click', () => e.profileImportFile.click());
     if (e.profileImportFile) e.profileImportFile.addEventListener('change', (ev) => go(this.importProfile(ev)));
+    if (e.btnQRLogin) e.btnQRLogin.addEventListener('click', () => this.showQRLogin());
+    if (e.btnRemotePush) e.btnRemotePush.addEventListener('click', () => this.remotePushCurrent());
+    if (e.viewerSimilar) e.viewerSimilar.addEventListener('click', () => this.showSimilar());
+    const remoteFollow = /** @type {HTMLInputElement|null} */ (document.getElementById('setting-remote-follow'));
+    if (remoteFollow) {
+      remoteFollow.checked = localStorage.getItem('briefly_remote_follow') === '1';
+      remoteFollow.addEventListener('change', () => {
+        localStorage.setItem('briefly_remote_follow', remoteFollow.checked ? '1' : '0');
+        this.showToast(remoteFollow.checked ? 'Пульт включён' : 'Пульт выключен');
+      });
+    }
     if (e.slideshowBtn) e.slideshowBtn.addEventListener('click', () => this.toggleSlideshow());
     if (e.btnHome) e.btnHome.addEventListener('click', () => this.goHome());
     e.ssSpeedInput.addEventListener('change', () => {
@@ -403,6 +416,12 @@ export const App = {
     document.addEventListener('keydown', (ev) => this.onKeydown(ev));
     document.addEventListener('keyup', (ev) => this.onKeyup(ev));
     window.addEventListener('popstate', (ev) => this.onPopState(ev));
+    // Оффлайн-очередь (задача 1): когда сеть вернулась — доставляем отложенные мутации.
+    window.addEventListener('online', () => {
+      flushOfflineQueue().then((n) => {
+        if (n > 0) this.showToast(`Доставлено оффлайн-изменений: ${n}`, 'success');
+      });
+    });
     const savedW = parseFloat(localStorage.getItem('briefly_panel_width') || '');
     this._panelWidth = isFinite(savedW) ? savedW : null;
     this.applyPanelWidth();
@@ -418,6 +437,8 @@ export const App = {
   bindAuthEvents() {
     _('auth-submit').addEventListener('click', () => go(this.authSubmit()));
     _('auth-toggle').addEventListener('click', () => this.authToggleMode());
+    const qrBtn = _('btn-auth-qr');
+    if (qrBtn) qrBtn.addEventListener('click', () => this.authQR());
     _('auth-username').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); _('auth-password').focus(); } });
     _('auth-password').addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter') return;
@@ -849,9 +870,55 @@ export const App = {
       if (d.type === 'status') updateFromStatus(d);
       else if (d.type === 'result') applyResult(d);
       else if (d.type === 'comment' && this._onCommentEvent) this._onCommentEvent(d.post_id);
+      else if (d.type === 'remote' && d.id > 0) this.onRemotePost(d.id);
     });
     es.onerror = () => {  };
     this._sse = es;
+  },
+
+  // ── Пульт и «похожие» ───────────────────────────────────────────────────
+  // remotePushCurrent просит все подключённые клиенты открыть текущий пост.
+  async remotePushCurrent() {
+    const p = this.state.posts[this.state.viewerIndex];
+    if (!p) return;
+    try {
+      await API.post('/remote/push', { id: p.id });
+      this.showToast(`Пост #${p.id} отправлен на другие устройства`, 'success');
+    } catch (e) {
+      this.showToast('Не удалось отправить: ' + (e && e.message || 'ошибка'), 'error');
+    }
+  },
+
+  // onRemotePost — на приёмнике: открыть присланный пост, если включён пульт.
+  async onRemotePost(id) {
+    if (localStorage.getItem('briefly_remote_follow') !== '1') return;
+    try {
+      if (this.state.viewerOpen) {
+        const idx = this.state.posts.findIndex(p => p.id === id);
+        if (idx >= 0) { this.openViewer(idx); return; }
+      }
+      const d = await API.get(`/posts-by-ids?ids=${id}`);
+      const posts = d.posts || [];
+      if (!posts.length) { this.showToast(`Пост #${id} не найден локально`, 'error'); return; }
+      const saved = this.state.posts;
+      this.state.posts = posts.concat(saved.filter(p => p.id !== id));
+      this.openViewer(0);
+    } catch (e) { /* сеть моргнула — не критично */ }
+  },
+
+  // showSimilar — визуально похожие скачанные посты (pHash).
+  async showSimilar() {
+    const p = this.state.posts[this.state.viewerIndex];
+    if (!p) return;
+    try {
+      const d = await API.get(`/similar/${p.id}`);
+      const ids = (d.posts || []).map(x => x.id);
+      if (!ids.length) { this.showToast('Похожих локальных постов не найдено'); return; }
+      this.closeViewer();
+      await this.showGridMode('similar', ids);
+    } catch (e) {
+      this.showToast('Ошибка: ' + (e && e.message || 'ошибка'), 'error');
+    }
   },
 
   async pauseDownloads() {

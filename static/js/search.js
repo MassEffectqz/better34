@@ -28,8 +28,11 @@ App.onSearchInput = function () {
   }
   clearTimeout(this._searchTimer);
   const nextQuery = q.trim();
+  // AI-запросы (?...) ждут 1.2с, обычные — 300мс.
+  const isNL = nextQuery.startsWith('?');
+  const delay = isNL ? 1200 : 300;
   // Повторный поиск того же запроса не запускаем (набрали и стёрли символ).
-  this._searchTimer = setTimeout(() => { if (nextQuery !== this._lastSearchQuery) this.search(nextQuery); }, 300);
+  this._searchTimer = setTimeout(() => { if (nextQuery !== this._lastSearchQuery) this.search(nextQuery); }, delay);
   this.updateQueryMeta(q);
   this.renderQueryChips(q);
 };
@@ -343,6 +346,22 @@ App.search = async function (query) {
   // Явный поиск (Enter/подсказка/чип/история) отменяет отложенный debounce,
   // чтобы один и тот же запрос не ушёл на сервер дважды.
   clearTimeout(this._searchTimer);
+  // Семантический поиск: «?котики в шляпах» → Ollama → теговый запрос.
+  if (query && query.trim().startsWith('?') && query.trim().length > 1) {
+    const nl = query.trim().slice(1).trim();
+    this.showToast('Спрашиваю модель…');
+    try {
+      const d = await API.get('/nl-search?q=' + encodeURIComponent(nl));
+      if (!d.query) throw new Error('пустой ответ');
+      query = d.query;
+      this.els.searchInput.value = query;
+      this.onSearchInput();
+      this.showToast('Распознано: ' + query, 'success');
+    } catch (e) {
+      this.showToast('Семантический поиск недоступен: ' + (e && e.message || 'ошибка'), 'error');
+      return;
+    }
+  }
   this._lastSearchQuery = query;
   if (this.state.recommendActive) {
     this.state.recommendActive = false;

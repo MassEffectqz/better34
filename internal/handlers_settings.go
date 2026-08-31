@@ -14,7 +14,7 @@ import (
 func (h *Handler) GetSettings(c *gin.Context) {
 	cfg := GetConfig()
 	providers := make([]gin.H, 0, len(knownProviders))
-	for _, p := range knownProviders {
+	for _, p := range allProviderDescriptors() {
 		providers = append(providers, gin.H{"value": p.Name, "name": p.DisplayName})
 	}
 	maxQueryLen := h.effectiveMaxQueryLen()
