@@ -43,6 +43,7 @@ export default [
         performance: 'readonly',
         CustomEvent: 'readonly',
         console: 'readonly',
+        BarcodeDetector: 'readonly',
       },
     },
     rules: {
