@@ -81,7 +81,7 @@ cache-first (неизменяемы по построению), мутации (
 | `BRIEFLY_MEDIA_CACHE_GB` | `20` | Бюджет дискового media-cache (общий для LAN) |
 | `BRIEFLY_DEBUG` | — | `1` — unbundled-фронтенд + лог запросов |
 | `BRIEFLY_OLLAMA` | `http://127.0.0.1:11434` | URL локальной Ollama (семантический поиск) |
-| `BRIEFLY_OLLAMA_MODEL` | `llama3.2:latest` | Модель Ollama (`qwen2.5:14b-instruct-q4_K_M` — качественнее, но тяжелее) |
+| `BRIEFLY_OLLAMA_MODEL` | `dolphin-mistral:7b` | Модель Ollama (uncensored, не отказывает на NSFW) |
 
 ## Разработка
 

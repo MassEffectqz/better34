@@ -2,11 +2,6 @@ import { App } from './state.js';
 import { icon, esc, go } from './utils.js';
 import { API } from './api.js';
 import { t, tf } from './i18n.js';
-const CHIP_X_ICO = icon('x', 10);
-const CHIP_PLUS_ICO = icon('plus', 10);
-const CHIP_MINUS_ICO = icon('minus', 10);
-const CHIP_EYE_OFF_ICO = icon('eyeOff', 10);
-const CHIP_STAR_ICO = icon('star', 10);
 
 App.pageSize = function () {
   const w = window.innerWidth;
@@ -164,7 +159,6 @@ App.clearMode = function () {
     }));
     this.updateStatus();
   }
-  this.renderFilterChips();
   this.pushState(this.state.query, null);
 };
 
@@ -314,78 +308,6 @@ App.resetFilters = function () {
   }
   this.pushState('', null);
   this.loadPosts(true);
-};
-
-App.renderFilterChips = function (expanded = false) {
-  const el = this.els.filterChips;
-  if (!el || this.state.recommendActive) return;
-  const tokens = (this.state.query || '').split(/\s+/).filter(Boolean);
-  const hiddenTags = (this.state.profile && this.state.profile.hidden_tags) || [];
-  const favTags = (this.state.profile && this.state.profile.fav_tags) || [];
-  if (!tokens.length) {
-    el.classList.add('hidden');
-    el.innerHTML = '';
-    return;
-  }
-  el.classList.remove('hidden');
-  el.innerHTML = '';
-  const groupLabel = (text) => {
-    const l = document.createElement('span');
-    l.className = 'fc-label';
-    l.textContent = text;
-    el.appendChild(l);
-  };
-  const MAX = 15;
-  groupLabel('Запрос');
-  tokens.forEach(tok => {
-    const minus = tok.startsWith('-');
-    const plus = tok.startsWith('+');
-    const name = tok.replace(/^[+-]/, '');
-    const chip = document.createElement('button');
-    chip.className = 'fc-chip' + (minus ? ' fc-minus' : ' fc-plus');
-    chip.innerHTML = `${minus ? CHIP_MINUS_ICO : plus ? CHIP_PLUS_ICO : ''}<span class="fc-name">${esc(name)}</span><span class="fc-x">${CHIP_X_ICO}</span>`;
-    chip.title = `Убрать «${name}» из поиска`;
-    chip.addEventListener('click', () => {
-      const next = tokens.filter(t => t !== tok).join(' ');
-      this.els.searchInput.value = next;
-      this.search(next);
-    });
-    el.appendChild(chip);
-  });
-  const addGroup = (label, items, chipClass, ico, title, onClick) => {
-    if (!items.length) return;
-    groupLabel(label);
-    const list = expanded ? items : items.slice(0, MAX);
-    list.forEach(tag => {
-      const chip = document.createElement('button');
-      chip.className = `fc-chip ${chipClass}`;
-      chip.innerHTML = `<span class="fc-ico">${ico}</span><span class="fc-name">${esc(tag)}</span><span class="fc-x">${CHIP_X_ICO}</span>`;
-      chip.title = title;
-      chip.addEventListener('click', onClick.bind(this, tag));
-      el.appendChild(chip);
-    });
-    if (!expanded && items.length > MAX) {
-      const more = document.createElement('button');
-      more.className = 'fc-chip fc-more';
-      more.innerHTML = `<span class="fc-name">Ещё ${items.length - MAX}…</span>`;
-      more.addEventListener('click', () => this.renderFilterChips(true));
-      el.appendChild(more);
-    }
-  };
-  addGroup('Скрытые теги', hiddenTags, 'fc-hidden', CHIP_EYE_OFF_ICO, 'Показывать посты с этим тегом', (tag) => {
-    API.post('/hidden-tag', { tag }).then(() => {
-      API.invalidate('/profile');
-      this.invalidateFeedCache();
-      this.loadProfile();
-      this.loadPosts(true);
-    }).catch(() => {});
-  });
-  addGroup('Избранные', favTags, 'fc-fav', CHIP_STAR_ICO, 'Убрать из избранных', (tag) => {
-    API.post('/fav-tag', { tag }).then(() => {
-      API.invalidate('/profile');
-      this.loadProfile();
-    }).catch(() => {});
-  });
 };
 
 App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh = false) {
@@ -940,5 +862,4 @@ App.setStatus = function (msg) { this.els.statusText.textContent = msg; };
 App.updateStatus = function () {
   const mode = this.state.isLocal ? t('status.local') : (this.state.recommendActive ? t('status.recommend') : (this.state.query ? t('status.search') : t('status.latest')));
   this.setStatus(tf('status.posts', { n: this.state.posts.length, mode }));
-  this.renderFilterChips();
 };

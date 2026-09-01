@@ -98,11 +98,6 @@ App.renameCollectionInline = function (d, col) {
   input.addEventListener('blur', () => finish(true));
 };
 
-App.onCollectionsListClick = function (ev) {
-  // Делегирование не используется: слушатели навешиваются при рендере.
-  void ev;
-};
-
 App.openCollectionGrid = function (col) {
   if (!col || !col.id) return;
   API.get(`/collection/${col.id}/posts`, { fresh: true }).then(data => {

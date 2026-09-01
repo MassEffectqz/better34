@@ -292,15 +292,13 @@ func (h *Handler) CleanDuplicates(c *gin.Context) {
 			if err != nil {
 				continue
 			}
-			keep, ok := seenHash[size][hash]
-			if ok {
+			if _, ok := seenHash[size][hash]; ok {
 				removed = append(removed, path)
 				os.Remove(path)
 				db.UnsetDownloadedByPath(path)
 				continue
 			}
 			seenHash[size][hash] = path
-			_ = keep
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"removed": removed, "count": len(removed)})

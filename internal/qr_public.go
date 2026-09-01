@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -124,47 +123,6 @@ func (h *Handler) QRExchangeSession(c *gin.Context) {
 	}
 	setSessionCookie(c, tok, exp)
 	c.JSON(200, gin.H{"ok": true, "username": u})
-}
-
-func (h *Handler) QRClaimSession(c *gin.Context) {
-	var req struct {
-		Token string `json:"token"`
-	}
-	if c.ShouldBindJSON(&req) != nil || req.Token == "" {
-		c.JSON(400, gin.H{"error": "token required"})
-		return
-	}
-	u := sessionUser(c)
-	if u == "" {
-		c.JSON(401, gin.H{"error": "phone not logged in"})
-		return
-	}
-	qrStr.mu.Lock()
-	s, ok := qrStr.m[req.Token]
-	if !ok || time.Now().After(s.expiry) {
-		if ok {
-			delete(qrStr.m, req.Token)
-		}
-		qrStr.mu.Unlock()
-		c.JSON(404, gin.H{"error": "not found"})
-		return
-	}
-	if s.st != qrPend {
-		qrStr.mu.Unlock()
-		c.JSON(409, gin.H{"error": "already claimed"})
-		return
-	}
-	s.user = u
-	s.code = strings.ToLower(qtok()[:12])
-	s.st = qrClm
-	qrStr.mu.Unlock()
-	c.JSON(200, gin.H{"ok": true})
-}
-
-func (h *Handler) QRSessionPage(c *gin.Context) {
-	t := c.Query("t")
-	c.Header("Cache-Control", "no-cache")
-	c.Data(200, "text/html; charset=utf-8", []byte(qrPubPage(t)))
 }
 
 func (h *Handler) QRImagePublic(c *gin.Context) {

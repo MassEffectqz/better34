@@ -256,13 +256,13 @@ func TestLiveSearchPosts(t *testing.T) {
 	if errors.Is(err, errAPI403) {
 		t.Fatal("403")
 	}
-	fmt.Printf("live: got %d posts, first id=%d\n", len(posts), posts[0].ID)
+	t.Logf("live: got %d posts, first id=%d\n", len(posts), posts[0].ID)
 
 	sugg, err := c.SuggestTags("rul")
 	if err != nil {
 		t.Fatalf("SuggestTags failed: %v", err)
 	}
-	fmt.Printf("live: suggestions=%d first=%+v\n", len(sugg), sugg[0])
+	t.Logf("live: suggestions=%d first=%+v\n", len(sugg), sugg[0])
 }
 
 func TestLiveKeyRotation(t *testing.T) {
@@ -279,6 +279,6 @@ func TestLiveKeyRotation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("SearchPosts(%q) failed: %v", q, err)
 		}
-		fmt.Printf("rotation %d: key ...%s got %d posts\n", i+1, fmt.Sprintf("%s", "?"), len(posts))
+		t.Logf("rotation %d: key ...%s got %d posts\n", i+1, fmt.Sprintf("%s", "?"), len(posts))
 	}
 }

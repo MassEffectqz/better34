@@ -108,7 +108,3 @@ export async function flushOfflineQueue() {
   }
   return flushed;
 }
-
-export function hasPendingMutations() {
-  return listAll().then((l) => l.length > 0);
-}

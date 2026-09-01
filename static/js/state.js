@@ -80,7 +80,6 @@ export const App = {
       searchChips: _('search-chips'), scrollProgress: _('scroll-progress'),
       viewerRelated: _('viewer-related'), btnLikesDownload: _('btn-likes-download'),
       panelBackdrop: _('panel-backdrop'),
-      filterChips: _('filter-chips'),
       confirmModal: _('confirm-modal'), confirmTitle: _('confirm-title'), confirmMessage: _('confirm-message'),
       confirmOk: _('confirm-ok'), confirmCancel: _('confirm-cancel'), confirmClose: _('confirm-close'), confirmBackdrop: _('confirm-backdrop'),
       helpModal: _('help-modal'), helpBody: _('help-body'), helpClose: _('help-close'), helpBackdrop: _('help-backdrop'),
@@ -354,7 +353,6 @@ export const App = {
         if (ev.key === 'Enter') { ev.preventDefault(); go(this.createCollection()); }
       });
     }
-    if (e.collectionsList) e.collectionsList.addEventListener('click', (ev) => this.onCollectionsListClick(ev));
     if (e.btnExportProfile) e.btnExportProfile.addEventListener('click', () => this.exportProfile());
     if (e.btnImportProfile) e.btnImportProfile.addEventListener('click', () => e.profileImportFile.click());
     if (e.profileImportFile) e.profileImportFile.addEventListener('change', (ev) => go(this.importProfile(ev)));
@@ -606,7 +604,6 @@ export const App = {
         this.state.profile = await API.get('/profile');
         this._profileFresh = true;
         this.renderProfile();
-        this.renderFilterChips();
       } catch (err) {
         console.error('Failed to load profile:', err);
       }
