@@ -5,13 +5,27 @@ App.confirmDialog = function (opts) {
   return new Promise((resolve) => {
     const el = this.els.confirmModal;
     if (!el) return resolve(false);
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    el.setAttribute('aria-labelledby', 'confirm-title');
+    this.els.confirmTitle.id = 'confirm-title';
     this.els.confirmTitle.textContent = opts.title || 'Подтверждение';
     this.els.confirmMessage.innerHTML = opts.message || '';
     this.els.confirmOk.textContent = opts.okText || 'Подтвердить';
     this.els.confirmOk.classList.toggle('btn-danger', !!opts.danger);
     el.classList.remove('hidden');
+    if (typeof this.setAriaHidden === 'function') this.setAriaHidden(document.getElementById('main'), true);
+    const releaseTrap = typeof this.trapFocus === 'function'
+      ? this.trapFocus(el, this.els.confirmOk) : () => {};
     const done = (val) => {
+      releaseTrap();
       el.classList.add('hidden');
+      el.removeAttribute('aria-hidden');
+      el.removeAttribute('role');
+      el.removeAttribute('aria-modal');
+      el.removeAttribute('aria-labelledby');
+      const main = document.getElementById('main');
+      if (main && typeof this.setAriaHidden === 'function') this.setAriaHidden(main, false);
       this.els.confirmOk.removeEventListener('click', onOk);
       this.els.confirmCancel.removeEventListener('click', onCancel);
       this.els.confirmClose.removeEventListener('click', onCancel);

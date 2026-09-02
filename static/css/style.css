@@ -688,6 +688,11 @@ select.ss-rate option{color:#111;background:#fff}
 #confirm-cancel{background:var(--surface3);color:var(--text)}
 #batch-hide{background:var(--error)}
 button:focus-visible,select:focus-visible,[role="button"]:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* a11y (#4): :focus-visible учитывает только клавиатурный ввод.
+   Чистый :focus (мышь/касание) тоже рисуем — иначе клавиатурные
+   пользователи с тач-устройством теряют индикатор фокуса. */
+button:focus,select:focus,[role="button"]:focus,[tabindex]:focus{outline:2px solid var(--accent);outline-offset:2px}
+button:focus:not(:focus-visible),select:focus:not(:focus-visible),[role="button"]:focus:not(:focus-visible),[tabindex]:focus:not(:focus-visible){outline:0}
 button,a{-webkit-tap-highlight-color:transparent}
 @media(hover:none){
   .post-overlay,.pf-bar,.pf-open{opacity:1}
@@ -830,5 +835,11 @@ button,a{-webkit-tap-highlight-color:transparent}
   .collect-menu-new input,.preset-rename{font-size:16px}
   /* Модалки/меню не упираются в края */
   .modal-content{width:94vw}
-  .act-col span{font-size:.52rem}
+    .act-col span{font-size:.52rem}
 }
+
+/* a11y (#4): фон, который скрывается от скринридеров (aria-hidden),
+   когда открыта модальная подсистема или панель. Переключается
+   классом .a11y-hidden через a11y.ts. */
+.a11y-hidden{pointer-events:none;user-select:none;visibility:hidden;height:0;overflow:hidden}
+

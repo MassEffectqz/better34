@@ -14,8 +14,18 @@ App.openViewer = function (index) {
   const main = document.getElementById('main');
   this.state._savedScrollTop = main ? main.scrollTop : 0;
   this.state.viewerIndex = index;
-  this.state.viewerOpen = true;
-  this.els.viewer.classList.remove('hidden');
+     this.state.viewerOpen = true;
+   this.els.viewer.setAttribute('role', 'dialog');
+   this.els.viewer.setAttribute('aria-modal', 'true');
+   this.els.viewer.setAttribute('aria-label', t('viewer.title'));
+   // a11y (#4): фон скрываем от скринридеров (aria-hidden), а не просто скрываем.
+   if (main) this.setAriaHidden(main, true);
+   this.els.viewer.classList.remove('hidden');
+   // focusable контейнер + trap Tab внутри хедера вьювера.
+   this.els.viewerContent.setAttribute('tabindex', '-1');
+   if (typeof this.trapFocus === 'function') {
+     this._releaseViewerTrap = this.trapFocus(this.els.viewerHead, this.els.viewerClose);
+   }
   this._showViewerHud();
   document.body.style.overflow = 'hidden';
   this.renderViewer();
@@ -58,17 +68,21 @@ App.closeViewer = function () {
     this.state.focusedIndex = idx;
     this.state.viewerIndex = idx;
   }
+  if (this._releaseViewerTrap) { this._releaseViewerTrap(); this._releaseViewerTrap = null; }
   this.state.viewerOpen = false;
   this.els.viewer.classList.add('hidden');
+  // a11y (#4): возвращаем фону скринридеры + убираем диалог-атрибуты.
+  const main = document.getElementById('main');
+  if (main) this.setAriaHidden(main, false);
+  this.els.viewer.removeAttribute('aria-modal');
   this.els.viewerRelated.classList.add('hidden');
   document.body.style.overflow = '';
   this.els.viewerContent.classList.remove('video-loading');
   this.els.viewerContent.innerHTML = '';
-  if (this.state.posts.length) {
+     if (this.state.posts.length) {
     this.state.focusedIndex = Math.min(this.state.viewerIndex, this.state.posts.length - 1);
     this.focusCard();
   }
-  const main = document.getElementById('main');
   if (main && this.state._savedScrollTop != null) {
     main.scrollTop = this.state._savedScrollTop;
   } else {
