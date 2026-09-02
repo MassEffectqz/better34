@@ -424,6 +424,14 @@ export const App = {
         if (n > 0) this.showToast(`Доставлено оффлайн-изменений: ${n}`, 'success');
       });
     });
+    // Задача 2: очередь могла накопиться, пока вкладка была закрыта (её тогда
+    // доставлял Background Sync — а мог и не доставить: нет SyncManager или
+    // сеть появилась только что). Флашим и на всякий случай просим sync.
+    if (navigator.onLine) {
+      flushOfflineQueue().then((n) => {
+        if (n > 0) this.showToast(`Доставлено оффлайн-изменений: ${n}`, 'success');
+      });
+    }
     const savedW = parseFloat(localStorage.getItem('briefly_panel_width') || '');
     this._panelWidth = isFinite(savedW) ? savedW : null;
     this.applyPanelWidth();

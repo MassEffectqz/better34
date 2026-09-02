@@ -131,3 +131,71 @@ self.addEventListener('fetch', (e) => {
     }
   })());
 });
+
+// ── Background Sync (задача 2) ─────────────────────────────────────────────
+// Страница кладёт мутации (лайк/скрытие/коллекции/комментарии) в IndexedDB
+// 'briefly-offline' (static/js/offline.js) и просит sync 'briefly-flush'.
+// Браузер будит этот обработчик при появлении сети, даже если все вкладки
+// закрыты. Firefox/Safari SyncManager не поддерживают — там очередь
+// доставляет обработчик 'online' в state.js при открытой вкладке.
+const OFFLINE_DB = 'briefly-offline';
+const SYNC_TAG = 'briefly-flush';
+
+// Копия flush-логики offline.js: классический воркер не может импортировать
+// ES-модуль страницы. Дубликат не опасен: очередь одна, параллельную доставку
+// страницы и воркера разруливает Web Locks, а серверный ToggleLike/ToggleHide
+// идемпотентны (повторный toggle вернёт текущее состояние, дублей в БД нет).
+self.addEventListener('sync', (e) => {
+  if (e.tag !== SYNC_TAG) return;
+  e.waitUntil(flushQueueInSW());
+});
+
+async function flushQueueInSW() {
+  let db;
+  try {
+    db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open(OFFLINE_DB, 1);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch { return 0; }
+
+  // getAll + delete по одному — тем же составом ответов, что и на странице:
+  // 2xx и 404/410 (объект удалён) — доставлено; 400/401/403 — устарело,
+  // повтор бессмысленен; сетевой сбой — стоп до следующего sync.
+  const list = await new Promise((resolve) => {
+    try {
+      const tx = db.transaction('queue', 'readonly');
+      const req = tx.objectStore('queue').getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    } catch { resolve([]); }
+  });
+
+  let flushed = 0;
+  for (const item of list) {
+    try {
+      const res = await fetch('/api' + item.endpoint, {
+        method: item.method,
+        headers: { 'Content-Type': 'application/json' },
+        body: ['GET', 'HEAD'].includes(item.method) ? undefined : JSON.stringify(item.body || {}),
+      });
+      if (res.ok || res.status === 404 || res.status === 410 ||
+          res.status === 400 || res.status === 401 || res.status === 403) {
+        await new Promise((resolve) => {
+          try {
+            const tx = db.transaction('queue', 'readwrite');
+            tx.objectStore('queue').delete(item.id);
+            tx.oncomplete = resolve;
+            tx.onerror = resolve;
+          } catch { resolve(); }
+        });
+        flushed++;
+      }
+    } catch {
+      break; // сети всё ещё нет — остальное уедет при следующем sync
+    }
+  }
+  try { db.close(); } catch { /* noop */ }
+  return flushed;
+}

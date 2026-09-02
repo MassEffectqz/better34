@@ -5,6 +5,9 @@
 
 const DB_NAME = 'briefly-offline';
 const DB_VER = 1;
+// Тег Background Sync (задача 2): по нему service worker будится при
+// появлении сети — даже если вкладка уже закрыта.
+const SYNC_TAG = 'briefly-flush';
 let _dbPromise = null;
 
 function idb() {
@@ -40,6 +43,20 @@ function isQueueable(endpoint, method) {
   return true;
 }
 
+// Просим браузер разбудить service worker, когда появится сеть
+// (Background Sync, задача 2). Работает в Chromium; в Firefox/Safari
+// SyncManager нет — там очередь доставляет обработчик 'online' в state.js.
+// Некритично: любые неудачи просто оставляют старое поведение.
+async function registerSync() {
+  try {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
+    if (!('serviceWorker' in navigator) || !('SyncManager' in window)) return;
+    const reg = await navigator.serviceWorker.ready;
+    const syncMgr = reg && /** @type {any} */ (reg).sync;
+    if (syncMgr) await syncMgr.register(SYNC_TAG);
+  } catch { /* нет SW/SyncManager — доставка по 'online' */ }
+}
+
 export async function enqueueMutation(method, endpoint, body) {
   if (!isQueueable(endpoint, method)) return false;
   try {
@@ -50,6 +67,7 @@ export async function enqueueMutation(method, endpoint, body) {
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
+    registerSync();
     return true;
   } catch {
     return false;
@@ -82,7 +100,18 @@ async function removeItem(id) {
 }
 
 // Отправляет все отложенные мутации по порядку. Возвращает количество успешных.
+// Задача 2: открытая вкладка (событие online) и Background Sync в sw.js могут
+// проснуться одновременно — Web Locks не даёт двум «флашам» выгружать одну
+// очередь параллельно, иначе одна мутация уйдёт на сервер дважды.
 export async function flushOfflineQueue() {
+  const locks = (typeof navigator !== 'undefined' && navigator.locks) ? navigator.locks : null;
+  if (locks && typeof locks.request === 'function') {
+    return locks.request(SYNC_TAG, () => doFlush());
+  }
+  return doFlush();
+}
+
+async function doFlush() {
   const items = await listAll();
   let flushed = 0;
   for (const item of items) {
