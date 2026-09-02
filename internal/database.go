@@ -58,6 +58,7 @@ func GetDB() *PostDB {
 	dbOnce.Do(func() {
 		postDB = NewPostDB("data/posts.db")
 		postDB.importLegacyJSON("data/db.json")
+		StartDBAutoBackup(postDB)
 		dbReady.Store(true)
 	})
 	return postDB

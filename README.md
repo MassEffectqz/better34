@@ -84,6 +84,8 @@ cache-first (неизменяемы по построению), мутации (
 | `BRIEFLY_OLLAMA_MODEL` | `dolphin-mistral:7b` | Модель Ollama (uncensored, не отказывает на NSFW) |
 | `BRIEFLY_MAX_DOWNLOAD_MB` | картинки 4 / видео 256 | Максимальный размер скачиваемого файла в МБ |
 | `BRIEFLY_LOG_LEVEL` | `info` | Уровень лога: `debug` / `info` / `warn` / `error` |
+| `BRIEFLY_DB_BACKUPS` | `7` | Сколько автобэкапов БД хранить в `data/backups` (`0` — выключить) |
+| `BRIEFLY_DB_BACKUP_DAYS` | `30` | Максимальный возраст автобэкапа БД в днях (`0` — без ограничения) |
 
 ## Разработка
 

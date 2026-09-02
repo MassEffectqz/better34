@@ -14,7 +14,8 @@
 - [x] 6. `UpdateSettings` не даёт очистить поля — `*string` как у auto_download.
 - [x] 7. `.env` никто не читает — загрузка в run.ps1 + Go, добавлен `.env.example`.
 - [x] 8. Мёртвые файлы data/* (~50 МБ), `importLegacyJSON` не читает 25 МБ при старте.
-- [ ] 9. Покрытие тестами — интеграционные тесты httptest для settings/QR/zip/recommend.
+- [x] 9. Покрытие тестами — интеграционный httptest-сценарий (ready/metrics,
+  регистрация, settings partial-update, смена пароля, logout-others); QR/zip/recommend — отдельно.
 
 ## Бэкенд
 
@@ -22,9 +23,12 @@
   полная миграция internal — отдельной задачей.
 - [x] 2. Readiness-эндпоинт `/api/ready` (проверка БД).
 - [x] 3. `/api/metrics` — лёгкая самодиагностика (очередь, SSE, кэши).
-- [ ] 4. Автобэкап БД (`VACUUM INTO` + ротация N дней).
+- [x] 4. Автобэкап БД: `VACUUM INTO data/backups/` раз в сутки + ротация
+  (кол-во `BRIEFLY_DB_BACKUPS`, возраст `BRIEFLY_DB_BACKUP_DAYS`).
 - [x] 5. Ретрай при 429/5xx в downloader.
-- [ ] 6. FTS5-поиск по тегам.
+- [x] 6. FTS5-поиск по тегам — отклонён: движок недоступен в pure-Go
+  modernc.org/sqlite (только CGO-сборки). Локальный поиск уже идёт по
+  нормализованной таблице tags с PK (tag, post_id) и покрывается тестами.
 
 ## Безопасность
 

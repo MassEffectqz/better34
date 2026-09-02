@@ -1,9 +1,95 @@
 package internal
 
 import (
+	"database/sql"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestBackupNowCreatesSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "posts.db")
+	db := NewPostDB(dbPath)
+	defer db.Close()
+	db.AddOrUpdate(&Post{ID: 1, Tags: "naruto blonde", Downloaded: true})
+
+	if err := db.BackupNow(); err != nil {
+		t.Fatalf("BackupNow: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(dir, "backups"))
+	if err != nil {
+		t.Fatalf("read backups dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 backup file, got %d", len(entries))
+	}
+	if !strings.HasPrefix(entries[0].Name(), "posts-") || !strings.HasSuffix(entries[0].Name(), ".db") {
+		t.Fatalf("unexpected backup name: %s", entries[0].Name())
+	}
+
+	// Данные из копии должны читаться напрямую (это самодостаточная БД).
+	snap, err := sql.Open("sqlite", filepath.Join(dir, "backups", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("open snapshot: %v", err)
+	}
+	defer snap.Close()
+	var n int
+	if err := snap.QueryRow(`SELECT COUNT(*) FROM posts WHERE downloaded=1`).Scan(&n); err != nil {
+		t.Fatalf("query snapshot: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("want 1 downloaded post in snapshot, got %d", n)
+	}
+}
+
+func TestBackupPrune(t *testing.T) {
+	dir := t.TempDir()
+	backupDir := filepath.Join(dir, "backups")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Пять «старых» копий; квота 2 — должно остаться ровно 2 последних.
+	for i, stamp := range []string{"20240101-000000", "20240102-000000", "20240103-000000", "20240104-000000", "20240105-000000"} {
+		name := "posts-" + stamp + ".db"
+		if err := os.WriteFile(filepath.Join(backupDir, name), []byte{byte(i)}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pruneBackups(backupDir, 2, 0)
+
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("want 2 kept backups, got %d: %v", len(entries), names)
+	}
+	if entries[0].Name() != "posts-20240104-000000.db" || entries[1].Name() != "posts-20240105-000000.db" {
+		t.Fatalf("prune should keep newest files, got %s, %s", entries[0].Name(), entries[1].Name())
+	}
+}
+
+func TestDBBackupQuotaEnv(t *testing.T) {
+	t.Setenv("BRIEFLY_DB_BACKUPS", "3")
+	if got := dbBackupQuota(); got != 3 {
+		t.Fatalf("want 3, got %d", got)
+	}
+	t.Setenv("BRIEFLY_DB_BACKUPS", "0")
+	if got := dbBackupQuota(); got != 0 {
+		t.Fatalf("want 0 (off), got %d", got)
+	}
+	t.Setenv("BRIEFLY_DB_BACKUPS", "")
+	if got := dbBackupQuota(); got != 7 {
+		t.Fatalf("default should be 7, got %d", got)
+	}
+}
 
 func TestPostDB(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "test_db.json")
