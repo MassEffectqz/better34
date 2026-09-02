@@ -3,6 +3,9 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -171,5 +174,56 @@ func TestWebSecurityMiddleware(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("static without token: got %d, want 200", w.Code)
 		}
+	}
+}
+
+// resolveLogDir: приоритет BRIEFLY_LOG_DIR, иначе data/logs.
+func TestResolveLogDir(t *testing.T) {
+	t.Setenv("BRIEFLY_LOG_DIR", "")
+
+	logDirOnce = sync.Once{}
+	logDir = ""
+	got := resolveLogDir()
+	if got != "data/logs" {
+		t.Errorf("resolveLogDir() = %q, want data/logs", got)
+	}
+
+	logDirOnce = sync.Once{}
+	logDir = ""
+	t.Setenv("BRIEFLY_LOG_DIR", "X:/custom-log-dir")
+	if got := resolveLogDir(); got != "X:/custom-log-dir" {
+		t.Errorf("resolveLogDir() = %q, want X:/custom-log-dir", got)
+	}
+
+	logDirOnce = sync.Once{}
+	logDir = ""
+	t.Setenv("BRIEFLY_LOG_DIR", "  ") // пустой после TrimSpace → дефолт
+	if got := resolveLogDir(); got != "data/logs" {
+		t.Errorf("resolveLogDir(whitespace) = %q, want data/logs", got)
+	}
+}
+
+// Папка лога создаётся заранее, даже если вся иерархия отсутствует;
+// старый лог в data/ (до разделения) не читается заново.
+func TestRotatingWriterCreatesLogDir(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "lvl1", "lvl2", "briefly.log")
+
+	w := newRotatingWriter(logPath, 10<<20)
+	defer func() {
+		if w.file != nil {
+			w.file.Close()
+		}
+	}()
+
+	if _, err := w.Write([]byte("hello\n")); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	st, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("лог-файл не создан: %v", err)
+	}
+	if st.Size() == 0 {
+		t.Error("лог-файл пуст после записи")
 	}
 }

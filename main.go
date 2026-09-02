@@ -39,10 +39,37 @@ type rotatingWriter struct {
 	path     string
 	maxBytes int64
 	file     *os.File
+
+	dirReady bool // папка лога создана при старте
 }
 
+// logDir — отдельная папка для логов: data/logs по умолчанию, путь
+// переопределяется BRIEFLY_LOG_DIR. Переменная может прийти из .env
+// (loadDotEnv() в main()), поэтому вычисляется лениво.
+var (
+	logDir     string
+	logDirOnce sync.Once
+)
+
+func resolveLogDir() string {
+	logDirOnce.Do(func() {
+		logDir = strings.TrimSpace(os.Getenv("BRIEFLY_LOG_DIR"))
+		if logDir == "" {
+			logDir = "data/logs"
+		}
+	})
+	return logDir
+}
+
+// newRotatingWriter заранее создаёт папку под лог-файл, чтобы OpenFile
+// в rotate() не молча терял лог на первом запуске.
 func newRotatingWriter(path string, maxBytes int64) *rotatingWriter {
 	w := &rotatingWriter{path: path, maxBytes: maxBytes}
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		w.dirReady = os.MkdirAll(dir, 0o755) == nil
+	} else {
+		w.dirReady = true
+	}
 	w.rotate()
 	return w
 }
@@ -55,7 +82,15 @@ func (w *rotatingWriter) rotate() {
 	if info, err := os.Stat(w.path); err == nil && info.Size() >= w.maxBytes {
 		os.Rename(w.path, w.path+".old")
 	}
-	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	// Страховка: папку лога могли удалить на работающем сервере.
+	if !w.dirReady {
+		if dir := filepath.Dir(w.path); dir != "" && dir != "." {
+			w.dirReady = os.MkdirAll(dir, 0o755) == nil
+		} else {
+			w.dirReady = true
+		}
+	}
+	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
@@ -80,9 +115,10 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// logOutput — общий вывод логов: консоль + ротируемый файл (10 МБ).
+// logOutput — общий вывод логов: консоль + ротируемый файл (10 МБ) в
+// отдельной папке (data/logs, путь меняет BRIEFLY_LOG_DIR).
 // Один rotator на процесс: и slog, и пакет log пишут в него.
-var logOutput = io.MultiWriter(os.Stdout, newRotatingWriter("data/briefly.log", 10<<20))
+var logOutput = io.MultiWriter(os.Stdout, newRotatingWriter(filepath.Join(resolveLogDir(), "briefly.log"), 10<<20))
 
 // newSlogLogger собирает структурированный логгер (текстовый, поддержка
 // уровней). Уровень задаёт BRIEFLY_LOG_LEVEL: debug|info|warn|error.
