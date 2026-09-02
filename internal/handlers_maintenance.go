@@ -124,7 +124,14 @@ func (h *Handler) DeletePost(c *gin.Context) {
 	}
 
 	if post.FilePath != "" {
-		os.RemoveAll(filepath.Dir(post.FilePath))
+		// Удаляем только сам файл поста; каталог — только если он опустел
+		// (SavePath может указывать на общую папку с другими файлами).
+		os.Remove(post.FilePath)
+		if dir := filepath.Dir(post.FilePath); dir != "." && dir != "" {
+			if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
+				os.Remove(dir)
+			}
+		}
 	}
 
 	thumbPath := filepath.Join("data", "thumbs", fmt.Sprintf("%d.jpg", id))

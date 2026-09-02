@@ -1,0 +1,21 @@
+# Пример локального запуска через docker-compose.
+# Скопируйте в docker-compose.yml и поправьте под себя.
+# Образ публикуется в GHCR при каждом git-теге (см. .github/workflows/release.yml).
+services:
+  briefly:
+    image: ghcr.io/massefectqz/better34:latest
+    container_name: briefly
+    restart: unless-stopped
+    ports:
+      - "3000:3000"      # TCP: HTTPS (и авто-редирект с HTTP)
+      - "3000:3000/udp"  # UDP: HTTP/3 (QUIC), при желании убрать
+    environment:
+      BRIEFLY_HOST: 0.0.0.0
+      BRIEFLY_TLS: "1"
+      BRIEFLY_MEDIA_CACHE_GB: "20"
+      BRIEFLY_ALLOWED_HOSTS: ""
+      # Семантический поиск через Ollama на хосте:
+      # BRIEFLY_OLLAMA: http://host.docker.internal:11434
+    volumes:
+      # Постоянные данные: БД, скачанные файлы, кэши, TLS-сертификат.
+      - ./data:/app/data

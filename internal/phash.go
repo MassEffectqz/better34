@@ -27,7 +27,7 @@ func buildDCTTable(n int) [][]float64 {
 	for j := range t {
 		t[j] = make([]float64, n)
 		for x := 0; x < n; x++ {
-			t[j][x] = math.Cos(math.Pi*(2*float64(x)+1)*float64(j)/(2*float64(n)))
+			t[j][x] = math.Cos(math.Pi * (2*float64(x) + 1) * float64(j) / (2 * float64(n)))
 		}
 	}
 	return t

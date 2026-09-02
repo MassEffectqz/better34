@@ -183,3 +183,47 @@ func (h *Handler) UpdateProfileMeta(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
+
+// POST /api/auth/password {current_password, new_password} — смена пароля.
+// Текущий пароль обязателен; после смены остальные сессии отзываются.
+func (h *Handler) AuthChangePassword(c *gin.Context) {
+	u := sessionUser(c)
+	if u == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "требуется вход"})
+		return
+	}
+	if ok, wait := authLimiter.Allow(c.ClientIP()); !ok {
+		authTooMany(c, wait)
+		return
+	}
+	var req struct {
+		Current string `json:"current_password"`
+		New     string `json:"new_password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный запрос"})
+		return
+	}
+	if err := GetAccounts().ChangePassword(u, req.Current, req.New); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if token, err := c.Cookie(sessionCookieName); err == nil {
+		GetAccounts().RevokeOtherSessions(u, token)
+	}
+	authRateResetIP(c.ClientIP())
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// POST /api/auth/logout-others — отозвать все сессии, кроме текущей
+// (например, если пароль или устройство попали в чужие руки).
+func (h *Handler) AuthLogoutOthers(c *gin.Context) {
+	u := sessionUser(c)
+	if u == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "требуется вход"})
+		return
+	}
+	token, _ := c.Cookie(sessionCookieName)
+	revoked := GetAccounts().RevokeOtherSessions(u, token)
+	c.JSON(http.StatusOK, gin.H{"ok": true, "revoked": revoked})
+}

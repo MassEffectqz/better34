@@ -49,9 +49,21 @@ func qtok() string {
 }
 
 func (h *Handler) QRCreateSession(c *gin.Context) {
+	// Публичный эндпоинт: генерация токена без авторизации — ограничиваем.
+	if ok, wait := authLimiter.Allow(c.ClientIP()); !ok {
+		authTooMany(c, wait)
+		return
+	}
 	t := qtok()
+	now := time.Now()
 	qrStr.mu.Lock()
-	qrStr.m[t] = &qrSess{tok: t, st: qrPend, expiry: time.Now().Add(qrSessTTL)}
+	// Выметаем истёкшие сессии: иначе карта растёт бесконечно.
+	for k, s := range qrStr.m {
+		if now.After(s.expiry) {
+			delete(qrStr.m, k)
+		}
+	}
+	qrStr.m[t] = &qrSess{tok: t, st: qrPend, expiry: now.Add(qrSessTTL)}
 	qrStr.mu.Unlock()
 	c.JSON(200, gin.H{"token": t, "expires_in": int(qrSessTTL.Seconds())})
 }
@@ -129,6 +141,12 @@ func (h *Handler) QRImagePublic(c *gin.Context) {
 	t := c.Query("t")
 	if t == "" {
 		c.Status(http.StatusBadRequest)
+		return
+	}
+	// Публичный эндпоинт: PNG генерируется на каждый вызов — ограничиваем,
+	// чтобы флуд не грузил CPU. Токен высокоэнтропийный, перебор невозможен.
+	if ok, wait := authLimiter.Allow(c.ClientIP()); !ok {
+		authTooMany(c, wait)
 		return
 	}
 	scheme := "http"

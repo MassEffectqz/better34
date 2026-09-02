@@ -1,4 +1,17 @@
 ﻿$ErrorActionPreference = "Stop"
+# Загрузка .env (KEY=VALUE): уже заданные переменные окружения имеют приоритет.
+$envFile = Join-Path $PSScriptRoot ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | Where-Object {
+        $_.Trim() -and -not $_.Trim().StartsWith('#')
+    } | ForEach-Object {
+        $key, $value = $_.Trim() -split '=', 2
+        $key = $key.Trim()
+        if ($key -and -not (Test-Path "Env:$key")) {
+            Set-Item -Path "Env:$key" -Value $value.Trim().Trim('"', "'")
+        }
+    }
+}
 
 # IP интерфейса, через который идёт маршрут в интернет (не WSL/VPN/Docker).
 $ip = $null

@@ -138,9 +138,8 @@ func TestProxyRemoteTruncatedUpstreamNotCached(t *testing.T) {
 func TestMediaCacheEviction(t *testing.T) {
 	withTempMediaCache(t)
 
-	oldMax := mediaCacheMaxDisk
-	mediaCacheMaxDisk = 300 << 10
-	defer func() { mediaCacheMaxDisk = oldMax }()
+	mediaCacheBudgetOverride = 300 << 10
+	defer func() { mediaCacheBudgetOverride = 0 }()
 
 	sink := newMediaCacheSink("a")
 	sink.Write(make([]byte, 200<<10))

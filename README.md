@@ -82,6 +82,8 @@ cache-first (неизменяемы по построению), мутации (
 | `BRIEFLY_DEBUG` | — | `1` — unbundled-фронтенд + лог запросов |
 | `BRIEFLY_OLLAMA` | `http://127.0.0.1:11434` | URL локальной Ollama (семантический поиск) |
 | `BRIEFLY_OLLAMA_MODEL` | `dolphin-mistral:7b` | Модель Ollama (uncensored, не отказывает на NSFW) |
+| `BRIEFLY_MAX_DOWNLOAD_MB` | картинки 4 / видео 256 | Максимальный размер скачиваемого файла в МБ |
+| `BRIEFLY_LOG_LEVEL` | `info` | Уровень лога: `debug` / `info` / `warn` / `error` |
 
 ## Разработка
 

@@ -268,37 +268,76 @@ func (h *Handler) CleanDuplicates(c *gin.Context) {
 		return
 	}
 	root := saveRoot()
-	groups := make(map[int64][]string)
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+
+	// Пути, на которые ссылается БД, считаем оригиналами — их не удаляем.
+	db := GetDB()
+	dbPaths := make(map[string]bool)
+	for _, p := range db.GetDownloaded() {
+		if p.FilePath != "" {
+			dbPaths[p.FilePath] = true
+		}
+	}
+
+	bySize := make(map[int64][]string)
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || info.Size() <= 0 {
 			return nil
 		}
-		groups[info.Size()] = append(groups[info.Size()], path)
+		bySize[info.Size()] = append(bySize[info.Size()], path)
 		return nil
 	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Детерминированный порядок обхода: размеры по убыванию, пути внутри
+	// группы отсортированы — выбор «оригинала» не зависит от map-итерации.
+	var sizes []int64
+	for size, paths := range bySize {
+		if len(paths) > 1 {
+			sizes = append(sizes, size)
+			sort.Strings(paths)
+		}
+	}
+	sort.Slice(sizes, func(i, j int) bool { return sizes[i] > sizes[j] })
 
 	var removed []string
-	db := GetDB()
-	seenHash := make(map[int64]map[string]string)
-	for size, paths := range groups {
-		if len(paths) < 2 {
-			continue
-		}
-		if seenHash[size] == nil {
-			seenHash[size] = make(map[string]string)
-		}
-		for _, path := range paths {
+	for _, size := range sizes {
+		byHash := make(map[string][]string)
+		for _, path := range bySize[size] {
 			hash, err := fileSHA256(path)
 			if err != nil {
 				continue
 			}
-			if _, ok := seenHash[size][hash]; ok {
-				removed = append(removed, path)
-				os.Remove(path)
-				db.UnsetDownloadedByPath(path)
-				continue
+			byHash[hash] = append(byHash[hash], path)
+		}
+		var hashes []string
+		for hash, paths := range byHash {
+			if len(paths) > 1 {
+				hashes = append(hashes, hash)
 			}
-			seenHash[size][hash] = path
+		}
+		sort.Strings(hashes)
+		for _, hash := range hashes {
+			paths := byHash[hash]
+			sort.Strings(paths)
+			// Оригинал — файл, на который ссылается БД; иначе лексически первый.
+			keep := paths[0]
+			for _, p := range paths {
+				if dbPaths[p] {
+					keep = p
+					break
+				}
+			}
+			for _, p := range paths {
+				if p == keep {
+					continue
+				}
+				removed = append(removed, p)
+				os.Remove(p)
+				db.UnsetDownloadedByPath(p)
+			}
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"removed": removed, "count": len(removed)})

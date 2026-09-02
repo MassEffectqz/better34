@@ -5,7 +5,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o briefly .
 
-FROM alpine:3.19
+FROM alpine:3.22
 # Сертификаты для исходящих запросов к провайдерам, wget — для HEALTHCHECK.
 RUN apk add --no-cache ca-certificates tzdata \
  && addgroup -S briefly && adduser -S -G briefly -H briefly
@@ -16,7 +16,7 @@ COPY --from=builder /build/static ./static
 RUN mkdir -p data/posts data/thumbs && chown -R briefly:briefly /app
 USER briefly
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- "http://127.0.0.1:${BRIEFLY_PORT:-3000}/api/healthz" >/dev/null 2>&1 || exit 1
+  CMD wget -qO- "http://127.0.0.1:${BRIEFLY_PORT:-3000}/api/ready" >/dev/null 2>&1 || exit 1
 EXPOSE 3000
 VOLUME ["/app/data"]
 CMD ["./briefly"]

@@ -109,7 +109,7 @@ func (c *Config) Save() error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile("data/config.json", data, 0644)
+	return atomicWriteFile("data/config.json", data, 0600)
 }
 
 func (c *Config) GetAPICredentials() []APICredential {

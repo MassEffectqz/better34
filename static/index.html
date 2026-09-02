@@ -341,6 +341,13 @@
           <button id="btn-clean-db" class="btn-primary btn-sm"><span data-i18n="btn.cleanDb">Очистить нескачанные</span></button>
         </label>
         <div class="setting-group">
+          <span class="setting-label" data-i18n="sec.password">Смена пароля</span>
+          <input type="password" id="input-current-password" placeholder="текущий пароль" autocomplete="current-password">
+          <input type="password" id="input-new-password" placeholder="новый пароль (мин. 6)" autocomplete="new-password">
+          <button id="btn-change-password" class="btn-primary btn-sm"><span data-i18n="btn.changePassword">Сменить пароль</span></button>
+          <button id="btn-logout-others" class="btn-primary btn-sm"><span data-i18n="btn.logoutOthers">Выйти на остальных устройствах</span></button>
+        </div>
+        <div class="setting-group">
           <span class="setting-label" data-i18n="maint.dups">Дубликаты</span>
           <button id="btn-find-dups" class="btn-primary btn-sm"><span data-i18n="btn.findDups">Найти дубликаты</span></button>
           <span id="dups-info" class="dups-info hidden"></span>

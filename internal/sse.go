@@ -47,6 +47,14 @@ func subscribeSSE() (<-chan string, func()) {
 	}
 }
 
+// sseSubscriberCount — число открытых SSE-подключений (для /api/metrics).
+func sseSubscriberCount() int {
+	hub.mu.Lock()
+	n := len(hub.subs)
+	hub.mu.Unlock()
+	return n
+}
+
 func (h *Handler) StreamEvents(c *gin.Context) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {

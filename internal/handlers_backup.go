@@ -11,23 +11,23 @@ import (
 
 // backupProfile — сериализуемый снимок профиля пользователя.
 type backupProfile struct {
-	LikedPosts  []int         `json:"liked_posts"`
-	LikedAt     map[int]int64 `json:"liked_at,omitempty"`
-	HiddenPosts []int         `json:"hidden_posts"`
-	Presets     []QueryPreset `json:"presets,omitempty"`
-	FavTags     []string      `json:"fav_tags,omitempty"`
-	HiddenTags  []string      `json:"hidden_tags,omitempty"`
-	Collections []Collection  `json:"collections,omitempty"`
+	LikedPosts  []int          `json:"liked_posts"`
+	LikedAt     map[int]int64  `json:"liked_at,omitempty"`
+	HiddenPosts []int          `json:"hidden_posts"`
+	Presets     []QueryPreset  `json:"presets,omitempty"`
+	FavTags     []string       `json:"fav_tags,omitempty"`
+	HiddenTags  []string       `json:"hidden_tags,omitempty"`
+	Collections []Collection   `json:"collections,omitempty"`
 	RecDisliked map[string]int `json:"rec_disliked,omitempty"`
 }
 
 type backupFile struct {
-	Version    int            `json:"version"`
-	App        string         `json:"app"`
-	ExportedAt string         `json:"exported_at"`
-	User       string         `json:"user,omitempty"`
-	Profile    backupProfile  `json:"profile"`
-	Comments   []*Comment     `json:"comments,omitempty"`
+	Version    int           `json:"version"`
+	App        string        `json:"app"`
+	ExportedAt string        `json:"exported_at"`
+	User       string        `json:"user,omitempty"`
+	Profile    backupProfile `json:"profile"`
+	Comments   []*Comment    `json:"comments,omitempty"`
 }
 
 // GET /api/profile/export — полный бэкап: лайки, скрытия, пресеты, теги,
@@ -67,8 +67,8 @@ func (h *Handler) ExportProfile(c *gin.Context) {
 // существующие данные не удаляются, новые добавляются.
 func (h *Handler) ImportProfile(c *gin.Context) {
 	var req struct {
-		Profile *backupProfile `json:"profile"`
-		Comments []*Comment    `json:"comments"`
+		Profile  *backupProfile `json:"profile"`
+		Comments []*Comment     `json:"comments"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Profile == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ожидается объект вида {\"profile\": {...}}"})
@@ -145,13 +145,13 @@ func (h *Handler) ImportProfile(c *gin.Context) {
 	p.Save()
 	c.JSON(http.StatusOK, gin.H{
 		"imported": gin.H{
-			"liked_posts": len(in.LikedPosts),
+			"liked_posts":  len(in.LikedPosts),
 			"hidden_posts": len(in.HiddenPosts),
-			"presets":     len(in.Presets),
-			"fav_tags":    len(in.FavTags),
-			"hidden_tags": len(in.HiddenTags),
-			"collections": importedCols,
-			"comments":    addedComments,
+			"presets":      len(in.Presets),
+			"fav_tags":     len(in.FavTags),
+			"hidden_tags":  len(in.HiddenTags),
+			"collections":  importedCols,
+			"comments":     addedComments,
 		},
 	})
 }

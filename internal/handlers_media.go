@@ -583,7 +583,18 @@ func mediaCacheDiskBudget() int64 {
 	return int64(defGB) << 30
 }
 
-var mediaCacheMaxDisk = mediaCacheDiskBudget()
+// mediaCacheBudgetOverride — тесты/настройки могут перекрыть бюджет; 0 — не задано.
+var mediaCacheBudgetOverride int64
+
+// mediaCacheMaxDiskBytes — суммарный бюджет диска под media-cache, читается
+// при каждом вызове: значение из окружения (BRIEFLY_MEDIA_CACHE_GB)
+// подхватывается и при прямом `go run .` с .env.
+func mediaCacheMaxDiskBytes() int64 {
+	if mediaCacheBudgetOverride > 0 {
+		return mediaCacheBudgetOverride
+	}
+	return mediaCacheDiskBudget()
+}
 
 func mediaCacheInit() {
 	mediaDiskOnce.Do(func() {
@@ -755,12 +766,12 @@ func mediaCacheEvict() {
 		total += fi.Size()
 		list = append(list, fe{e.Name(), fi.Size(), fi.ModTime()})
 	}
-	if total <= mediaCacheMaxDisk {
+	if total <= mediaCacheMaxDiskBytes() {
 		return
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].mod.Before(list[j].mod) })
 	for _, f := range list {
-		if total <= mediaCacheMaxDisk {
+		if total <= mediaCacheMaxDiskBytes() {
 			break
 		}
 		if os.Remove(filepath.Join(mediaCacheDir, f.name)) == nil {

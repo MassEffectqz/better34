@@ -25,10 +25,10 @@ type Profile struct {
 
 // Collection — именованный альбом постов с сохранённым порядком добавления.
 type Collection struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Posts   []int  `json:"posts"`
-	CreatedAt int64 `json:"created_at,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Posts     []int  `json:"posts"`
+	CreatedAt int64  `json:"created_at,omitempty"`
 }
 
 type QueryPreset struct {
@@ -124,7 +124,7 @@ func (p *Profile) Save() error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(p.path, data, 0644)
+	return atomicWriteFile(p.path, data, 0600)
 }
 
 func (p *Profile) ToggleLike(postID int) bool {

@@ -35,20 +35,23 @@ func (h *Handler) GetSettings(c *gin.Context) {
 
 func (h *Handler) UpdateSettings(c *gin.Context) {
 	var req struct {
-		APIKeys             []APICredential `json:"api_keys"`
-		APIKey              string          `json:"api_key"`
-		APIKey2             string          `json:"api_key2"`
-		UserID              string          `json:"user_id"`
-		ProxyURL            string          `json:"proxy_url"`
-		ConcurrentDownloads int             `json:"concurrent_downloads"`
-		// Указатель: частичные сохранения (например, смена провайдера
-		// из хедера) не должны сбрасывать флаг в false.
-		AutoDownload   *bool  `json:"auto_download"`
-		SavePath       string `json:"save_path"`
-		ThumbSize      int    `json:"thumb_size"`
-		MinID          int    `json:"min_id"`
-		RenameTemplate string `json:"rename_template"`
-		Provider       string `json:"provider"`
+		APIKeys []APICredential `json:"api_keys"`
+		APIKey  string          `json:"api_key"`
+		APIKey2 string          `json:"api_key2"`
+		UserID  string          `json:"user_id"`
+		// Указатели на строки: частичные сохранения (например, смена
+		// провайдера из хедера) не должны трогать другие поля, а пустая
+		// строка здесь — явный сброс (например, очистка proxy_url).
+		ProxyURL            *string `json:"proxy_url"`
+		ConcurrentDownloads int     `json:"concurrent_downloads"`
+		// AutoDownload — указатель: частичные сохранения не должны
+		// сбрасывать флаг в false.
+		AutoDownload   *bool   `json:"auto_download"`
+		SavePath       *string `json:"save_path"`
+		ThumbSize      int     `json:"thumb_size"`
+		MinID          int     `json:"min_id"`
+		RenameTemplate *string `json:"rename_template"`
+		Provider       string  `json:"provider"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -104,8 +107,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			cfg.SetAPIKeys(cur)
 		}
 	}
-	if req.ProxyURL != "" {
-		cfg.SetProxyURL(req.ProxyURL)
+	if req.ProxyURL != nil {
+		cfg.SetProxyURL(*req.ProxyURL)
 		for _, p := range h.providers {
 			p.RebuildClient()
 		}
@@ -123,9 +126,9 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.AutoDownload != nil {
 		cfg.SetAutoDownload(*req.AutoDownload)
 	}
-	if req.SavePath != "" {
-		cfg.SetSavePath(req.SavePath)
-		cfg.SetDownloadPath(req.SavePath)
+	if req.SavePath != nil {
+		cfg.SetSavePath(*req.SavePath)
+		cfg.SetDownloadPath(*req.SavePath)
 	}
 	if req.ThumbSize > 0 {
 		cfg.SetThumbSize(req.ThumbSize)
@@ -133,8 +136,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if req.MinID >= 0 {
 		cfg.SetMinID(req.MinID)
 	}
-	if req.RenameTemplate != "" {
-		cfg.SetRenameTemplate(req.RenameTemplate)
+	if req.RenameTemplate != nil {
+		cfg.SetRenameTemplate(*req.RenameTemplate)
 	}
 
 	cfg.Save()

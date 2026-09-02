@@ -146,7 +146,7 @@ func (a *Accounts) saveUsers() error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(usersFile, data, 0644)
+	return atomicWriteFile(usersFile, data, 0600)
 }
 
 func (a *Accounts) saveSessions() error {
@@ -160,7 +160,7 @@ func (a *Accounts) saveSessions() error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(sessionsFile, data, 0644)
+	return atomicWriteFile(sessionsFile, data, 0600)
 }
 
 func (a *Accounts) Count() int {
@@ -265,6 +265,47 @@ func (a *Accounts) Authenticate(username, password string) (*Account, error) {
 		return nil, ErrBadLogin
 	}
 	return user, nil
+}
+
+// ChangePassword меняет пароль, предварительно проверив текущий.
+func (a *Accounts) ChangePassword(username, current, newPass string) error {
+	if err := validatePassword(newPass); err != nil {
+		return err
+	}
+	username = strings.TrimSpace(strings.ToLower(username))
+	a.mu.RLock()
+	user, ok := a.users[username]
+	a.mu.RUnlock()
+	if !ok || bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(current)) != nil {
+		return ErrBadLogin
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPass), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	user.PassHash = string(hash)
+	a.mu.Unlock()
+	return a.saveUsers()
+}
+
+// RevokeOtherSessions удаляет все сессии пользователя, кроме keepToken
+// (пустая строка — отозвать все). Возвращает число отозванных сессий.
+func (a *Accounts) RevokeOtherSessions(username, keepToken string) int {
+	username = strings.TrimSpace(strings.ToLower(username))
+	a.mu.Lock()
+	removed := 0
+	for t, s := range a.sessions {
+		if s.Username == username && t != keepToken {
+			delete(a.sessions, t)
+			removed++
+		}
+	}
+	a.mu.Unlock()
+	if removed > 0 {
+		_ = a.saveSessions()
+	}
+	return removed
 }
 
 func (a *Accounts) CreateSession(username string) (string, time.Time, error) {

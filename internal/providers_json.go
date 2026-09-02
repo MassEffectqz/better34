@@ -81,13 +81,13 @@ func loadDynamicProviderSpecs() []siteSpec {
 				suggest = "autocomplete"
 			}
 			dynProvSpec = append(dynProvSpec, siteSpec{
-				name:        name,
-				title:       p.Title,
-				apiURL:      p.APIURL,
-				wwwURL:      p.WWWURL,
-				mediaHosts:  p.MediaHosts,
-				requireAuth: p.RequireAuth,
-				wrappedResp: p.WrappedResp,
+				name:          name,
+				title:         p.Title,
+				apiURL:        p.APIURL,
+				wwwURL:        p.WWWURL,
+				mediaHosts:    p.MediaHosts,
+				requireAuth:   p.RequireAuth,
+				wrappedResp:   p.WrappedResp,
 				supportsMinID: p.SupportsMinID,
 				supportsSort:  p.SupportsSort,
 				idListParam:   p.IDListParam,

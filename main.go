@@ -19,6 +19,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"io"
 	"log"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -77,6 +78,59 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// logOutput — общий вывод логов: консоль + ротируемый файл (10 МБ).
+// Один rotator на процесс: и slog, и пакет log пишут в него.
+var logOutput = io.MultiWriter(os.Stdout, newRotatingWriter("data/briefly.log", 10<<20))
+
+// newSlogLogger собирает структурированный логгер (текстовый, поддержка
+// уровней). Уровень задаёт BRIEFLY_LOG_LEVEL: debug|info|warn|error.
+func newSlogLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(logOutput, &slog.HandlerOptions{Level: logLevelFromEnv()}))
+}
+
+func logLevelFromEnv() slog.Level {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("BRIEFLY_LOG_LEVEL"))) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+// loadDotEnv — простая загрузка .env без сторонних зависимостей: KEY=VALUE
+// построчно, поддерживаются комментарии (#) и кавычки. Уже заданные переменные
+// окружения имеют приоритет и не перезаписываются. Прочитанные значения не
+// успевают к переменным, инициализируемым на этапе package-init
+// (BRIEFLY_ALLOWED_HOSTS, BRIEFLY_TOKEN — ими управляет run.ps1).
+func loadDotEnv() {
+	for _, path := range []string{".env", "data/.env"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, ln := range strings.Split(string(data), "\n") {
+			line := strings.TrimSpace(ln)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			k = strings.TrimSpace(k)
+			v = strings.Trim(strings.TrimSpace(v), `"'`)
+			if k == "" || os.Getenv(k) != "" {
+				continue
+			}
+			os.Setenv(k, v)
+		}
+	}
 }
 
 func debugMiddleware() gin.HandlerFunc {
@@ -414,16 +468,18 @@ func httpsRedirectHandler() http.Handler {
 }
 
 func main() {
+	loadDotEnv()
+	slog.SetDefault(newSlogLogger())
 	internal.SetBriefToken(authToken)
-	log.SetOutput(io.MultiWriter(os.Stdout, newRotatingWriter("data/briefly.log", 10<<20)))
+	log.SetOutput(logOutput)
 	cfg := internal.GetConfig()
 	db := internal.GetDB()
-	log.Printf("DB loaded: %d posts", db.Stats()["total"])
+	slog.Info("db loaded", "posts", db.Stats()["total"])
 	downloader := internal.NewDownloader(cfg.GetConcurrentDownloads(), func(result internal.DownloadResult) {
 		if result.Error != nil {
-			log.Printf("Download failed [%d]: %v", result.PostID, result.Error)
+			slog.Error("download failed", "post_id", result.PostID, "error", result.Error.Error())
 		} else {
-			log.Printf("Downloaded [%d] -> %s", result.PostID, result.FilePath)
+			slog.Info("downloaded", "post_id", result.PostID, "file", result.FilePath)
 		}
 	})
 	handler := internal.NewHandler()
@@ -447,7 +503,11 @@ func main() {
 	api := r.Group("/api")
 	{
 		api.GET("/healthz", handler.Healthz)
+		api.GET("/ready", handler.Readiness)
+		api.GET("/metrics", handler.Metrics)
 		api.POST("/auth/register", handler.AuthRegister)
+		api.POST("/auth/password", handler.AuthChangePassword)
+		api.POST("/auth/logout-others", handler.AuthLogoutOthers)
 		api.POST("/auth/login", handler.AuthLogin)
 		api.POST("/auth/logout", handler.AuthLogout)
 		api.GET("/auth/me", handler.AuthMe)
@@ -555,7 +615,7 @@ func main() {
 	addr := net.JoinHostPort(host, port)
 
 	if host != "127.0.0.1" && host != "localhost" {
-		log.Printf("Сервер доступен в локальной сети (вход по логину/паролю). " +
+		slog.Info("сервер доступен в локальной сети (вход по логину/паролю). " +
 			"Ограничить: BRIEFLY_HOST=127.0.0.1, список хостов BRIEFLY_ALLOWED_HOSTS или файрвол.")
 	}
 
@@ -575,7 +635,7 @@ func main() {
 	if tlsEnabled() {
 		cert, err := loadOrGenerateCert()
 		if err != nil {
-			log.Printf("BRIEFLY_TLS: не удалось подготовить сертификат (%v) — работаю по HTTP", err)
+			slog.Warn("BRIEFLY_TLS: не удалось подготовить сертификат, работаю по HTTP", "error", err)
 		} else {
 			srv.TLSConfig = &tls.Config{
 				Certificates: []tls.Certificate{cert},
@@ -613,7 +673,7 @@ func main() {
 				go func() {
 					if err := h3Server.ListenAndServeTLS(tlsCertPath, tlsKeyPath); err != nil &&
 						!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
-						log.Printf("HTTP/3: %v (QUIC недоступен — продолжаем по TCP)", err)
+						slog.Warn("HTTP/3: QUIC недоступен, продолжаем по TCP", "error", err)
 					}
 				}()
 			}
@@ -622,14 +682,14 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		log.Printf("Server starting on %s://%s", scheme, addr)
+		slog.Info("server starting", "scheme", scheme, "addr", addr)
 		if scheme == "https" {
-			log.Printf("  самоподписанный сертификат: при первом открытии браузер предупредит — примите исключение (на телефоне: «Дополнительно» → «Перейти на сайт»)")
-			log.Printf("  http:// на тот же порт автоматически перенаправляется на https (старые ссылки работают)")
+			slog.Info("самоподписанный сертификат: при первом открытии браузер предупредит — примите исключение (на телефоне: «Дополнительно» → «Перейти на сайт»)")
+			slog.Info("http:// на тот же порт автоматически перенаправляется на https (старые ссылки работают)")
 		}
 		for _, a := range allowedHosts {
 			if a != "localhost" && a != "127.0.0.1" && a != "::1" && !strings.Contains(a, ":") {
-				log.Printf("  в локальной сети: %s://%s:%s", scheme, a, port)
+				slog.Info("в локальной сети", "url", scheme+"://"+a+":"+port)
 			}
 		}
 		var err error
@@ -645,11 +705,11 @@ func main() {
 		}
 	}()
 	<-quit
-	log.Println("Shutting down...")
+	slog.Info("shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("Server forced to shutdown: %v", err)
+		slog.Warn("server forced to shutdown", "error", err)
 	}
 	if plainSrv != nil {
 		_ = plainSrv.Shutdown(ctx)
@@ -659,7 +719,7 @@ func main() {
 	}
 	downloader.Close()
 	db.Close()
-	log.Println("Done.")
+	slog.Info("done")
 }
 
 var allowedHosts = func() []string {
@@ -738,6 +798,12 @@ func webSecurityMiddleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "host not allowed"})
 			return
 		}
+		// Стандартные security-заголовки на всех ответах: медиа проксируется,
+		// поэтому nosniff/реферал/фреймы/браузерные API ограничиваем глобально.
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Header("X-Frame-Options", "SAMEORIGIN")
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		if origin := c.GetHeader("Origin"); origin != "" {
 			expected := sameOriginHost(c.Request)
 			c.Header("Vary", "Origin")
@@ -757,7 +823,8 @@ func webSecurityMiddleware() gin.HandlerFunc {
 		if strings.HasPrefix(c.Request.URL.Path, "/api") && !legacyMode {
 			if strings.HasPrefix(c.Request.URL.Path, "/api/auth/") ||
 				strings.HasPrefix(c.Request.URL.Path, "/api/healthz") ||
-				c.Request.URL.Path == "/api/tags/popular" {
+				c.Request.URL.Path == "/api/tags/popular" ||
+				c.Request.URL.Path == "/api/ready" {
 				c.Next()
 				return
 			}

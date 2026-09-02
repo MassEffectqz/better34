@@ -32,8 +32,8 @@ type Post struct {
 	FilePath   string `json:"file_path"`
 	ThumbPath  string `json:"thumb_path"`
 	MD5        string `json:"md5"`
-	Phash      string `json:"phash,omitempty"`     // perceptual hash (пусто у видео)
-	Blurhash   string `json:"blurhash,omitempty"`  // placeholder-строка BlurHash
+	Phash      string `json:"phash,omitempty"`    // perceptual hash (пусто у видео)
+	Blurhash   string `json:"blurhash,omitempty"` // placeholder-строка BlurHash
 }
 
 // PostDB — SQLite-хранилище постов (modernc.org/sqlite, без CGO).
@@ -174,6 +174,15 @@ func NewPostDB(path string) *PostDB {
 // importLegacyJSON разово переносит старый data/db.json в SQLite и
 // переименовывает его в .migrated. Вызывается только из GetDB().
 func (db *PostDB) importLegacyJSON(jsonPath string) {
+	// Сначала проверяем, нужен ли вообще импорт: при наличии постов в SQLite
+	// не читаем десятки МБ JSON на каждом старте, а сразу убираем файл.
+	var existing int
+	_ = db.read.QueryRow(`SELECT COUNT(*) FROM posts`).Scan(&existing)
+	if existing > 0 {
+		log.Printf("[db] sqlite уже содержит %d постов — legacy %s не нужен, удаляю", existing, jsonPath)
+		_ = os.Remove(jsonPath)
+		return
+	}
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
 		return
@@ -181,12 +190,6 @@ func (db *PostDB) importLegacyJSON(jsonPath string) {
 	var posts []*Post
 	if err := json.Unmarshal(data, &posts); err != nil {
 		log.Printf("[db] legacy %s: %v (файл оставлен на месте)", jsonPath, err)
-		return
-	}
-	var existing int
-	_ = db.read.QueryRow(`SELECT COUNT(*) FROM posts`).Scan(&existing)
-	if existing > 0 {
-		log.Printf("[db] sqlite уже содержит %d постов — legacy-импорт пропущен", existing)
 		return
 	}
 	err = db.withTx(func(tx *sql.Tx) error {
@@ -203,8 +206,11 @@ func (db *PostDB) importLegacyJSON(jsonPath string) {
 	}
 	total := len(posts)
 	log.Printf("[db] перенесено из %s: %d постов", jsonPath, total)
+	// Windows: os.Rename не перезаписывает существующий .migrated — старую
+	// копию убираем заранее, иначе исходник останется мёртвым грузом.
+	_ = os.Remove(jsonPath + ".migrated")
 	if err := os.Rename(jsonPath, jsonPath+".migrated"); err != nil {
-		log.Printf("[db] rename legacy: %v", err)
+		_ = os.Remove(jsonPath)
 	}
 }
 
@@ -270,6 +276,9 @@ func (db *PostDB) Save() error { return nil }
 
 // BumpSave оставлен для совместимости вызовов: откладывать нечего.
 func (db *PostDB) BumpSave() {}
+
+// Ping проверяет доступность БД (для /api/ready).
+func (db *PostDB) Ping() error { return db.read.Ping() }
 
 // Close закрывает соединение (WAL-чейкпоинт выполняется автоматически).
 func (db *PostDB) Close() {
@@ -417,7 +426,6 @@ func (db *PostDB) SearchDownloaded(tags string) []*Post {
 	return db.queryPosts(query, args...)
 }
 
-
 func (db *PostDB) PostExists(id int) bool {
 	var one int
 	err := db.read.QueryRow(`SELECT 1 FROM posts WHERE id=?`, id).Scan(&one)
@@ -500,8 +508,8 @@ func (db *PostDB) SimilarPHash(phash string, excludeID, limit, maxDist int) []*P
 	}
 	defer rows.Close()
 	type scored struct {
-		p     *Post
-		dist  int
+		p    *Post
+		dist int
 	}
 	var candidates []scored
 	for rows.Next() {

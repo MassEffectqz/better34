@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,9 +21,27 @@ import (
 
 var ErrCancelled = errors.New("download cancelled")
 
-// maxDownloadSize — лимит размера скачиваемого файла (совпадает с лимитом
-// proxyCache): защита от случайного заполнения диска гигабайтным файлом.
-const maxDownloadSize = 4 << 20
+// Лимиты размера скачиваемого файла. Картинки обычно весят до пары МБ,
+// видео (mp4/webm) — десятки и сотни МБ: для них потолок совпадает с
+// ограничением дискового media-cache (mediaCacheMaxItem). Общий лимит можно
+// переопределить переменной BRIEFLY_MAX_DOWNLOAD_MB (в мегабайтах).
+const (
+	maxImageDownloadSize = 4 << 20
+	maxVideoDownloadSize = 256 << 20
+)
+
+func downloadLimitFor(fileURL string) int64 {
+	if v := strings.TrimSpace(os.Getenv("BRIEFLY_MAX_DOWNLOAD_MB")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return int64(n) << 20
+		}
+	}
+	switch strings.ToLower(filepath.Ext(fileURL)) {
+	case ".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv", ".m4v":
+		return maxVideoDownloadSize
+	}
+	return maxImageDownloadSize
+}
 
 type DownloadJob struct {
 	PostID   int
@@ -173,7 +192,7 @@ func (d *Downloader) persistQueue() {
 		return
 	}
 	os.MkdirAll(filepath.Dir(d.queueFile), 0755)
-	if err := os.WriteFile(d.queueFile, data, 0644); err != nil {
+	if err := os.WriteFile(d.queueFile, data, 0600); err != nil {
 		log.Printf("failed to persist download queue: %v", err)
 	}
 }
@@ -255,6 +274,7 @@ func (d *Downloader) isStopped() bool {
 }
 
 func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) DownloadResult {
+	limit := downloadLimitFor(job.FileURL)
 	savePath := filepath.Join(GetConfig().GetDownloadPath(), fmt.Sprintf("%d", job.PostID))
 	if err := os.MkdirAll(savePath, 0755); err != nil {
 		return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("failed to create dir: %w", err)}
@@ -285,9 +305,9 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 		resumeFrom := int64(0)
 		if st, err := os.Stat(partialPath); err == nil && st.Size() > 0 {
 			resumeFrom = st.Size()
-			if resumeFrom > maxDownloadSize {
+			if resumeFrom > limit {
 				os.Remove(partialPath)
-				return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("file exceeds size limit (%d bytes)", maxDownloadSize)}
+				return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("file exceeds size limit (%d bytes)", limit)}
 			}
 		}
 
@@ -324,9 +344,9 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 		case http.StatusRequestedRangeNotSatisfiable:
 			// .part уже содержит весь файл.
 			resp.Body.Close()
-			if st, err := os.Stat(partialPath); err == nil && st.Size() > maxDownloadSize {
+			if st, err := os.Stat(partialPath); err == nil && st.Size() > limit {
 				os.Remove(partialPath)
-				return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("file exceeds size limit (%d bytes)", maxDownloadSize)}
+				return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("file exceeds size limit (%d bytes)", limit)}
 			}
 			if err := os.Rename(partialPath, filePath); err != nil {
 				return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("failed to rename file: %w", err)}
@@ -341,17 +361,19 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 		default:
 			lastErr = fmt.Errorf("download failed with status %d", resp.StatusCode)
 			resp.Body.Close()
-			if resp.StatusCode >= 500 && attempt < 3 {
-				log.Printf("retry %d/%d for post %d: status %d", attempt, 3, job.PostID, resp.StatusCode)
-				time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			// 429 (rate-limit) и 5xx — временные сбои апстрима: пробуем ещё
+			// с растущей паузой. 4xx повторять бессмысленно — отдаём сразу.
+			if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) && attempt < 3 {
+				log.Printf("retry %d/%d for post %d: status %d (transient)", attempt, 3, job.PostID, resp.StatusCode)
+				time.Sleep(time.Duration(attempt) * 5 * time.Second)
 				continue
 			}
 			return DownloadResult{PostID: job.PostID, Error: lastErr}
 		}
 
-		if resp.ContentLength > maxDownloadSize {
+		if resp.ContentLength > limit {
 			resp.Body.Close()
-			return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("file too large: %d bytes (limit %d)", resp.ContentLength, maxDownloadSize)}
+			return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("file too large: %d bytes (limit %d)", resp.ContentLength, limit)}
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -369,7 +391,7 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 			return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("failed to create file: %w", err)}
 		}
 
-		written, copyErr := io.Copy(outFile, io.LimitReader(resp.Body, maxDownloadSize-resumeFrom+1))
+		written, copyErr := io.Copy(outFile, io.LimitReader(resp.Body, limit-resumeFrom+1))
 		resp.Body.Close()
 		outFile.Close()
 		if copyErr != nil {
@@ -384,9 +406,9 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 			continue
 		}
 
-		if written > maxDownloadSize-resumeFrom {
+		if written > limit-resumeFrom {
 			os.Remove(partialPath)
-			return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("file exceeds size limit (%d bytes)", maxDownloadSize)}
+			return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("file exceeds size limit (%d bytes)", limit)}
 		}
 
 		if written == 0 {

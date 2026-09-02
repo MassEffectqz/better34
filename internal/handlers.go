@@ -213,7 +213,6 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 		return keep
 	}
 
-
 	var posts []Rule34Post
 
 	// searchAcross опрашивает провайдеров параллельно (один вызов на каждый),

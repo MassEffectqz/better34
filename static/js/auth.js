@@ -351,6 +351,40 @@ App.updateAuthUI = function () {
   const item = document.querySelector('.header-menu-item[data-action="logout"]');
   if (item) item.style.display = u ? '' : 'none';
 };
+App.changePassword = async function () {
+  const current = (this.els.inputCurrentPassword?.value || '').trim();
+  const next = this.els.inputNewPassword?.value || '';
+  if (!current || next.length < 6) {
+    this.showToast('Введите текущий и новый пароль (мин. 6 символов)', 'error');
+    return;
+  }
+  try {
+    const r = await API.post('/auth/password', { current_password: current, new_password: next });
+    if (r.ok) {
+      this.showToast('Пароль изменён', 'success');
+      if (this.els.inputCurrentPassword) this.els.inputCurrentPassword.value = '';
+      if (this.els.inputNewPassword) this.els.inputNewPassword.value = '';
+    }
+  } catch (err) {
+    this.showToast(`Ошибка: ${err.message}`, 'error');
+  }
+};
+
+App.logoutOthers = async function () {
+  const ok = await this.confirmDialog({
+    title: 'Завершить другие сессии?',
+    message: 'Все устройства, кроме текущего, будут разлогинены.',
+    okText: 'Завершить',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await API.post('/auth/logout-others');
+    this.showToast(`Отозвано сессий: ${r.revoked || 0}`, 'success');
+  } catch (err) {
+    this.showToast(`Ошибка: ${err.message}`, 'error');
+  }
+};
 
 App.logout = async function () {
   try { await API.post('/auth/logout'); } catch {}

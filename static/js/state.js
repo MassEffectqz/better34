@@ -71,6 +71,8 @@ export const App = {
       profileAvatar: _('profile-avatar'), profileAvatarImg: _('profile-avatar-img'),
       profileAvatarFile: _('profile-avatar-file'), profileNickname: _('profile-nickname'),
       btnDBClean: _('btn-clean-db'),
+      inputCurrentPassword: _('input-current-password'), inputNewPassword: _('input-new-password'),
+      btnChangePassword: _('btn-change-password'), btnLogoutOthers: _('btn-logout-others'),
       dlProgress: _('dl-progress'), dlProgressBar: _('dl-progress-bar'), dlProgressText: _('dl-progress-text'), dlPause: _('dl-pause'), dlResume: _('dl-resume'),
       queueModal: _('queue-modal'), queueBody: _('queue-body'), queueClose: _('queue-close'),
       btnExportPresets: _('btn-export-presets'), btnImportPresets: _('btn-import-presets'), presetImportFile: _('preset-import-file'),
@@ -283,6 +285,8 @@ export const App = {
     });
     e.btnAddApiKey.addEventListener('click', () => this.renderAPIKeys([...this.state.apiKeys, { name: '', api_key: '', user_id: '' }]));
     e.btnDBClean.addEventListener('click', () => go(this.cleanDB()));
+      e.btnChangePassword?.addEventListener('click', () => go(this.changePassword()));
+      e.btnLogoutOthers?.addEventListener('click', () => go(this.logoutOthers()));
     e.btnExportPresets.addEventListener('click', () => go(this.exportPresets()));
     e.btnImportPresets.addEventListener('click', () => e.presetImportFile.click());
     e.presetImportFile.addEventListener('change', (ev) => go(this.importPresets(ev)));

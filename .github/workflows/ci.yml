@@ -14,6 +14,9 @@ jobs:
           go-version: '1.25'
       - name: Vet
         run: go vet ./...
+      # Форматирование: списки незаформленных файлов проваливают сборку.
+      - name: Format
+        run: test -z "$(gofmt -l main.go internal)" || (gofmt -l main.go internal; exit 1)
       # Локально race-детектор недоступен (нет gcc) — гонки ловим только тут.
       - name: Test (race)
         run: go test -race ./...
