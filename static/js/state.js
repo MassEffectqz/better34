@@ -371,6 +371,8 @@ export const App = {
         this.showToast(remoteFollow.checked ? 'Пульт включён' : 'Пульт выключен');
       });
     }
+    // Уведомления о завершении загрузок (задача 3) — методы в notify.js.
+    this.bindDlNotifySetting(document.getElementById('setting-dl-notify'));
     if (e.slideshowBtn) e.slideshowBtn.addEventListener('click', () => this.toggleSlideshow());
     if (e.btnHome) e.btnHome.addEventListener('click', () => this.goHome());
     e.ssSpeedInput.addEventListener('change', () => {
@@ -820,6 +822,9 @@ export const App = {
   startDlPoll() {
     let lastDone = 0;
     let hideTimer = null;
+    // Задача 3: уведомление, когда партия загрузок завершилась (см. notify.js).
+    let wasActive = false;
+    let dlErrors = 0;
     const hideProgress = () => {
       this.els.dlProgress.classList.add('hidden');
     };
@@ -836,6 +841,13 @@ export const App = {
           if (p && (d.done_ids || []).includes(p.id)) this.els.viewerProgress.textContent = t('viewer.downloaded');
         }
       } else if (total > 0) {
+        // Партия завершилась (нет ни queued, ни active) — уведомляем (задача 3).
+        if (wasActive && this.notifyDownloadsDone(d.done || 0, dlErrors)) {
+          clearTimeout(hideTimer);
+          hideTimer = setTimeout(hideProgress, 3000);
+        }
+        wasActive = false;
+        dlErrors = 0;
         this.els.dlProgress.classList.remove('hidden');
         this.els.dlProgressBar.style.width = '100%';
         this.els.dlProgressText.textContent = `готово: ${d.done || 0}`;
@@ -846,6 +858,7 @@ export const App = {
         clearTimeout(hideTimer);
         hideTimer = setTimeout(hideProgress, 3000);
       }
+      wasActive = (d.queued || 0) + (d.active || 0) > 0;
       lastDone = d ? (d.done || 0) : 0;
     };
     const applyResult = (r) => {
@@ -865,6 +878,7 @@ export const App = {
       } else {
         this.state.downloadQueue.delete(r.post_id);
         this.state.downloading.delete(r.post_id);
+        dlErrors++;
         this.showToast(`Ошибка скачивания поста ${r.post_id}: ${r.error || 'неизвестная'}`, 'error');
       }
     };

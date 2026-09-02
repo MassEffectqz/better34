@@ -13,6 +13,7 @@ import './collections.js';
 import './settings.js';
 import './social.js';
 import './auth.js';
+import './notify.js';
 import { renderLucideIcons } from './utils.js';
 import { applyI18n, t, getLang } from './i18n.js';
 
