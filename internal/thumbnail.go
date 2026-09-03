@@ -7,6 +7,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -39,6 +40,12 @@ func downscaleForThumb(src image.Image, size int) image.Image {
 	return src
 }
 
+// videoExtensions — расширения видеофайлов.
+var videoExtensions = map[string]bool{
+	".mp4": true, ".webm": true, ".mov": true, ".mkv": true,
+	".avi": true, ".flv": true, ".m4v": true, ".gif": true,
+}
+
 func (tg *ThumbnailGenerator) Generate(sourcePath string, postID int) (string, error) {
 	thumbPath := tg.ThumbPath(postID)
 
@@ -47,8 +54,8 @@ func (tg *ThumbnailGenerator) Generate(sourcePath string, postID int) (string, e
 	}
 
 	ext := strings.ToLower(filepath.Ext(sourcePath))
-	if ext == ".mp4" || ext == ".webm" || ext == ".gif" {
-		return sourcePath, nil
+	if videoExtensions[ext] {
+		return tg.generateVideoThumbnail(sourcePath, postID)
 	}
 
 	srcImg, err := imaging.Open(sourcePath, imaging.AutoOrientation(true))
@@ -62,6 +69,39 @@ func (tg *ThumbnailGenerator) Generate(sourcePath string, postID int) (string, e
 	os.MkdirAll(tg.thumbDir, 0o755)
 	if err := imaging.Save(thumb, thumbPath, imaging.JPEGQuality(80)); err != nil {
 		return "", fmt.Errorf("failed to save thumbnail: %w", err)
+	}
+
+	return thumbPath, nil
+}
+
+// generateVideoThumbnail — извлекает кадр из видео через ffmpeg.
+// Если ffmpeg недоступен, возвращает исходный файл.
+func (tg *ThumbnailGenerator) generateVideoThumbnail(sourcePath string, postID int) (string, error) {
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		// ffmpeg не найден — возвращаем исходный файл
+		return sourcePath, nil
+	}
+
+	thumbPath := tg.ThumbPath(postID)
+	os.MkdirAll(tg.thumbDir, 0o755)
+
+	// Извлекаем кадр на 0.5сек, масштабируем до thumbSize
+	size := GetConfig().GetThumbSize()
+	cmd := exec.Command(ffmpegPath,
+		"-y",                   // перезаписать
+		"-ss", "0.5",           // Seeking к 0.5сек
+		"-i", sourcePath,       // входной файл
+		"-vframes", "1",        // один кадр
+		"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", size, size, size, size),
+		"-q:v", "2",            // качество JPEG
+		thumbPath,
+	)
+	cmd.Stderr = nil // подавляем вывод
+
+	if err := cmd.Run(); err != nil {
+		// ffmpeg не смог извлечь кадр
+		return sourcePath, nil
 	}
 
 	return thumbPath, nil

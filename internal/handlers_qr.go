@@ -196,7 +196,7 @@ const qrClaimHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>better34 — вход по QR</title>
+<title>better34 — QR login</title>
 <style>
 body{background:#0f0f0f;color:#eee;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .card{background:#1a1a1a;border-radius:16px;padding:32px;text-align:center;max-width:320px}
@@ -205,12 +205,38 @@ a{color:#a78bfa}
 </style>
 </head>
 <body>
-<div class="card" id="msg">Подтверждаем вход…</div>
+<div class="card" id="msg"></div>
 <script>
+const I18N = {
+  ru: {
+    confirming: 'Подтверждаем вход…',
+    noToken: 'Ссылка неполная: нет кода.',
+    success: (u) => 'Вход выполнен как ' + u,
+    openApp: 'Открыть better34',
+    failed: 'Не удалось подтвердить вход.',
+    offline: 'Сервер недоступен.',
+  },
+  en: {
+    confirming: 'Confirming login…',
+    noToken: 'Incomplete link: no code.',
+    success: (u) => 'Logged in as ' + u,
+    openApp: 'Open better34',
+    failed: 'Login failed.',
+    offline: 'Server unavailable.',
+  }
+};
+let lang = 'ru';
+try {
+  const c = document.cookie.match(/briefly_lang=(ru|en)/);
+  if (c) lang = c[1];
+  else if ((navigator.language||'').toLowerCase().startsWith('en')) lang = 'en';
+} catch {}
+const m = I18N[lang];
+const msg = document.getElementById('msg');
+msg.textContent = m.confirming;
 (async () => {
-  const msg = document.getElementById('msg');
   const token = new URLSearchParams(location.search).get('t');
-  if (!token) { msg.textContent = 'Ссылка неполная: нет кода.'; msg.className = 'err'; return; }
+  if (!token) { msg.textContent = m.noToken; msg.className = 'err'; return; }
   try {
     const res = await fetch('/api/auth/qr/claim', {
       method: 'POST',
@@ -219,14 +245,14 @@ a{color:#a78bfa}
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) {
-      msg.innerHTML = '<span class="ok">Вход выполнен как ' + data.username + '</span><br><br><a href="/">Открыть better34</a>';
+      msg.innerHTML = '<span class="ok">' + m.success(data.username) + '</span><br><br><a href="/">' + m.openApp + '</a>';
       setTimeout(() => { location.href = '/'; }, 1200);
     } else {
-      msg.textContent = data.error || 'Не удалось подтвердить вход.';
+      msg.textContent = data.error || m.failed;
       msg.className = 'err';
     }
   } catch (e) {
-    msg.textContent = 'Сервер недоступен.';
+    msg.textContent = m.offline;
     msg.className = 'err';
   }
 })();

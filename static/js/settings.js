@@ -1,6 +1,7 @@
 import { App } from './state.js';
 import { _, icon, esc } from './utils.js';
 import { API } from './api.js';
+import { t } from './i18n.js';
 App.toggleSettings = function () {
   this.state.settingsOpen = !this.state.settingsOpen;
   if (this.state.settingsOpen && this.state.profileOpen) {
@@ -28,10 +29,10 @@ App.renderAPIKeys = function (keys) {
     const row = document.createElement('div');
     row.className = 'api-key-row';
     row.innerHTML = `
-      <input type="text" class="api-key-name" placeholder="Название" value="${esc(k.name || '')}">
-      <input type="password" class="api-key-value" placeholder="API ключ" value="${esc(k.api_key || '')}" spellcheck="false">
+      <input type="text" class="api-key-name" placeholder="${t('set.apiKeyName')}" value="${esc(k.name || '')}">
+      <input type="password" class="api-key-value" placeholder="${t('set.apiKeyValue')}" value="${esc(k.api_key || '')}" spellcheck="false">
       <input type="text" class="api-key-uid" placeholder="user_id" value="${esc(k.user_id || '')}" spellcheck="false">
-      <button type="button" class="btn-icon btn-icon-sm" title="Удалить">${icon('x', 13)}</button>`;
+      <button type="button" class="btn-icon btn-icon-sm" title="${t('btn.delete')}">${icon('x', 13)}</button>`;
     row.querySelector('.api-key-name').addEventListener('input', e => { list[i].name = e.target.value; });
     row.querySelector('.api-key-value').addEventListener('input', e => { list[i].api_key = e.target.value; });
     row.querySelector('.api-key-uid').addEventListener('input', e => { list[i].user_id = e.target.value; });
@@ -175,15 +176,15 @@ App.hideStats = function () { this.els.statsModal.classList.add('hidden'); };
 
 App.cleanDB = async function () {
   const ok = await this.confirmDialog({
-    title: 'Очистка базы данных',
-    message: 'Удалить все <b>нескачанные</b> записи из базы? Скачанные посты не пострадают.',
-    okText: 'Очистить',
+    title: t('confirm.cleanDb'),
+    message: t('confirm.cleanDbMsg'),
+    okText: t('btn.clean'),
     danger: true,
   });
   if (!ok) return;
   try {
     const r = await API.post('/db/clean');
-    this.showToast(`База очищена: ${r.deleted} записей удалено`, 'success');
+    this.showToast(t('msg.dbCleaned', {n: r.deleted}), 'success');
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
 };
 
@@ -200,19 +201,19 @@ App.findDuplicates = async function () {
     const groups = (d && d.dups) || [];
     const total = groups.reduce((s, g) => s + Math.max(0, (g.files || []).length - 1), 0);
     if (!groups.length) {
-      if (info) { info.textContent = 'Дубликаты не найдены'; info.classList.remove('error'); info.classList.remove('hidden'); }
+      if (info) { info.textContent = t('msg.dupsNotFound'); info.classList.remove('error'); info.classList.remove('hidden'); }
       this._dupsTotal = 0;
       return;
     }
-    if (info) { info.textContent = `Найдено: ${total} дубликатов в ${groups.length} группах`; info.classList.add('error'); info.classList.remove('hidden'); }
+    if (info) { info.textContent = t('msg.dupsFound', {total, groups: groups.length}); info.classList.add('error'); info.classList.remove('hidden'); }
     this._dupsTotal = total;
-    this.els.btnCleanDups.textContent = `Удалить ${total} дубликатов`;
+    this.els.btnCleanDups.textContent = t('btn.cleanDupsN', {n: total});
     this.els.btnCleanDups.classList.remove('hidden');
     this._dupsGroups = groups;
     const merges = collectMergeRequests(groups);
     const mergeTotal = merges.reduce((s, m) => s + m.remove_ids.length, 0);
     if (mergeTotal && this.els.btnMergeDups) {
-      this.els.btnMergeDups.textContent = `Объединить ${mergeTotal} дубликатов`;
+      this.els.btnMergeDups.textContent = t('btn.mergeDupsN', {n: mergeTotal});
       this.els.btnMergeDups.classList.remove('hidden');
     }
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
@@ -223,15 +224,15 @@ App.cleanDuplicates = async function () {
   const total = this._dupsTotal || 0;
   if (!total) { this.els.btnCleanDups.classList.add('hidden'); return; }
   const ok = await this.confirmDialog({
-    title: 'Удаление дубликатов',
-    message: `Удалить <b>${total}</b> файлов-дубликатов? Останется по одной копии каждого файла. Действие необратимо.`,
-    okText: 'Удалить',
+    title: t('confirm.cleanDups'),
+    message: t('confirm.cleanDupsMsg', {n: total}),
+    okText: t('btn.delete'),
     danger: true,
   });
   if (!ok) return;
   try {
     const r = await API.post('/dups/clean', null, { 'X-Confirm-Dupes': '1' });
-    this.showToast(`Удалено файлов: ${r.count || 0}`, 'success');
+    this.showToast(t('msg.filesDeleted', {n: r.count || 0}), 'success');
     this.els.dupsInfo.classList.add('hidden');
     this.els.btnCleanDups.classList.add('hidden');
     this._dupsTotal = 0;

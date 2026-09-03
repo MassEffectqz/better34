@@ -3,6 +3,9 @@ package internal
 import (
 	"image"
 	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/disintegration/imaging"
@@ -36,7 +39,48 @@ func buildDCTTable(n int) [][]float64 {
 // PerceptualHashFile считает pHash файла с изображением. Пустая строка —
 // файл не изображение (видео) или не читается: это не ошибка потока скачивания.
 func PerceptualHashFile(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	if videoExtensions[ext] {
+		return percepHashVideo(path)
+	}
 	img, err := imaging.Open(path)
+	if err != nil {
+		return ""
+	}
+	return PerceptualHash(img)
+}
+
+// percepHashVideo извлекает кадр из видео через ffmpeg и считает pHash.
+func percepHashVideo(path string) string {
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		return ""
+	}
+
+	// Временный файл для кадра
+	tmpFile, err := os.CreateTemp("", "phash-*.jpg")
+	if err != nil {
+		return ""
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	cmd := exec.Command(ffmpegPath,
+		"-y",
+		"-ss", "0.5",
+		"-i", path,
+		"-vframes", "1",
+		"-q:v", "2",
+		tmpPath,
+	)
+	cmd.Stderr = nil
+
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+
+	img, err := imaging.Open(tmpPath)
 	if err != nil {
 		return ""
 	}
