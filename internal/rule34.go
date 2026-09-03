@@ -224,6 +224,10 @@ type persistedSearchEntry struct {
 const searchCacheTTL = 10 * time.Minute
 const searchCacheMax = 512
 
+// searchCacheMaxStale — предельный возраст «устаревшего» ответа, который ещё
+// отдаётся мгновенно (SWR) и параллельно освежается фоном; старше — на сеть.
+const searchCacheMaxStale = 6 * time.Hour
+
 // booruCache — LRU-кэш поиска с отложенной записью на диск.
 // У каждого провайдера свой экземпляр и свой файл.
 type booruCache struct {
@@ -250,6 +254,21 @@ func (c *booruCache) get(key string) ([]Rule34Post, bool) {
 	out := make([]Rule34Post, len(e.posts))
 	copy(out, e.posts)
 	return out, true
+}
+
+// getStale возвращает закэшированный ответ независимо от возраста — для SWR:
+// SearchPosts решает, отдать ли его мгновенно, пока свежесть восстанавливается
+// фоном (повторный лист/перезаход не ждёт RTT до CDN).
+func (c *booruCache) getStale(key string) ([]Rule34Post, time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[key]
+	if !ok {
+		return nil, time.Time{}, false
+	}
+	out := make([]Rule34Post, len(e.posts))
+	copy(out, e.posts)
+	return out, e.ts, true
 }
 
 func (c *booruCache) put(key string, posts []Rule34Post) {
@@ -286,7 +305,9 @@ func (c *booruCache) loadFromDisk(legacyFiles ...string) {
 		loaded := 0
 		c.mu.Lock()
 		for k, e := range entries {
-			if now.Sub(e.TS) > searchCacheTTL {
+			// Держим и устаревшие: после рестарта они отдадутся мгновенно
+			// (SWR) и обновятся фоном, раз клиент их снова запросил.
+			if now.Sub(e.TS) > searchCacheMaxStale {
 				continue
 			}
 			if len(c.m) >= searchCacheMax {
@@ -308,7 +329,9 @@ func (c *booruCache) saveToDisk() {
 	c.mu.Lock()
 	entries := make(map[string]persistedSearchEntry, len(c.m))
 	for k, e := range c.m {
-		if now.Sub(e.ts) > searchCacheTTL {
+		// Устаревшие (в пределах searchCacheMaxStale) персистим тоже:
+		// иначе после рестарта SWR-холодный старт нечем обслужить.
+		if now.Sub(e.ts) > searchCacheMaxStale {
 			continue
 		}
 		entries[k] = persistedSearchEntry{Posts: e.posts, TS: e.ts}
@@ -843,9 +866,19 @@ func (c *booruClient) SearchPosts(tags string, page, limit, minID int) ([]Rule34
 	}
 
 	ckey := fmt.Sprintf("%s|%d|%d|%d", tags, page, limit, minID)
-	if posts, ok := c.cache.get(ckey); ok {
-		log.Printf("[search-cache] hit %s tags=%q page=%d", c.spec.name, tags, page)
-		return posts, nil
+	if posts, ts, ok := c.cache.getStale(ckey); ok {
+		if time.Since(ts) <= searchCacheTTL {
+			log.Printf("[search-cache] hit %s tags=%q page=%d", c.spec.name, tags, page)
+			return posts, nil
+		}
+		if time.Since(ts) <= searchCacheMaxStale {
+			// SWR: ответ протух по TTL, но не древний — отдаём мгновенно,
+			// свежесть восстанавливаем фоном. Повторный запрос того же
+			// листа не ждёт RTT до CDN.
+			log.Printf("[search-cache] stale hit %s tags=%q page=%d — фоновое обновление", c.spec.name, tags, page)
+			go c.refreshSearch(ckey, tags, pid, limit, minID)
+			return posts, nil
+		}
 	}
 
 	if !c.breaker.Allow() {
@@ -854,6 +887,29 @@ func (c *booruClient) SearchPosts(tags string, page, limit, minID int) ([]Rule34
 	}
 
 	return c.sf.Do(ckey, func() ([]Rule34Post, error) {
+		if posts, ok := c.cache.get(ckey); ok {
+			return posts, nil
+		}
+		posts, err := c.fetchPosts(ckey, tags, pid, limit, minID)
+		if err != nil {
+			if !errors.Is(err, errAPIAuth) && !errors.Is(err, errAPI403) && !errors.Is(err, errAPITransient) {
+				c.breaker.Fail(c.spec.name)
+			}
+		} else {
+			c.breaker.Success()
+		}
+		return posts, err
+	})
+}
+
+// refreshSearch обновляет устаревший кэш фоном (SWR). Ошибки не важны:
+// следующий запрос просто ещё раз уйдёт в сеть. Открытый брейкер снаружи —
+// фоновое обновление не долбит апстрим во время его проблем.
+func (c *booruClient) refreshSearch(ckey, tags string, pid, limit, minID int) {
+	if !c.breaker.Allow() {
+		return
+	}
+	c.sf.Do(ckey, func() ([]Rule34Post, error) {
 		if posts, ok := c.cache.get(ckey); ok {
 			return posts, nil
 		}
@@ -1278,7 +1334,7 @@ func (c *booruClient) SuggestTags(query string) ([]TagSuggestion, error) {
 // errSuggestTransient — 429/5xx: стоит повторить с другим ключом.
 var errSuggestTransient = errors.New("tag suggest transient")
 
-func (c *booruClient) fetchSuggest(reqURL string, cred APICredential, query string) ([]TagSuggestion, error) {
+func (c *booruClient) fetchSuggest(reqURL string, _ APICredential, query string) ([]TagSuggestion, error) {
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
 		return nil, err
@@ -1417,17 +1473,16 @@ func (c *booruClient) GetTagCount(tag string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(suggestions) == 0 {
-		return 0, nil
-	}
-
+	// Точное совпадение без учёта регистра: fuzzy-автодополнение возвращает
+	// и похожие теги, счётчик «первого похожего» показывал неверные числа
+	// в панелях счётчиков (кнопка «тег» во вьювере, профиль).
+	want := strings.ToLower(tag)
 	for _, s := range suggestions {
-		if s.Value == tag {
+		if strings.ToLower(s.Value) == want {
 			return s.Count, nil
 		}
 	}
-
-	return suggestions[0].Count, nil
+	return 0, nil
 }
 
 // GetPopularTags возвращает самые частотные теги из свежей выборки постов

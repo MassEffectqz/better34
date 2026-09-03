@@ -38,6 +38,16 @@ func NewHandler() *Handler {
 	return &Handler{providers: providers}
 }
 
+// GetProviders возвращает карту провайдеров.
+func (h *Handler) GetProviders() map[string]Provider {
+	return h.providers
+}
+
+// GetDownloader возвращает загрузчик.
+func (h *Handler) GetDownloader() *Downloader {
+	return h.downloader
+}
+
 // provider возвращает активный источник постов (выбирается в настройках,
 // по умолчанию rule34). Переключение действует без рестарта.
 func (h *Handler) provider() Provider {
@@ -90,6 +100,9 @@ func (h *Handler) refererForFileURL(fileURL string) string {
 
 func (h *Handler) SearchPosts(c *gin.Context) {
 	tags := c.Query("tags")
+	// Алиасы тегов: синонимы (catgirl → neko) переводятся в канонические
+	// теги до построения запроса к провайдеру и локальных фильтров.
+	tags = ResolveAliasesInQuery(tags)
 
 	// Фильтр рейтинга (All/SFW/18+): метатеги уходят в начало запроса
 	// (внутри бюджета MaxQueryLen), плюс посты фильтруются локально.
@@ -172,8 +185,10 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 		var omitted []string
 		for _, t := range hiddenTags {
 			// Приводим к нижнему регистру: посты приходят от API в lowercase,
-			// а filterOmitted сравнивает токены точно (см. GetLocalPosts).
+			// а filterOmitted сравнивает токены точно (см. GetLocalPosts)
+			// и резолвим алиасы — скрывать по каноническому тегу.
 			norm := strings.ToLower(strings.ReplaceAll(strings.TrimLeft(t, "+-"), "&#039;", "'"))
+			norm = resolveTagSafe(norm)
 			if seen[norm] {
 				continue
 			}
@@ -349,6 +364,7 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 			"id":          p.ID,
 			"tags":        p.Tags,
 			"file_url":    p.FileURL,
+			"sample_url":  p.SampleURL,
 			"preview_url": p.PreviewURL,
 			"width":       p.Width,
 			"height":      p.Height,
@@ -383,6 +399,11 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 
 		enriched = append(enriched, entry)
 	}
+
+	// Прогрев: превью этой страницы фоново качаются в proxy-cache, пока
+	// пользователь смотрит текущую, — сетка следующих страниц грузится
+	// с локального диска, а не с CDN (выключается BRIEFLY_WARM=0).
+	go warmPreviewCache(h, enriched)
 
 	sortedCopy := make([]gin.H, len(enriched))
 	copy(sortedCopy, enriched)
@@ -455,6 +476,9 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				"rating":      existing.Rating,
 				"downloaded":  existing.Downloaded,
 			}
+			if existing.Source != "" {
+				entry["source"] = existing.Source
+			}
 			if existing.ThumbPath != "" {
 				entry["thumb_path"] = existing.ThumbPath
 			}
@@ -484,6 +508,7 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				"id":          p.ID,
 				"tags":        p.Tags,
 				"file_url":    p.FileURL,
+				"sample_url":  p.SampleURL,
 				"preview_url": p.PreviewURL,
 				"width":       p.Width,
 				"height":      p.Height,
@@ -561,6 +586,10 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 		}
 	}
 
+	// Прогрев превью для профиля/вьювера — тем же механизмом, что и для
+	// ленты: неотданные с CDN превью лягут в proxy-cache заранее.
+	go warmPreviewCache(h, enriched)
+
 	c.JSON(http.StatusOK, gin.H{
 		"posts": enriched,
 		"page":  1,
@@ -587,6 +616,8 @@ func (h *Handler) GetPost(c *gin.Context) {
 
 func (h *Handler) GetLocalPosts(c *gin.Context) {
 	tags := c.Query("tags")
+	// Алиасы тегов действуют и в локальном поиске по скачанной библиотеке.
+	tags = ResolveAliasesInQuery(tags)
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "40")
 
@@ -650,6 +681,19 @@ func (h *Handler) GetLocalPosts(c *gin.Context) {
 		posts = filtered
 	}
 
+	// Фильтр «просмотрено» (история): viewed=1 — только просмотренные,
+	// viewed=0 — только непросмотренные (как «позже» с пометкой).
+	if v := c.Query("viewed"); v == "0" || v == "1" {
+		onlyViewed := v == "1"
+		filtered := posts[:0]
+		for _, p := range posts {
+			if db.IsViewed(p.ID) == onlyViewed {
+				filtered = append(filtered, p)
+			}
+		}
+		posts = filtered
+	}
+
 	start := (page - 1) * limit
 	if start >= len(posts) {
 		c.JSON(http.StatusOK, gin.H{"posts": []interface{}{}, "page": page, "limit": limit, "total": len(posts)})
@@ -684,6 +728,7 @@ func (h *Handler) GetLocalPosts(c *gin.Context) {
 			"downloaded": true,
 			"file_path":  p.FilePath,
 			"thumb_path": thumbPath,
+			"parent_id":  p.ParentID,
 		})
 	}
 

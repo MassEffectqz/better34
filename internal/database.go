@@ -32,8 +32,10 @@ type Post struct {
 	FilePath   string `json:"file_path"`
 	ThumbPath  string `json:"thumb_path"`
 	MD5        string `json:"md5"`
-	Phash      string `json:"phash,omitempty"`    // perceptual hash (пусто у видео)
-	Blurhash   string `json:"blurhash,omitempty"` // placeholder-строка BlurHash
+	Phash      string `json:"phash,omitempty"`     // perceptual hash (пусто у видео)
+	Blurhash   string `json:"blurhash,omitempty"`  // placeholder-строка BlurHash
+	Source     string `json:"source,omitempty"`    // метка источника: "rule34", "gelbooru", хост (для «откуда пост»)
+	ParentID   int    `json:"parent_id,omitempty"` // родительский пост (danbooru-style связки)
 }
 
 // PostDB — SQLite-хранилище постов (modernc.org/sqlite, без CGO).
@@ -60,6 +62,13 @@ func GetDB() *PostDB {
 		postDB.importLegacyJSON("data/db.json")
 		StartDBAutoBackup(postDB)
 		dbReady.Store(true)
+		// pHash-backfill старых скачанных картинок: без него дедуп пережатых
+		// копий и «похожие» не видят ранние посты. Откладываем 3с, чтобы не
+		// мешать старту; идемпотентно (пропускает уже заполненные).
+		go func() {
+			time.Sleep(3 * time.Second)
+			postDB.BackfillPHashes()
+		}()
 	})
 	return postDB
 }
@@ -85,7 +94,9 @@ CREATE TABLE IF NOT EXISTS posts (
 	thumb_path  TEXT NOT NULL DEFAULT '',
 	md5         TEXT NOT NULL DEFAULT '',
 	phash       TEXT NOT NULL DEFAULT '',
-	blurhash    TEXT NOT NULL DEFAULT ''
+	blurhash    TEXT NOT NULL DEFAULT '',
+	source      TEXT NOT NULL DEFAULT '',
+	parent_id   INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS tags (
 	tag     TEXT NOT NULL COLLATE NOCASE,
@@ -99,6 +110,15 @@ CREATE TABLE IF NOT EXISTS comments (
 	text       TEXT NOT NULL,
 	created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS view_history (
+	post_id   INTEGER PRIMARY KEY,
+	viewed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tag_aliases (
+	alias      TEXT NOT NULL COLLATE NOCASE PRIMARY KEY,
+	target     TEXT NOT NULL COLLATE NOCASE,
+	created_at TEXT NOT NULL
+) WITHOUT ROWID;
 `
 
 // Индексы отдельно от таблиц: перед созданием idx_posts_md5 колонка md5
@@ -144,6 +164,14 @@ func NewPostDB(path string) *PostDB {
 	}
 	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN blurhash TEXT NOT NULL DEFAULT ''`); err == nil {
 		log.Printf("[db] добавлена колонка blurhash")
+	}
+	// source — метка провайдера/хоста, откуда скачан пост («откуда пост»).
+	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN source TEXT NOT NULL DEFAULT ''`); err == nil {
+		log.Printf("[db] добавлена колонка source")
+	}
+	// parent_id — родитель/дети постов (danbooru-style связки).
+	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0`); err == nil {
+		log.Printf("[db] добавлена колонка parent_id")
 	}
 	if _, err := sqlDB.Exec(postsIndexes); err != nil {
 		log.Printf("[db] indexes: %v", err)
@@ -229,13 +257,13 @@ func (db *PostDB) withTx(fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-const postCols = `id, tags, file_url, preview_url, file_type, width, height, file_size, score, rating, downloaded, file_path, thumb_path, md5, phash, blurhash`
+const postCols = `id, tags, file_url, preview_url, file_type, width, height, file_size, score, rating, downloaded, file_path, thumb_path, md5, phash, blurhash, source, parent_id`
 
 func scanPost(scan func(...any) error) (*Post, error) {
 	p := &Post{}
 	var dl int
 	err := scan(&p.ID, &p.Tags, &p.FileURL, &p.PreviewURL, &p.FileType,
-		&p.Width, &p.Height, &p.FileSize, &p.Score, &p.Rating, &dl, &p.FilePath, &p.ThumbPath, &p.MD5, &p.Phash, &p.Blurhash)
+		&p.Width, &p.Height, &p.FileSize, &p.Score, &p.Rating, &dl, &p.FilePath, &p.ThumbPath, &p.MD5, &p.Phash, &p.Blurhash, &p.Source, &p.ParentID)
 	if err != nil {
 		return nil, err
 	}
@@ -245,15 +273,17 @@ func scanPost(scan func(...any) error) (*Post, error) {
 
 // upsertPostTx полностью заменяет запись + теги (семантика старого AddOrUpdate).
 func upsertPostTx(tx *sql.Tx, p *Post) error {
-	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET tags=excluded.tags, file_url=excluded.file_url,
 		 preview_url=excluded.preview_url, file_type=excluded.file_type, width=excluded.width,
 		 height=excluded.height, file_size=excluded.file_size, score=excluded.score,
 		 rating=excluded.rating, downloaded=excluded.downloaded, file_path=excluded.file_path,
-		 thumb_path=excluded.thumb_path, phash=excluded.phash, blurhash=excluded.blurhash`,
+		 thumb_path=excluded.thumb_path, phash=excluded.phash, blurhash=excluded.blurhash,
+		 parent_id=excluded.parent_id,
+		 source=CASE WHEN posts.source='' THEN excluded.source ELSE posts.source END`,
 		p.ID, p.Tags, p.FileURL, p.PreviewURL, p.FileType, p.Width, p.Height,
 		p.FileSize, p.Score, p.Rating, boolToInt(p.Downloaded), p.FilePath, p.ThumbPath, p.MD5,
-		p.Phash, p.Blurhash)
+		p.Phash, p.Blurhash, p.Source, p.ParentID)
 	if err != nil {
 		return err
 	}
@@ -367,6 +397,9 @@ func (db *PostDB) queryPosts(query string, args ...any) []*Post {
 			continue
 		}
 		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows err: %v", err)
 	}
 	return result
 }
@@ -527,6 +560,9 @@ func (db *PostDB) SimilarPHash(phash string, excludeID, limit, maxDist int) []*P
 			candidates = append(candidates, scored{p, d})
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows err: %v", err)
+	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
 	if len(candidates) > limit {
 		candidates = candidates[:limit]
@@ -551,6 +587,261 @@ func (db *PostDB) FindDownloadedByMd5(md5sum string, excludeID int) int {
 		return 0
 	}
 	return id
+}
+
+// FindDownloadedByPHash ищет уже скачанный пост, визуально похожий на переданный
+// pHash (расстояние Хэмминга ≤ maxDist) — дедуп пережатых/обрезных копий.
+// При нескольких кандидатах выбирается ближайший, при равных — меньший id.
+// 0 — похожих нет. Отдельные записи не индексируются (см. SimilarPHash).
+func (db *PostDB) FindDownloadedByPHash(phash string, excludeID, maxDist int) int {
+	target, ok := decodePHash(phash)
+	if !ok || maxDist < 0 {
+		return 0
+	}
+	rows, err := db.read.Query(`SELECT id, phash FROM posts WHERE downloaded=1 AND phash<>'' AND id<>?`, excludeID)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+	best, bestDist := 0, maxDist+1
+	for rows.Next() {
+		var id int
+		var otherPH string
+		if err := rows.Scan(&id, &otherPH); err != nil {
+			continue
+		}
+		other, ok := decodePHash(otherPH)
+		if !ok {
+			continue
+		}
+		if d := math_popcount(target ^ other); d <= maxDist && (best == 0 || d < bestDist || (d == bestDist && id < best)) {
+			best, bestDist = id, d
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows err: %v", err)
+	}
+	return best
+}
+
+// SetPostSource запоминает метку источника поста (провайдер или хост).
+func (db *PostDB) SetPostSource(id int, source string) {
+	if source == "" {
+		return
+	}
+	_, _ = db.db.Exec(`UPDATE posts SET source=? WHERE id=?`, source, id)
+}
+
+// BackfillPHashes считает pHash для старых скачанных картинок, у которых
+// отпечаток ещё не посчитан (дедуп пережатых копий и «похожие» по ним).
+// Best effort в фоне после старта; видео пропускаются по расширению.
+func (db *PostDB) BackfillPHashes() {
+	defer func() { _ = recover() }()
+	if !DBReady() {
+		return
+	}
+	posts := db.GetDownloaded()
+	filled := 0
+	for _, p := range posts {
+		if p.Phash != "" || p.FilePath == "" {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(p.FilePath)) {
+		case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff":
+		default:
+			continue
+		}
+		if ph := PerceptualHashFile(p.FilePath); ph != "" {
+			db.SetPostPHash(p.ID, ph)
+			filled++
+		}
+	}
+	if filled > 0 {
+		log.Printf("[db] backfill: посчитаны pHash для %d сохранённых картинок", filled)
+	}
+}
+
+// ── История просмотров ────────────────────────────────────────────────────
+// view_history хранит post_id → viewed_at (upsert). Используется фильтром
+// «непросмотренное» в локальной ленте: «как позже, но с пометкой» — пост
+// автоматически отмечается просмотренным при открытии во вьюере.
+
+// RecordView отмечает пост просмотренным (новое время перезаписывает старое).
+func (db *PostDB) RecordView(postID int) {
+	if postID <= 0 {
+		return
+	}
+	_, _ = db.db.Exec(`INSERT INTO view_history(post_id, viewed_at) VALUES (?,?)
+		ON CONFLICT(post_id) DO UPDATE SET viewed_at=excluded.viewed_at`,
+		postID, time.Now().UTC().Format(time.RFC3339))
+}
+
+// RecordViews отмечает несколько постов разом (авто-отметка страницы целиком).
+func (db *PostDB) RecordViews(ids []int) {
+	if len(ids) == 0 {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_ = db.withTx(func(tx *sql.Tx) error {
+		for _, id := range ids {
+			if id <= 0 {
+				continue
+			}
+			if _, err := tx.Exec(`INSERT INTO view_history(post_id, viewed_at) VALUES (?,?)
+				ON CONFLICT(post_id) DO UPDATE SET viewed_at=excluded.viewed_at`, id, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ForgetView снимает отметку «просмотрено» (откат ошибочной автозаметки).
+func (db *PostDB) ForgetView(postID int) {
+	if postID <= 0 {
+		return
+	}
+	_, _ = db.db.Exec(`DELETE FROM view_history WHERE post_id=?`, postID)
+}
+
+// IsViewed — помечен ли пост как просмотренный.
+func (db *PostDB) IsViewed(postID int) bool {
+	var one int
+	if postID <= 0 {
+		return false
+	}
+	if err := db.read.QueryRow(`SELECT 1 FROM view_history WHERE post_id=?`, postID).Scan(&one); err != nil {
+		return false
+	}
+	return true
+}
+
+// ViewedStats возвращает системную статистику просмотров: всего отметок и
+// самых «свежих» — для /api/metrics.
+func (db *PostDB) ViewedStats() (total int, latest string) {
+	_ = db.read.QueryRow(`SELECT COUNT(*) FROM view_history`).Scan(&total)
+	_ = db.read.QueryRow(`SELECT MAX(viewed_at) FROM view_history`).Scan(&latest)
+	return total, latest
+}
+
+// ── Родители/дети постов (danbooru-style) ────────────────────────────────
+// Связка «пост → родитель» образует наборы/сиквенсы поверх глобальной базы:
+// children родителя видны во вьюере и в «похожих». Самоссылка обнуляется.
+
+// SetPostParent привязывает пост к родителю (0 — снять привязку).
+func (db *PostDB) SetPostParent(id, parentID int) {
+	if id <= 0 {
+		return
+	}
+	if parentID == id {
+		parentID = 0
+	}
+	_, _ = db.db.Exec(`UPDATE posts SET parent_id=? WHERE id=?`, parentID, id)
+}
+
+// PostParent возвращает id родителя поста (0 — нет родителя).
+func (db *PostDB) PostParent(id int) int {
+	var parent int
+	if id <= 0 {
+		return 0
+	}
+	_ = db.read.QueryRow(`SELECT parent_id FROM posts WHERE id=?`, id).Scan(&parent)
+	return parent
+}
+
+// PostChildren возвращает скачанных детей поста в порядке id.
+func (db *PostDB) PostChildren(id int) []*Post {
+	if id <= 0 {
+		return nil
+	}
+	rows, err := db.read.Query(`SELECT `+postCols+` FROM posts WHERE parent_id=? ORDER BY id`, id)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []*Post
+	for rows.Next() {
+		p, err := scanPost(rows.Scan)
+		if err != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows err: %v", err)
+	}
+	return out
+}
+
+// ── Алиасы тегов (danbooru-style) ─────────────────────────────────────────
+// Таблица tag_aliases переводит синонимы в канонический тег («catgirl» →
+// «neko») на этапе построения поискового запроса и в локальном поиске.
+
+// TagAlias — запись синонима.
+type TagAlias struct {
+	Alias  string `json:"alias"`
+	Target string `json:"target"`
+}
+
+// AddTagAlias сохраняет/перезаписывает алиас. Имя и цель нормализуются в
+// нижний регистр; пустые значения и alias==target отклоняются.
+func (db *PostDB) AddTagAlias(alias, target string) bool {
+	alias = strings.ToLower(strings.TrimSpace(alias))
+	target = strings.ToLower(strings.TrimSpace(target))
+	if alias == "" || target == "" || alias == target {
+		return false
+	}
+	_, err := db.db.Exec(`INSERT INTO tag_aliases(alias, target, created_at) VALUES (?,?,?)
+		ON CONFLICT(alias) DO UPDATE SET target=excluded.target, created_at=excluded.created_at`,
+		alias, target, time.Now().UTC().Format(time.RFC3339))
+	return err == nil
+}
+
+// DeleteTagAlias удаляет алиас. true — был удалён.
+func (db *PostDB) DeleteTagAlias(alias string) bool {
+	res, err := db.db.Exec(`DELETE FROM tag_aliases WHERE alias=?`, strings.ToLower(strings.TrimSpace(alias)))
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
+// ListTagAliases возвращает все алиасы (для UI и экспорта).
+func (db *PostDB) ListTagAliases() []TagAlias {
+	rows, err := db.read.Query(`SELECT alias, target FROM tag_aliases ORDER BY alias`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []TagAlias
+	for rows.Next() {
+		var a, t string
+		if err := rows.Scan(&a, &t); err != nil {
+			continue
+		}
+		out = append(out, TagAlias{Alias: a, Target: t})
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows err: %v", err)
+	}
+	return out
+}
+
+// ResolveTag возвращает канонический тег для алиаса: если alias в таблице,
+// отдаётся target, иначе исходное имя. Вызовов на горячем пути немного
+// (по одному SELECT на уникальный токен запроса), таблица маленькая.
+func (db *PostDB) ResolveTag(alias string) string {
+	alias = strings.ToLower(strings.TrimSpace(alias))
+	if alias == "" {
+		return alias
+	}
+	var target string
+	err := db.read.QueryRow(`SELECT target FROM tag_aliases WHERE alias=?`, alias).Scan(&target)
+	if err != nil {
+		return alias
+	}
+	return target
 }
 
 // TagSuggestion объявлена в rule34.go.
@@ -586,6 +877,9 @@ func (db *PostDB) SuggestTagsLocal(prefix string, limit int) []TagSuggestion {
 			s.Value = s.Label
 			out = append(out, s)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows err: %v", err)
 	}
 	return out
 }
@@ -625,6 +919,9 @@ func (db *PostDB) tagCounts(query string, args []any, limit int) map[string]int 
 		if err := rows.Scan(&t, &c); err == nil {
 			freq[t] = c
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows err: %v", err)
 	}
 	return freq
 }
@@ -675,6 +972,9 @@ func (db *PostDB) Comments(postID int) []*Comment {
 			out = append(out, cm)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows err: %v", err)
+	}
 	return out
 }
 
@@ -686,6 +986,27 @@ func (db *PostDB) DeleteComment(id int) bool {
 	}
 	n, _ := res.RowsAffected()
 	return n > 0
+}
+
+// DeleteCommentsForPost — каскадное удаление комментариев поста
+// (вызывается при удалении поста, чтобы в БД не оставались сироты).
+func (db *PostDB) DeleteCommentsForPost(postID int) {
+	_, _ = db.db.Exec(`DELETE FROM comments WHERE post_id=?`, postID)
+}
+
+// ReplaceCommentsPost переносит комментарии одного поста на другой
+// (используется при объединении дубликатов).
+func (db *PostDB) ReplaceCommentsPost(from, to int) {
+	if from == to {
+		return
+	}
+	_, _ = db.db.Exec(`UPDATE comments SET post_id=? WHERE post_id=?`, to, from)
+}
+
+// DeletePostRow удаляет запись поста целиком (теги уходят каскадом).
+// Файлы на диске и комментарии (если нужны) обрабатывает вызывающий код.
+func (db *PostDB) DeletePostRow(id int) {
+	_, _ = db.db.Exec(`DELETE FROM posts WHERE id=?`, id)
 }
 
 // CountCommentsByUser — число комментариев автора.
@@ -711,6 +1032,9 @@ func (db *PostDB) CommentsByUser(username string) []*Comment {
 		if err := rows.Scan(&cm.ID, &cm.PostID, &cm.Username, &cm.Text, &cm.CreatedAt); err == nil {
 			out = append(out, cm)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows err: %v", err)
 	}
 	return out
 }
