@@ -54,8 +54,11 @@ App.loadComments = function (postId) {
         ? `<button type="button" class="vc-del" data-cid="${cm.id}" title="Удалить">${icon('x', 11)}</button>`
         : '';
       const author = cm.nickname && cm.nickname !== cm.username ? cm.nickname : cm.username;
-      const avatar = cm.avatar
-        ? `<img class="vc-avatar" src="${cm.avatar}" alt="">`
+      // Аватар — URL из чужого профиля: пропускаем только безопасные схемы,
+      // javascript:/data:text и прочее не должно попасть в src.
+      const avatarOK = cm.avatar && /^(https?:\/\/|\/|data:image\/)/.test(cm.avatar);
+      const avatar = avatarOK
+        ? `<img class="vc-avatar" src="${esc(cm.avatar)}" alt="">`
         : '<span class="vc-avatar vc-avatar-empty"></span>';
       return `<div class="vc-item${mine ? ' mine' : ''}">${avatar}` +
         `<div class="vc-body"><div class="vc-meta">${esc(author)} · <time>${esc(cm.created_at.slice(0, 16).replace('T', ' '))}</time>${del}</div>` +

@@ -11,7 +11,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// requireAdmin — доступ к настройкам сервера (API-ключи, пути, прокси)
+// только у администратора (первый зарегистрированный пользователь) либо
+// в legacy-режиме BRIEFLY_TOKEN (единственный владелец сервера).
+func requireAdmin(c *gin.Context) bool {
+	if TokenMatches(c) {
+		return true
+	}
+	u := sessionUser(c)
+	return u != "" && GetAccounts().IsAdmin(u)
+}
+
 func (h *Handler) GetSettings(c *gin.Context) {
+	if !requireAdmin(c) {
+		AbortWithError(c, ErrAdminOnly)
+		return
+	}
 	cfg := GetConfig()
 	providers := make([]gin.H, 0, len(knownProviders))
 	for _, p := range allProviderDescriptors() {
@@ -34,6 +49,10 @@ func (h *Handler) GetSettings(c *gin.Context) {
 }
 
 func (h *Handler) UpdateSettings(c *gin.Context) {
+	if !requireAdmin(c) {
+		AbortWithError(c, ErrAdminOnly)
+		return
+	}
 	var req struct {
 		APIKeys []APICredential `json:"api_keys"`
 		APIKey  string          `json:"api_key"`
@@ -91,7 +110,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 					cur[0].UserID = req.UserID
 				}
 			} else {
-				cur = append(cur, APICredential{Name: "Основной", APIKey: req.APIKey, UserID: req.UserID})
+				cur = append(cur, APICredential{Name: "Primary", APIKey: req.APIKey, UserID: req.UserID})
 			}
 			changed = true
 		}
@@ -99,7 +118,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			if len(cur) > 1 {
 				cur[1].APIKey = req.APIKey2
 			} else {
-				cur = append(cur, APICredential{Name: "Второй", APIKey: req.APIKey2})
+				cur = append(cur, APICredential{Name: "Secondary", APIKey: req.APIKey2})
 			}
 			changed = true
 		}

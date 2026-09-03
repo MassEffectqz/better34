@@ -18,6 +18,8 @@ export const App = {
     gridCols: null,
     // Активный источник (заполняется из /settings): 'all' — режим «Все сайты».
     activeProvider: 'rule34', ratingFilter: '',
+    // Фильтр «просмотрено» для локальной ленты: '' — все, '0' — новые, '1' — виденное.
+    viewedFilter: '',
   },
   els: {},
 
@@ -28,6 +30,7 @@ export const App = {
       searchBox: document.querySelector('.search-box'),
       viewer: _('viewer'), viewerHead: _('viewer-head'), viewerFoot: _('viewer-foot'), viewerContent: _('viewer-content'), viewerInfo: _('viewer-info'),
       viewerTags: _('viewer-tags'), viewerProgress: _('viewer-progress'),
+      relations: _('viewer-relations'),
       viewerComments: _('viewer-comments'),
       viewerDownload: _('viewer-download'), viewerFullscreen: _('viewer-fullscreen'),
       viewerMobileActions: _('viewer-mobile-actions'), viewerMobileToggle: _('viewer-mobile-toggle'),
@@ -56,6 +59,7 @@ export const App = {
       btnAddFavTag: _('btn-add-fav-tag'), btnAddHiddenTag: _('btn-add-hidden-tag'),
       likesEmpty: _('likes-empty'), hidesEmpty: _('hides-empty'),
       batchBar: _('batch-bar'), batchCount: _('batch-count'), batchDownload: _('batch-download'), batchHide: _('batch-hide'), batchClear: _('batch-clear'),
+      batchLike: _('batch-like'), batchCollect: _('batch-collect'),
       historyDropdown: _('history-dropdown'),
       slideshowBtn: _('slideshow-btn'),
 
@@ -79,13 +83,15 @@ export const App = {
       btnHeaderMenu: _('btn-header-menu'), headerMenu: _('header-menu'), searchClear: _('search-clear'),
       providerBadge: _('provider-badge'), providerMenu: _('provider-menu'), providerMenuList: _('provider-menu-list'),
       ratingToggle: _('rating-toggle'), feedProgress: _('feed-progress'), queryMeta: _('query-meta'),
+      viewedToggle: _('viewed-toggle'),
+      btnAddAlias: _('btn-add-alias'),
       searchChips: _('search-chips'), scrollProgress: _('scroll-progress'),
       viewerRelated: _('viewer-related'), btnLikesDownload: _('btn-likes-download'),
       panelBackdrop: _('panel-backdrop'),
       confirmModal: _('confirm-modal'), confirmTitle: _('confirm-title'), confirmMessage: _('confirm-message'),
       confirmOk: _('confirm-ok'), confirmCancel: _('confirm-cancel'), confirmClose: _('confirm-close'), confirmBackdrop: _('confirm-backdrop'),
       helpModal: _('help-modal'), helpBody: _('help-body'), helpClose: _('help-close'), helpBackdrop: _('help-backdrop'),
-      btnFindDups: _('btn-find-dups'), btnCleanDups: _('btn-clean-dups'), dupsInfo: _('dups-info'),
+      btnFindDups: _('btn-find-dups'), btnCleanDups: _('btn-clean-dups'), btnMergeDups: _('btn-merge-dups'), dupsInfo: _('dups-info'),
       viewerCollect: _('viewer-collect'), collectMenu: _('collect-menu'),
       collectionName: _('collection-name'), btnCreateCollection: _('btn-create-collection'), collectionsList: _('collections-list'), tbCollections: _('tb-collections'),
       batchZip: _('batch-zip'),
@@ -156,7 +162,7 @@ export const App = {
             const idx = this.state.posts.findIndex(p => p.id === postId);
             if (idx >= 0) this.openViewer(idx);
           }
-        });
+        }).catch(() => {});
       } else if (postId != null) {
         const idx = this.state.posts.findIndex(p => p.id === postId);
         if (idx >= 0) this.openViewer(idx);
@@ -267,6 +273,24 @@ export const App = {
         this.loadPosts(true, null, true);
       });
     }
+    // Переключатель «просмотренности» (локальная лента): Все / Новые / Виденное.
+    if (e.viewedToggle) {
+      e.viewedToggle.addEventListener('click', (ev) => {
+        const b = ev.target.closest('.vt-btn');
+        if (!b || b.dataset.viewed === this.state.viewedFilter) return;
+        this.state.viewedFilter = b.dataset.viewed;
+        e.viewedToggle.querySelectorAll('.vt-btn').forEach(x => x.classList.toggle('active', x === b));
+        this.loadPosts(true, null, true);
+      });
+    }
+    // Алиасы тегов: добавить/обновить список в настройках.
+    if (e.btnAddAlias) {
+      e.btnAddAlias.addEventListener('click', () => this.addAlias());
+      const aliasInput = _('alias-input');
+      const targetInput = _('alias-target');
+      if (aliasInput) aliasInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); targetInput && targetInput.focus(); } });
+      if (targetInput) targetInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); go(this.addAlias()); } });
+    }
     // Автоскрытие хедера + полоса глубины скролла ленты.
     const mainEl = document.getElementById('main');
     if (mainEl) mainEl.addEventListener('scroll', () => this.onMainScroll(), { passive: true });
@@ -303,10 +327,13 @@ export const App = {
     e.batchDownload.addEventListener('click', () => this.batchDownload());
     e.batchHide.addEventListener('click', () => this.batchHide());
     e.batchClear.addEventListener('click', () => this.clearSelection());
+    if (e.batchLike) e.batchLike.addEventListener('click', () => this.batchLike());
+    if (e.batchCollect) e.batchCollect.addEventListener('click', () => this.batchCollect());
     e.helpClose.addEventListener('click', () => this.hideHelp());
     e.helpBackdrop.addEventListener('click', () => this.hideHelp());
     e.btnFindDups.addEventListener('click', () => go(this.findDuplicates()));
     e.btnCleanDups.addEventListener('click', () => go(this.cleanDuplicates()));
+    if (e.btnMergeDups) e.btnMergeDups.addEventListener('click', () => go(this.mergeDuplicates()));
     if (e.batchZip) e.batchZip.addEventListener('click', () => this.batchZipDownload());
     if (e.viewerCollect) {
       e.viewerCollect.addEventListener('click', (ev) => {
@@ -882,11 +909,10 @@ export const App = {
         this.showToast(`Ошибка скачивания поста ${r.post_id}: ${r.error || 'неизвестная'}`, 'error');
       }
     };
-    const m = document.querySelector('meta[name="briefly-token"]');
-    const tok = m ? (m.getAttribute('content') || '') : '';
-    let url = '/api/events';
-    if (tok) url += `?token=${encodeURIComponent(tok)}`;
-    const es = new EventSource(url);
+    // SSE: авторизация через cookie-сессию (EventSource шлёт куки сам).
+    // Токен в query больше не подставляем: он попадал в access-логи,
+    // а страница legacy-токен и так не получает (см. serveIndex).
+    const es = new EventSource('/api/events');
     es.addEventListener('event', (ev) => {
       let d;
       try { d = JSON.parse(ev.data); } catch { return; }
@@ -971,19 +997,32 @@ export const App = {
       if (queue.length === 0) {
         html += '<div class="queue-empty">Очередь пуста</div>';
       } else {
+        // file_type экранируем (строка с сервера), действия — через
+        // data-атрибуты и делегирование вместо inline onclick (CSP).
         html += queue.map(j =>
           `<div class="queue-item">
             <span class="queue-item-id">#${j.post_id}</span>
-            <span class="queue-item-ext">${j.file_type || ''}</span>
+            <span class="queue-item-ext">${esc(j.file_type || '')}</span>
             <div class="queue-item-actions">
-              <button onclick="App.queueMoveUp(${j.post_id})" title="Вверх">${icon('chevronUp', 13)}</button>
-              <button onclick="App.queueMoveDown(${j.post_id})" title="Вниз">${icon('chevronDown', 13)}</button>
-              <button onclick="App.queueCancel(${j.post_id})" title="Отменить" style="color:var(--error)">${icon('x', 13)}</button>
+              <button data-qact="up" data-id="${j.post_id}" title="Вверх">${icon('chevronUp', 13)}</button>
+              <button data-qact="down" data-id="${j.post_id}" title="Вниз">${icon('chevronDown', 13)}</button>
+              <button data-qact="cancel" data-id="${j.post_id}" title="Отменить" style="color:var(--error)">${icon('x', 13)}</button>
             </div>
           </div>`
         ).join('');
       }
       this.els.queueBody.innerHTML = html;
+      if (!this._queueBound) {
+        this._queueBound = true;
+        this.els.queueBody.addEventListener('click', (ev) => {
+          const btn = ev.target.closest('button[data-qact]');
+          if (!btn) return;
+          const id = parseInt(btn.dataset.id, 10);
+          if (btn.dataset.qact === 'up') go(this.queueMoveUp(id));
+          else if (btn.dataset.qact === 'down') go(this.queueMoveDown(id));
+          else if (btn.dataset.qact === 'cancel') go(this.queueCancel(id));
+        });
+      }
       this.els.queueModal.classList.remove('hidden');
     } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
   },
@@ -1084,6 +1123,23 @@ export const App = {
       this._recViewed.push(postId);
       this._recViewedSave();
     }
+  },
+
+  // _markViewed — серверная история просмотров (фильтр «Новое/Виденное» в
+  // локальной ленте). Debounce 1.5с батчит быстрое листание/слайдшоу; каждый
+  // пост отсылается не чаще раза за сессию (повторный показ — не новый факт).
+  _markViewed(postId) {
+    if (!postId) return;
+    clearTimeout(this._viewTimer);
+    this._pendingView = postId;
+    this._viewTimer = setTimeout(() => {
+      const id = this._pendingView;
+      if (!id) return;
+      if (!this._viewSent) this._viewSent = new Set();
+      if (this._viewSent.has(id)) return;
+      this._viewSent.add(id);
+      API.post(`/view/${id}`).catch(() => this._viewSent.delete(id));
+    }, 1500);
   },
 
   async _recSendDislike(postId) {

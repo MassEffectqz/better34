@@ -102,7 +102,14 @@ func (h *Handler) fetchPostsByIDs(ids []int) []Rule34Post {
 	for _, postID := range apiIDs {
 		sem <- struct{}{}
 		go func(id int) {
-			defer func() { <-sem }()
+			defer func() {
+				// Паника в провайдере не должна ронять весь процесс:
+				// считаем пост недоступным и продолжаем сборку.
+				if r := recover(); r != nil {
+					ch <- result{}
+				}
+				<-sem
+			}()
 			found, e := h.provider().SearchPosts(fmt.Sprintf("id:%d", id), 1, 1, 0)
 			if e != nil || len(found) == 0 {
 				ch <- result{}
@@ -452,6 +459,7 @@ func recEnrich(posts []Rule34Post) []gin.H {
 	for _, p := range posts {
 		entry := gin.H{
 			"id": p.ID, "tags": p.Tags, "file_url": p.FileURL,
+			"sample_url":  p.SampleURL,
 			"preview_url": p.PreviewURL, "width": p.Width, "height": p.Height,
 			"file_size": p.FileSize, "file_type": p.FileType,
 			"score": p.Score, "rating": p.Rating, "downloaded": false,

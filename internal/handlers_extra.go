@@ -49,6 +49,7 @@ func (h *Handler) SearchRandom(c *gin.Context) {
 	for _, p := range posts {
 		entry := gin.H{
 			"id": p.ID, "tags": p.Tags, "file_url": p.FileURL,
+			"sample_url":  p.SampleURL,
 			"preview_url": p.PreviewURL, "file_type": p.FileType,
 			"width": p.Width, "height": p.Height, "file_size": p.FileSize,
 			"score": p.Score, "rating": p.Rating, "downloaded": false,
@@ -110,6 +111,7 @@ func (h *Handler) GetRelated(c *gin.Context) {
 		}
 		entry := gin.H{
 			"id": p.ID, "tags": p.Tags, "file_url": p.FileURL,
+			"sample_url":  p.SampleURL,
 			"preview_url": p.PreviewURL, "file_type": p.FileType,
 			"width": p.Width, "height": p.Height,
 			"score": p.Score, "rating": p.Rating, "downloaded": false,
@@ -201,6 +203,9 @@ type dupGroup struct {
 	Size  int64    `json:"size"`
 	Hash  string   `json:"hash"`
 	Files []string `json:"files"`
+	// Posts — посты, соответствующие файлам (id извлекается из каталога
+	// файла, downloaded — есть ли ссылка в БД). Для UI «объединить дубли».
+	Posts []gin.H `json:"posts,omitempty"`
 }
 
 func fileSHA256(path string) (string, error) {
@@ -255,16 +260,110 @@ func (h *Handler) FindDuplicates(c *gin.Context) {
 		for hash, files := range byHash {
 			if len(files) > 1 {
 				sort.Strings(files)
-				groups = append(groups, dupGroup{Size: size, Hash: hash, Files: files})
+				groups = append(groups, dupGroup{Size: size, Hash: hash, Files: files, Posts: postsForDupFiles(files)})
 			}
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"dups": groups})
 }
 
+// postsForDupFiles сопоставляет файлам-дубликатам посты: id берётся из имени
+// каталога файла (<save>/<id>/original.ext), downloaded — есть ли строка в БД.
+func postsForDupFiles(files []string) []gin.H {
+	db := GetDB()
+	out := make([]gin.H, 0, len(files))
+	for _, f := range files {
+		id, err := strconv.Atoi(filepath.Base(filepath.Dir(f)))
+		if err != nil {
+			continue
+		}
+		p := db.Get(id)
+		out = append(out, gin.H{
+			"id":         id,
+			"downloaded": p != nil && p.Downloaded,
+		})
+	}
+	return out
+}
+
+// ── Объединение дубликатов ───────────────────────────────────────────────
+// В отличие от CleanDuplicates (удаляет лишние файлы, оставляя сирот в БД),
+// merge переносит лайки/скрытия/коллекции/комментарии дубликата на пост-
+// оригинал и удаляет запись целиком.
+
+// MergeDuplicates — POST /api/dups/merge {keep_id, remove_ids}.
+// Переносит данные remove-постов на keep-пост и удаляет их записи и файлы.
+func (h *Handler) MergeDuplicates(c *gin.Context) {
+	var req struct {
+		KeepID  int   `json:"keep_id"`
+		Removes []int `json:"remove_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.KeepID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "keep_id required"})
+		return
+	}
+	db := GetDB()
+	if keep := db.Get(req.KeepID); keep == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "keep post not found"})
+		return
+	}
+	merged := 0
+	for _, rid := range req.Removes {
+		if rid <= 0 || rid == req.KeepID {
+			continue
+		}
+		if p := db.Get(rid); p == nil {
+			continue
+		}
+		db.ReplaceCommentsPost(rid, req.KeepID)
+		replacePostIDEverywhere(rid, req.KeepID)
+		removeDownloadedFilesForPost(rid)
+		db.DeletePostRow(rid)
+		merged++
+	}
+	c.JSON(http.StatusOK, gin.H{"merged": merged, "keep_id": req.KeepID})
+}
+
+// removeDownloadedFilesForPost удаляет файл поста (и каталог, если он опустел)
+// и миниатюру — та же логика, что в DeletePost-хендлере.
+func removeDownloadedFilesForPost(id int) {
+	db := GetDB()
+	thumb := filepath.Join("data", "thumbs", fmt.Sprintf("%d.jpg", id))
+	os.Remove(thumb)
+	if p := db.Get(id); p != nil && p.FilePath != "" {
+		os.Remove(p.FilePath)
+		if dir := filepath.Dir(p.FilePath); dir != "." && dir != "" {
+			if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
+				os.Remove(dir)
+			}
+		}
+	}
+}
+
+// replacePostIDEverywhere переносит упоминание поста id→keep во всех профилях
+// (аккаунты + legacy data/profile.json): лайки, скрытия, коллекции.
+func replacePostIDEverywhere(from, to int) {
+	if from == to {
+		return
+	}
+	GetAccounts().ForEachProfile(func(p *Profile) {
+		p.ReplacePostID(from, to)
+		_ = p.Save()
+	})
+	if _, err := os.Stat(legacyProfileFile); err == nil {
+		p := GetProfile()
+		p.ReplacePostID(from, to)
+		_ = p.Save()
+	}
+}
+
 func (h *Handler) CleanDuplicates(c *gin.Context) {
 	if c.GetHeader("X-Confirm-Dupes") == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "подтверждение X-Confirm-Dupes обязательно"})
+		AbortWithError(c, ErrConfirmRequired)
 		return
 	}
 	root := saveRoot()

@@ -1,6 +1,7 @@
 {
   "name": "better34",
   "short_name": "better34",
+  "id": "/",
   "description": "Локальный просмотрщик постов с лентой, профилем и скачиванием",
   "lang": "ru",
   "start_url": "/",

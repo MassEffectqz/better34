@@ -47,17 +47,28 @@ App.applySuggestion = function (value) {
 
 App.fetchSuggestions = function (tail) {
   const seq = ++this._suggestSeq;
-  API.get(`/suggest-local?q=${encodeURIComponent(tail)}`).then(d => {
+  // Локальная база и сайт запрашиваются параллельно: локальные подсказки
+  // рендерятся сразу, удалённые подливаются по приходе (раньше запрос к
+  // сайту ждал ответа /suggest-local — двойная задержка автодополнения).
+  const localP = API.get(`/suggest-local?q=${encodeURIComponent(tail)}`)
+    .then(d => d.tags || [])
+    .catch(() => []);
+  localP.then(local => {
+    if (this._suggestSeq !== seq || !local.length) return;
+    this.renderSuggestions(local);
+  });
+  API.get(`/suggest?q=${encodeURIComponent(tail)}`).then(r => {
     if (this._suggestSeq !== seq) return;
-    const local = d.tags || [];
-    API.get(`/suggest?q=${encodeURIComponent(tail)}`).then(r => {
+    return localP.then(local => {
       if (this._suggestSeq !== seq) return;
-      const merged = this.mergeSuggestions(local, r.tags || []);
-      this.renderSuggestions(merged);
-    }).catch(() => { if (this._suggestSeq === seq) this.renderSuggestions(local); });
+      this.renderSuggestions(this.mergeSuggestions(local, r.tags || []));
+    });
   }).catch(() => {
     if (this._suggestSeq !== seq) return;
-    API.get(`/suggest?q=${encodeURIComponent(tail)}`).then(d => { if (this._suggestSeq === seq) this.renderSuggestions(d.tags || []); }).catch(() => {});
+    localP.then(local => {
+      if (this._suggestSeq !== seq || !local.length) return;
+      this.renderSuggestions(local);
+    });
   });
 };
 
@@ -373,6 +384,11 @@ App.search = async function (query) {
   }
   this.state.query = query;
   this.state.isLocal = false;
+  // Выход из режима сетки (лайки/скрытые/коллекция): без сброса modeBar
+  // продолжал показывать прежний режим, а пагинация была заблокирована
+  // (loadMore и sentinel работают только при displayMode === 'search').
+  this.state.displayMode = 'search';
+  this.state.displayIds = [];
   if (query) this._clearFeedCache();
   this.els.btnLocal.innerHTML = icon('house', 18);
   this.pushState(query, null);
@@ -398,9 +414,21 @@ App.goHome = function () {
 
 App.toggleLocal = function () {
   this.state.isLocal = !this.state.isLocal;
+  // Сброс режима сетки — та же причина, что и в search(): локальная лента
+  // поверх «лайков» блокировала пагинацию и врала в modeBar.
+  this.state.displayMode = 'search';
+  this.state.displayIds = [];
   this.els.btnLocal.innerHTML = this.state.isLocal
     ? icon('folder', 18)
     : icon('house', 18);
+  // Переключатель «Все/Новое/Виденное» виден только в локальной ленте.
+  if (this.els.viewedToggle) {
+    this.els.viewedToggle.classList.toggle('hidden', !this.state.isLocal);
+    if (!this.state.isLocal) {
+      this.state.viewedFilter = '';
+      this.els.viewedToggle.querySelectorAll('.vt-btn').forEach(x => x.classList.toggle('active', x.dataset.viewed === ''));
+    }
+  }
   this.loadPosts(true);
   this.els.searchInput.focus();
 };

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -194,7 +195,9 @@ func (r *DoHResolver) DialContext(ctx context.Context, network, addr string) (ne
 	if !isIP(host) {
 		ip, err := r.Resolve(host)
 		if err != nil {
-
+			// Не молчим: массовые падения DoH видно только в логах,
+			// иначе деградация выглядит как «медленная сеть».
+			slog.Warn("DoH: resolve failed, fallback to system DNS", "host", host, "error", err)
 			return d.DialContext(ctx, network, addr)
 		}
 		addr = net.JoinHostPort(ip.String(), port)

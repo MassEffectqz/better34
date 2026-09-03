@@ -115,11 +115,12 @@ func (p *Profile) AddRecDisliked(tags []string) {
 }
 
 func (p *Profile) Save() error {
+	// Write-лок держим до конца маршалинга: между ensurePresetIDs и записью
+	// другая горутина не должна менять поля профиля (иначе сохранится
+	// «половинчатое» состояние).
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.ensurePresetIDs()
-	p.mu.Unlock()
-	p.mu.RLock()
-	defer p.mu.RUnlock()
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err
@@ -140,6 +141,64 @@ func (p *Profile) ToggleLike(postID int) bool {
 	// Лайк снимает скрытие — пост не может быть одновременно лайкнутым и скрытым.
 	delete(p.HiddenPosts, postID)
 	return true
+}
+
+// SetLiked выставляет состояние лайка для нескольких постов разом
+// (массовое действие «лайкнуть выделенное»): state=true — лайкнуть,
+// false — снять лайк. Лайк снимает скрытие. Возвращает число изменённых.
+func (p *Profile) SetLiked(ids []int, state bool) int {
+	if len(ids) == 0 {
+		return 0
+	}
+	now := time.Now().Unix()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	changed := 0
+	for _, id := range ids {
+		if state {
+			if !p.LikedPosts[id] {
+				p.LikedPosts[id] = true
+				p.LikedAt[id] = now
+				changed++
+			}
+			// Лайк снимает скрытие — то же правило, что и в ToggleLike.
+			// Выполняется и для уже лайкнутого: скрытый лайкнутый пост,
+			// повторно попавший в массовый лайк, возвращается в ленту.
+			if p.HiddenPosts[id] {
+				delete(p.HiddenPosts, id)
+				changed++
+			}
+		} else if p.LikedPosts[id] {
+			delete(p.LikedPosts, id)
+			delete(p.LikedAt, id)
+			changed++
+		}
+	}
+	return changed
+}
+
+// SetHidden выставляет состояние скрытия для нескольких постов разом
+// (state=true — скрыть, false — вернуть). Возвращает число изменённых.
+func (p *Profile) SetHidden(ids []int, state bool) int {
+	if len(ids) == 0 {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	changed := 0
+	for _, id := range ids {
+		if state {
+			if p.HiddenPosts[id] {
+				continue
+			}
+			p.HiddenPosts[id] = true
+			changed++
+		} else if p.HiddenPosts[id] {
+			delete(p.HiddenPosts, id)
+			changed++
+		}
+	}
+	return changed
 }
 
 func (p *Profile) ToggleHide(postID int) bool {
@@ -388,6 +447,33 @@ func (p *Profile) CollectionTogglePost(id string, postID int) (added, found bool
 	return true, true
 }
 
+// CollectionAddMany добавляет несколько постов в коллекцию разом,
+// пропуская уже присутствующие. found=false — коллекции с таким id нет.
+// Возвращает число добавленных.
+func (p *Profile) CollectionAddMany(id string, ids []int) (added int, found bool) {
+	if len(ids) == 0 {
+		return 0, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	c := p.findCollectionLocked(id)
+	if c == nil {
+		return 0, false
+	}
+	known := make(map[int]bool, len(c.Posts))
+	for _, pid := range c.Posts {
+		known[pid] = true
+	}
+	for _, pid := range ids {
+		if !known[pid] {
+			c.Posts = append(c.Posts, pid)
+			known[pid] = true
+			added++
+		}
+	}
+	return added, true
+}
+
 // CollectionPosts возвращает посты коллекции в порядке добавления.
 func (p *Profile) CollectionPosts(id string) ([]int, bool) {
 	p.mu.RLock()
@@ -399,4 +485,58 @@ func (p *Profile) CollectionPosts(id string) ([]int, bool) {
 	out := make([]int, len(c.Posts))
 	copy(out, c.Posts)
 	return out, true
+}
+
+// ReplacePostID переносит упоминание поста from→to (объединение дубликатов):
+// лайки (с сохранением времени), скрытия и все коллекции. Дубликаты в списках
+// схлопываются в одно упоминание to.
+func (p *Profile) ReplacePostID(from, to int) {
+	if from == to {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.LikedPosts[from] {
+		delete(p.LikedPosts, from)
+		p.LikedPosts[to] = true
+		if t, ok := p.LikedAt[from]; ok {
+			if cur, exists := p.LikedAt[to]; !exists || t > cur {
+				p.LikedAt[to] = t
+			}
+			delete(p.LikedAt, from)
+		}
+	}
+	if p.HiddenPosts[from] {
+		delete(p.HiddenPosts, from)
+		p.HiddenPosts[to] = true
+	}
+	for i := range p.Collections {
+		c := &p.Collections[i]
+		out := make([]int, 0, len(c.Posts))
+		has := func(v int) bool {
+			for _, o := range out {
+				if o == v {
+					return true
+				}
+			}
+			return false
+		}
+		for _, pid := range c.Posts {
+			switch {
+			case pid == from:
+				if has(to) {
+					continue
+				}
+				out = append(out, to)
+			case pid == to:
+				if has(to) {
+					continue
+				}
+				out = append(out, to)
+			default:
+				out = append(out, pid)
+			}
+		}
+		c.Posts = out
+	}
 }

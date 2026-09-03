@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>better34 — просмотрщик</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23a78bfa'/><stop offset='1' stop-color='%237c5cbf'/></linearGradient></defs><rect x='4' y='4' width='92' height='92' rx='24' fill='%23161616'/><circle cx='45' cy='45' r='20' fill='none' stroke='url(%23g)' stroke-width='8'/><line x1='59' y1='59' x2='76' y2='76' stroke='url(%23g)' stroke-width='9' stroke-linecap='round'/></svg>">
 <link rel="manifest" href="/static/manifest.webmanifest">
@@ -36,6 +37,11 @@
           <button type="button" class="rt-btn active" data-rating="">All</button>
           <button type="button" class="rt-btn" data-rating="sfw">SFW</button>
           <button type="button" class="rt-btn" data-rating="nsfw">18+</button>
+        </div>
+        <div class="viewed-toggle hidden" id="viewed-toggle" role="group" aria-label="Фильтр просмотров">
+          <button type="button" class="vt-btn active" data-viewed="" data-i18n="viewed.all">Все</button>
+          <button type="button" class="vt-btn" data-viewed="0" data-i18n="viewed.new">Новое</button>
+          <button type="button" class="vt-btn" data-viewed="1" data-i18n="viewed.seen">Виденное</button>
         </div>
         <div class="grid-control" id="provider-control">
           <button id="provider-badge" class="provider-badge" title="Источник постов"><span id="provider-badge-label">rule34</span><i data-lucide="chevronDown" data-size="13"></i></button>
@@ -90,6 +96,7 @@
     <div class="viewer-container">
     <div class="viewer-head" id="viewer-head">
       <span id="viewer-info" class="viewer-info"></span>
+      <div id="viewer-relations" class="viewer-relations hidden"></div>
       <div class="viewer-actions">
         <div class="zoom-controls" id="viewer-zoom-controls">
           <button class="btn-icon btn-icon-sm" id="zoom-out" title="Отдалить (−)" aria-label="Отдалить (−)"><i data-lucide="minus" data-size="13"></i></button>
@@ -352,6 +359,18 @@
           <button id="btn-find-dups" class="btn-primary btn-sm"><span data-i18n="btn.findDups">Найти дубликаты</span></button>
           <span id="dups-info" class="dups-info hidden"></span>
           <button id="btn-clean-dups" class="btn-primary btn-sm hidden"><span data-i18n="btn.cleanDups">Удалить дубликаты</span></button>
+          <button id="btn-merge-dups" class="btn-primary btn-sm hidden"><span data-i18n="btn.mergeDups">Объединить дубликаты</span></button>
+        </div>
+        <div class="setting-group">
+          <span class="setting-label" data-i18n="alias.title">Алиасы тегов</span>
+          <span class="setting-hint" data-i18n="alias.hint">Синонимы вроде «catgirl» → «neko»: поиск и провайдеры используют канонический тег</span>
+          <div class="alias-add-row">
+            <input type="text" id="alias-input" class="preset-rename" placeholder="алиас" spellcheck="false" maxlength="60">
+            <span class="alias-arrow">→</span>
+            <input type="text" id="alias-target" class="preset-rename" placeholder="канон" spellcheck="false" maxlength="60">
+            <button type="button" class="btn-primary btn-sm" id="btn-add-alias"><i data-lucide="plus" data-size="13"></i> <span data-i18n="btn.addAlias">Добавить</span></button>
+          </div>
+          <div id="tag-aliases-list" class="tag-aliases-list"></div>
         </div>
         <div class="setting-group">
           <span class="setting-label" data-i18n="set.backup">Полный бэкап профиля</span>
@@ -491,6 +510,8 @@
     <span id="batch-count" class="batch-count">Выбрано: 0</span>
     <button class="btn-primary btn-sm" id="batch-download"><i data-lucide="download" data-size="14"></i> <span data-i18n="batch.download">Скачать</span></button>
     <button class="btn-primary btn-sm" id="batch-zip"><i data-lucide="folder" data-size="14"></i> <span data-i18n="batch.zip">ZIP-архив</span></button>
+    <button class="btn-primary btn-sm" id="batch-like"><i data-lucide="heart" data-size="14"></i> <span data-i18n="batch.like">Лайк</span></button>
+    <button class="btn-primary btn-sm" id="batch-collect"><i data-lucide="folderPlus" data-size="14"></i> <span data-i18n="batch.collect">В коллекцию</span></button>
     <button class="btn-primary btn-sm" id="batch-hide"><i data-lucide="eyeOff" data-size="14"></i> <span data-i18n="batch.hide">Скрыть</span></button>
     <button class="btn-icon btn-icon-sm" id="batch-clear" title="Снять выделение"><i data-lucide="x" data-size="16"></i></button>
   </div>
@@ -504,12 +525,6 @@
 </div>
 
 <script type="module" src="/static/js/app.js?v=__VERSION__"></script>
-<script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function () {
-    navigator.serviceWorker.register('/sw.js?v=7').catch(function () {});
-  });
-}
-</script>
+<script src="/static/js/sw-register.js?v=__VERSION__"></script>
 </body>
 </html>

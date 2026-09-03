@@ -8,6 +8,18 @@ const CACHE = 'briefly-static-v6';
 const API_CACHE = 'briefly-api-v1';
 const PRECACHE = ['/static/offline.html'];
 
+// FIFO-обрезка кэша превью: Cache.keys() возвращает записи в порядке
+// добавления, выкидываем самые старые. keys() не на каждую картинку —
+// сканируем раз в 50 добавлений.
+let trimCounter = 0;
+async function trimPreviewCache(cache, max) {
+  if (++trimCounter % 50 !== 0) return;
+  try {
+    const keys = await cache.keys();
+    for (let i = 0; i < keys.length - max; i++) await cache.delete(keys[i]);
+  } catch { /* noop */ }
+}
+
 // JS/CSS не кэшируем жёстко: URL модулей фиксированы (?v= только у входа),
 // поэтому код всегда тянем из сети и лишь fallback'ом держим в кэше.
 // Исключение — собранный esbuild-бандл (/static/js/dist/): его URL
@@ -53,7 +65,7 @@ self.addEventListener('fetch', (e) => {
       const cache = await caches.open(API_CACHE);
       try {
         const res = await fetch(req);
-        if (res.ok) cache.put(req, res.clone());
+        if (res.ok) await cache.put(req, res.clone());
         return res;
       } catch {
         const cached = await cache.match(req);
@@ -71,7 +83,30 @@ self.addEventListener('fetch', (e) => {
       if (cached) return cached;
       try {
         const res = await fetch(req);
-        if (res.ok) cache.put(req, res.clone());
+        if (res.ok) await cache.put(req, res.clone());
+        return res;
+      } catch {
+        return Response.error();
+      }
+    })());
+    return;
+  }
+
+  // Превью через /api/proxy (kind=preview) неизменяемы по построению,
+  // как /api/thumb: cache-first — повторный сёрфинг отдаёт их без сети.
+  // Оригиналы и видео (без kind=preview) тут не попадают: их кэширует
+  // серверный media-cache.
+  if (url.pathname === '/api/proxy' && url.searchParams.get('kind') === 'preview') {
+    e.respondWith((async () => {
+      const cache = await caches.open(API_CACHE);
+      const cached = await cache.match(req);
+      if (cached) return cached;
+      try {
+        const res = await fetch(req);
+        if (res.ok) {
+          await cache.put(req, res.clone());
+          trimPreviewCache(cache, 2000);
+        }
         return res;
       } catch {
         return Response.error();
@@ -105,7 +140,7 @@ self.addEventListener('fetch', (e) => {
         const res = await fetch(req);
         if (res.ok) {
           const cache = await caches.open(CACHE);
-          cache.put(req, res.clone());
+          await cache.put(req, res.clone());
         }
         return res;
       } catch {
@@ -123,7 +158,7 @@ self.addEventListener('fetch', (e) => {
       const res = await fetch(req);
       if (res.ok && url.pathname.startsWith('/static/')) {
         const cache = await caches.open(CACHE);
-        cache.put(req, res.clone());
+        await cache.put(req, res.clone());
       }
       return res;
     } catch {
@@ -151,6 +186,17 @@ self.addEventListener('sync', (e) => {
 });
 
 async function flushQueueInSW() {
+  // Web Locks доступны и в service worker: не даём странице (online-флаш
+  // в offline.js) и sync-обработчику выгружать одну очередь параллельно —
+  // иначе мутация уйдёт на сервер дважды.
+  const locks = (self.navigator && self.navigator.locks) ? self.navigator.locks : null;
+  if (locks && typeof locks.request === 'function') {
+    return locks.request(SYNC_TAG, () => doFlushInSW());
+  }
+  return doFlushInSW();
+}
+
+async function doFlushInSW() {
   let db;
   try {
     db = await new Promise((resolve, reject) => {

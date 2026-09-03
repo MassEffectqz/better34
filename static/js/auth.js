@@ -313,11 +313,16 @@ App.authQR = async function () {
           const barcodes = await new BarcodeDetector({ formats: ['qr_code'] }).detect(video);
           if (barcodes.length) {
             const val = barcodes[0].rawValue;
-            if (val && val.includes('/qr?t=')) {
-              cleanup();
-              location.href = val;
-              return;
-            }
+            // Только ссылки этого же origin: QR со сторонним URL
+            // (https://evil.com/...?x=/qr?t=1) не должен уводить со страницы.
+            try {
+              const u = new URL(val, location.href);
+              if (u.origin === location.origin && u.pathname === '/qr') {
+                cleanup();
+                location.href = u.href;
+                return;
+              }
+            } catch {}
           }
         } catch {}
       }
@@ -389,6 +394,9 @@ App.logoutOthers = async function () {
 App.logout = async function () {
   try { await API.post('/auth/logout'); } catch {}
   API.invalidate('/');
+  // Сбрасываем кэш авторизации API (legacy-токен читается из meta —
+  // после логина/логаута он должен перечитаться заново).
+  API._token = null;
   this.state.user = null;
   this.state.profile = { liked_posts: [], hidden_posts: [], presets: [], fav_tags: [], hidden_tags: [], nickname: '', avatar: '' };
   this.state.posts = [];

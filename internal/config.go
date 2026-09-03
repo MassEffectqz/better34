@@ -3,6 +3,7 @@ package internal
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -82,7 +83,11 @@ func (c *Config) load() {
 		return
 	}
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
-	json.Unmarshal(data, c)
+	// Молча проглотить ошибку нельзя: часть настроек останется нулевой,
+	// а администратор не поймёт, почему ключи/пути «слетели».
+	if err := json.Unmarshal(data, c); err != nil {
+		slog.Warn("config.json: не удалось разобрать, часть настроек пропущена", "error", err)
+	}
 
 	if len(c.APIKeys) == 0 {
 		var legacy struct {

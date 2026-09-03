@@ -2,6 +2,7 @@ package internal
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -168,6 +169,17 @@ func (h *Handler) refererForHost(host string) string {
 	return "https://rule34.xxx/"
 }
 
+// proxyCacheControl — Cache-Control для ответов прокси. kind=preview —
+// превью поста, неизменяемое по построению (как локальная миниатюра):
+// пусть живёт в браузерном кэше максимально долго, а service worker
+// отдаёт их cache-first. Остальное (оригиналы, видео) — прежний режим.
+func proxyCacheControl(c *gin.Context) string {
+	if c.Query("kind") == "preview" {
+		return "private, max-age=31536000, immutable"
+	}
+	return "private, max-age=86400"
+}
+
 // proxyUpstream строит запрос к CDN с нужными UA/Referer/Range.
 func (h *Handler) proxyUpstream(c *gin.Context, u *url.URL, rangeHdr string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", u.String(), nil)
@@ -254,6 +266,10 @@ func (h *Handler) GetThumb(c *gin.Context) {
 		path = post.ThumbPath
 	}
 
+	// Миниатюра по id неизменяема по построению: живёт в браузерном
+	// HTTP-кэше максимально долго (service worker кэширует её cache-first,
+	// но до его активации и вне его работают заголовки).
+	c.Header("Cache-Control", "private, max-age=31536000, immutable")
 	serveLocalFile(c, path)
 }
 
@@ -281,8 +297,19 @@ func (h *Handler) ProxyRemote(c *gin.Context) {
 		return
 	}
 
+	cc := proxyCacheControl(c)
 	noRange := c.GetHeader("Range") == ""
 	var upstream *http.Response
+
+	// Большие видео без Range качаем сегментами: CDN семейства часто
+	// режет скорость одного соединения, параллельные byte-range заполняют
+	// media-cache в разы быстрее (без прокси). Проба внутри: апстрим без
+	// Range или файл меньше порога → false, обычный путь ниже.
+	if noRange && segmentedEnabled() && isVideoURL(u) {
+		if h.streamSegmented(c, u, cc) {
+			return
+		}
+	}
 
 	if noRange {
 		it, ok := proxyCache.get(u.String())
@@ -296,7 +323,7 @@ func (h *Handler) ProxyRemote(c *gin.Context) {
 		if ok {
 			wh := c.Writer.Header()
 			wh.Set("Content-Type", it.ct)
-			wh.Set("Cache-Control", "private, max-age=86400")
+			wh.Set("Cache-Control", cc)
 			c.Data(http.StatusOK, it.ct, it.data)
 			return
 		}
@@ -326,7 +353,7 @@ func (h *Handler) ProxyRemote(c *gin.Context) {
 		case ferr == nil:
 			wh := c.Writer.Header()
 			wh.Set("Content-Type", ct)
-			wh.Set("Cache-Control", "private, max-age=86400")
+			wh.Set("Cache-Control", cc)
 			c.Data(http.StatusOK, ct, data)
 			return
 		case !isLeader && errors.Is(ferr, errProxyRetry):
@@ -339,14 +366,15 @@ func (h *Handler) ProxyRemote(c *gin.Context) {
 		}
 	}
 
-	h.streamUpstream(c, u, upstream)
+	h.streamUpstream(c, u, upstream, cc)
 }
 
 // streamUpstream отдаёт ответ апстрима клиенту: большие файлы стримятся
 // с параллельной записью в дисковый кэш, чтобы следующие просмотры и
 // перемотка не ходили на CDN. resp != nil означает «ответ уже открыт»
 // (лидер singleflight); иначе запрос выполняется здесь.
-func (h *Handler) streamUpstream(c *gin.Context, u *url.URL, resp *http.Response) {
+func (h *Handler) streamUpstream(c *gin.Context, u *url.URL,
+	resp *http.Response, cc string) {
 	ownResp := false
 	if resp == nil {
 		var err error
@@ -369,15 +397,15 @@ func (h *Handler) streamUpstream(c *gin.Context, u *url.URL, resp *http.Response
 	wh := c.Writer.Header()
 	for k, vs := range resp.Header {
 		switch strings.ToLower(k) {
-		case "content-type", "content-length", "content-range", "accept-ranges", "cache-control", "etag", "last-modified":
+		// cache-control задаём сами (proxyCacheControl): upstream-значение
+		// иначе перебивало бы immutable для kind=preview.
+		case "content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified":
 			for _, v := range vs {
 				wh.Add(k, v)
 			}
 		}
 	}
-	if wh.Get("Cache-Control") == "" {
-		wh.Set("Cache-Control", "private, max-age=86400")
-	}
+	wh.Set("Cache-Control", cc)
 
 	var body io.Reader = resp.Body
 	var sink *mediaCacheSink
@@ -445,7 +473,10 @@ var proxyCache = proxyCacheStore{
 	maxItemSize: 4 << 20,
 }
 
-const proxyCacheDir = "data/proxy-cache"
+// proxyCacheDir — дисковый каталог proxy-cache (переменная: тесты
+// подменяют на временный каталог).
+var proxyCacheDir = "data/proxy-cache"
+
 const proxyDiskCacheMax = 256 << 10
 
 var (
@@ -776,6 +807,221 @@ func mediaCacheEvict() {
 		}
 		if os.Remove(filepath.Join(mediaCacheDir, f.name)) == nil {
 			total -= f.size
+		}
+	}
+}
+
+// ── Сегментированная параллельная закачка видео ─────────────────────────
+// Один поток к «медленным» CDN даёт узкую трубу; N параллельных
+// byte-range запросов качают тот же файл в N раз быстрее. Сегменты пишутся
+// по смещениям в один temp-файл media-cache, клиенту байты отдаются
+// по порядку по мере готовности сегментов (первый сегмент — уже через 1/N
+// файла). Файл, закачанный целиком, коммитится в кэш: повторные просмотры
+// и перемотка обслуживаются локально. Выключается BRIEFLY_SEG=0.
+
+var (
+	segParallel          = 4        // сегментов на файл
+	segParallelBig       = 6        // для файлов от 64 МБ
+	segMinSize     int64 = 16 << 20 // меньше — обычный стрим
+	segProbeMax    int64 = 4 << 20  // лимит чтения «мусора» после пробы
+)
+
+func segmentedEnabled() bool { return os.Getenv("BRIEFLY_SEG") != "0" }
+
+func isVideoURL(u *url.URL) bool {
+	switch strings.ToLower(filepath.Ext(u.Path)) {
+	case ".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv", ".m4v":
+		return true
+	}
+	return false
+}
+
+// streamSegmented качает файл сегментами и параллельно отдаёт клиенту.
+// true — ответ клиенту отправлен (или начат и оборван из-за ошибки);
+// false — не смогли даже начать (CDN без Range, сорвалась проба):
+// вызывающий идёт обычным стримом.
+func (h *Handler) streamSegmented(c *gin.Context, u *url.URL, cc string) bool {
+	// Проба: Range-запрос первого байта даёт полный размер из Content-Range.
+	probe, err := h.proxyUpstream(c, u, "bytes=0-0")
+	if err != nil {
+		return false
+	}
+	io.Copy(io.Discard, io.LimitReader(probe.Body, segProbeMax))
+	probe.Body.Close()
+	if probe.StatusCode != http.StatusPartialContent {
+		return false
+	}
+	ct := probe.Header.Get("Content-Type")
+	cr := probe.Header.Get("Content-Range") // "bytes 0-0/123456"
+	idx := strings.LastIndex(cr, "/")
+	if idx < 0 {
+		return false
+	}
+	total, perr := strconv.ParseInt(strings.TrimSpace(cr[idx+1:]), 10, 64)
+	if perr != nil || total < segMinSize || total > mediaCacheMaxItem {
+		return false
+	}
+
+	segs := segParallel
+	if total >= 64<<20 {
+		segs = segParallelBig
+	}
+	segSize := (total + int64(segs) - 1) / int64(segs)
+
+	mediaCacheInit()
+	sum := sha256.Sum256([]byte(u.String()))
+	tmp, err := os.CreateTemp(mediaCacheDir, hex.EncodeToString(sum[:8])+"-*.tmp")
+	if err != nil {
+		return false
+	}
+	cleanup := func() {
+		name := tmp.Name()
+		tmp.Close()
+		os.Remove(name)
+	}
+	if err := tmp.Truncate(total); err != nil {
+		cleanup()
+		return false
+	}
+
+	ctx := c.Request.Context()
+	segCtx, cancelSegs := context.WithCancel(ctx)
+	defer cancelSegs()
+	referer := h.refererForHost(u.Hostname())
+	doneChans := make([]chan error, segs)
+	var wg sync.WaitGroup
+	for i := 0; i < segs; i++ {
+		start := int64(i) * segSize
+		end := start + segSize - 1
+		if end >= total {
+			end = total - 1
+		}
+		doneChans[i] = make(chan error, 1)
+		wg.Add(1)
+		go func(i int, start, end int64) {
+			defer wg.Done()
+			doneChans[i] <- fetchSegment(segCtx, u, referer, start, end, tmp)
+		}(i, start, end)
+	}
+
+	// Отдаём клиенту по порядку, дожидаясь готовности каждого сегмента.
+	wh := c.Writer.Header()
+	wh.Set("Content-Type", ct)
+	wh.Set("Accept-Ranges", "bytes")
+	wh.Set("Content-Length", strconv.FormatInt(total, 10))
+	wh.Set("Cache-Control", cc)
+	c.Writer.WriteHeader(http.StatusOK)
+	flusher, _ := c.Writer.(http.Flusher)
+	for i := 0; i < segs; i++ {
+		var serr error
+		select {
+		case serr = <-doneChans[i]:
+		case <-ctx.Done():
+			wg.Wait()
+			cleanup()
+			return true
+		}
+		if serr != nil {
+			// Сегмент сорвался после старта ответа: остальные сегменты
+			// отменяем и быстро завершаем (клиент повторит запрос; кэш
+			// не коммитится).
+			cancelSegs()
+			wg.Wait()
+			cleanup()
+			return true
+		}
+		start := int64(i) * segSize
+		end := start + segSize - 1
+		if end >= total {
+			end = total - 1
+		}
+		if cerr := copySegmentRegion(c.Writer, tmp, start, end, flusher); cerr != nil {
+			cancelSegs()
+			wg.Wait()
+			cleanup()
+			return true
+		}
+	}
+	wg.Wait()
+
+	name := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return true
+	}
+	if err := os.Rename(name, mediaCacheKeyPath(u.String())); err != nil {
+		os.Remove(name)
+		return true
+	}
+	mediaCacheEvict()
+	return true
+}
+
+// fetchSegment качает один byte-range в общий temp-файл по смещению.
+func fetchSegment(ctx context.Context, u *url.URL, referer string, start, end int64, f *os.File) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("Referer", referer)
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	resp, err := MediaHTTPClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("segment %d-%d: upstream status %d", start, end, resp.StatusCode)
+	}
+	buf := make([]byte, 128<<10)
+	off := start
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := f.WriteAt(buf[:n], off); werr != nil {
+				return werr
+			}
+			off += int64(n)
+		}
+		if rerr == io.EOF {
+			if off != end+1 {
+				return fmt.Errorf("segment %d-%d: short read (%d bytes)", start, end, off-start)
+			}
+			return nil
+		}
+		if rerr != nil {
+			return rerr
+		}
+	}
+}
+
+// copySegmentRegion отдаёт клиенту готовый отрезок temp-файла.
+func copySegmentRegion(w io.Writer, f *os.File, start, end int64, flusher http.Flusher) error {
+	rd := io.NewSectionReader(f, start, end-start+1)
+	buf := make([]byte, 64<<10)
+	pending := 0
+	for {
+		n, rerr := rd.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return werr
+			}
+			pending += n
+			if flusher != nil && pending >= 256<<10 {
+				flusher.Flush()
+				pending = 0
+			}
+		}
+		if rerr == io.EOF {
+			if flusher != nil && pending > 0 {
+				flusher.Flush()
+			}
+			return nil
+		}
+		if rerr != nil {
+			return rerr
 		}
 	}
 }

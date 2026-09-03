@@ -56,7 +56,7 @@ func (h *Handler) GetComments(c *gin.Context) {
 func (h *Handler) AddComment(c *gin.Context) {
 	user := c.GetString("briefly_user")
 	if user == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "требуется вход"})
+		AbortWithError(c, ErrAuthRequired)
 		return
 	}
 	id, err := strconv.Atoi(c.Param("id"))
@@ -68,21 +68,21 @@ func (h *Handler) AddComment(c *gin.Context) {
 		Text string `json:"text"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный запрос"})
+		AbortWithError(c, ErrInvalidRequest)
 		return
 	}
 	text := strings.TrimSpace(req.Text)
 	if text == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "пустой комментарий"})
+		AbortWithError(c, ErrEmptyComment)
 		return
 	}
 	if utf8.RuneCountInString(text) > maxCommentRunes {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "слишком длинный комментарий"})
+		AbortWithError(c, ErrCommentTooLong)
 		return
 	}
 	cm, err := GetDB().AddComment(id, user, text)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось сохранить комментарий"})
+		AbortWithError(c, ErrCommentSave)
 		return
 	}
 	views := commentViews([]*Comment{cm})
@@ -94,7 +94,7 @@ func (h *Handler) AddComment(c *gin.Context) {
 func (h *Handler) DeleteComment(c *gin.Context) {
 	user := c.GetString("briefly_user")
 	if user == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "требуется вход"})
+		AbortWithError(c, ErrAuthRequired)
 		return
 	}
 	id, err := strconv.Atoi(c.Param("cid"))
@@ -104,16 +104,16 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 	}
 	db := GetDB()
 	var owner string
-	if err := db.db.QueryRow(`SELECT username FROM comments WHERE id=?`, id).Scan(&owner); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "комментарий не найден"})
+	if err := db.read.QueryRow(`SELECT username FROM comments WHERE id=?`, id).Scan(&owner); err != nil {
+		AbortWithError(c, ErrCommentNotFound)
 		return
 	}
 	if owner != user {
-		c.JSON(http.StatusForbidden, gin.H{"error": "чужой комментарий удалить нельзя"})
+		AbortWithError(c, ErrCommentNotYours)
 		return
 	}
 	if !db.DeleteComment(id) {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось удалить"})
+		AbortWithError(c, ErrCommentDelete)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

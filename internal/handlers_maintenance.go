@@ -105,7 +105,7 @@ func (h *Handler) CleanDB(c *gin.Context) {
 	db := GetDB()
 	count := db.CleanNonDownloaded()
 	db.Save()
-	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("удалено %d записей", count), "deleted": count})
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("deleted %d records", count), "deleted": count})
 }
 
 func (h *Handler) DeletePost(c *gin.Context) {
@@ -136,6 +136,10 @@ func (h *Handler) DeletePost(c *gin.Context) {
 
 	thumbPath := filepath.Join("data", "thumbs", fmt.Sprintf("%d.jpg", id))
 	os.Remove(thumbPath)
+
+	// Комментарии удалённого поста удаляем каскадом: иначе в БД навсегда
+	// остаются записи, ссылающиеся на несуществующий пост.
+	db.DeleteCommentsForPost(id)
 
 	if post.Downloaded {
 		db.UnsetDownloaded(id)

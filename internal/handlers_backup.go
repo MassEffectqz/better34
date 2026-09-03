@@ -71,7 +71,7 @@ func (h *Handler) ImportProfile(c *gin.Context) {
 		Comments []*Comment     `json:"comments"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Profile == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ожидается объект вида {\"profile\": {...}}"})
+		AbortWithError(c, ErrProfileFormat)
 		return
 	}
 	in := req.Profile

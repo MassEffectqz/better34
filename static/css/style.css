@@ -528,6 +528,12 @@ select.ss-rate option{color:#111;background:#fff}
 
 .video-unmute-hint{position:absolute;left:50%;bottom:110px;transform:translateX(-50%);z-index:11;display:flex;align-items:center;gap:6px;background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:999px;padding:8px 14px;cursor:pointer;font-size:.82rem;backdrop-filter:blur(4px)}
 .video-unmute-hint:hover{background:rgba(30,30,30,.88)}
+.viewer-relations{display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 2px}
+.viewer-relations.hidden{display:none}
+.rel-chip{background:color-mix(in srgb,var(--accent) 14%,transparent);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);color:var(--text);border-radius:999px;padding:3px 10px;font-size:.72rem;cursor:pointer;transition:background var(--transition)}
+.rel-chip:hover{background:color-mix(in srgb,var(--accent) 28%,transparent)}
+.rel-set{border-style:dashed;color:var(--text-dim);background:none}
+.rel-set:hover{color:var(--text)}
 
 
 .viewer-comments{margin-bottom:10px}
@@ -723,6 +729,9 @@ button,a{-webkit-tap-highlight-color:transparent}
 .rt-btn{padding:7px 9px;background:none;border:none;color:var(--text-dim);font-size:.68rem;font-weight:600;cursor:pointer;line-height:1.4;transition:background var(--transition),color var(--transition)}
 .rt-btn:hover{color:var(--text)}
 .rt-btn.active{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--text)}
+.vt-btn{padding:7px 9px;background:none;border:none;color:var(--text-dim);font-size:.68rem;font-weight:600;cursor:pointer;line-height:1.4;transition:background var(--transition),color var(--transition)}
+.vt-btn:hover{color:var(--text)}
+.vt-btn.active{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--text)}
 .query-meta{position:absolute;right:34px;top:50%;transform:translateY(-50%);font-size:.62rem;line-height:1;color:var(--text-dim);pointer-events:none;background:var(--surface2);padding:3px 7px;border-radius:8px;border:1px solid var(--border);display:none}
 .query-meta.visible{display:block}
 .feed-progress{position:absolute;left:0;right:0;bottom:-1px;height:2px;overflow:hidden;opacity:0;transition:opacity .25s;pointer-events:none}
@@ -786,6 +795,14 @@ button,a{-webkit-tap-highlight-color:transparent}
 .collect-menu-item .cm-count{font-size:.7rem;color:var(--text-dim);flex-shrink:0}
 .collect-menu-empty{padding:8px 10px;font-size:.78rem;color:var(--text-dim)}
 
+/* Batch «в коллекцию»: полноэкранный оверлей с выбором коллекции */
+.batch-collect-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1400;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(2px)}
+.batch-collect-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);width:100%;max-width:340px;max-height:min(420px,80vh);display:flex;flex-direction:column;padding:10px}
+.batch-collect-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.9rem;font-weight:600;padding:2px 2px 8px;color:var(--text)}
+.batch-collect-list{overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.batch-collect-list .collect-menu-item{padding:9px 10px}
+@media(hover:none){.batch-collect-panel{max-width:100%}}
+
 /* --- персональная активность в модалке статистики --- */
 .act-chart{display:flex;align-items:flex-end;gap:5px;height:90px;padding:8px 4px 0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius)}
 .act-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0}
@@ -814,6 +831,13 @@ button,a{-webkit-tap-highlight-color:transparent}
   #provider-control .grid-menu{right:0;left:auto;max-width:calc(100vw - 20px)}
   .collect-menu{right:-2px}
 }
+.alias-add-row{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.alias-add-row input{flex:1;min-width:0}
+.alias-add-row .alias-arrow{color:var(--text-dim);flex-shrink:0}
+.tag-aliases-list{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto}
+.alias-item{display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.8rem}
+.alias-item .alias-src{font-weight:600;color:var(--accent)}
+.alias-item .alias-dst{flex:1;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:600px){
   /* Полупрозрачный хедер с блюром: лента «просвечивает» мягко */
   #header{background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}

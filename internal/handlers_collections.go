@@ -109,6 +109,27 @@ func (h *Handler) CollectionTogglePost(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"added": added})
 }
 
+// POST /api/collection/:id/posts {ids:[...]} — добавить в коллекцию несколько
+// постов разом (массовое действие «в коллекцию» для выделенного). Уже
+// присутствующие пропускаются; возвращает количество добавленных.
+func (h *Handler) CollectionAddMany(c *gin.Context) {
+	var req struct {
+		IDs []int `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ids required"})
+		return
+	}
+	p := ProfileFor(c)
+	added, found := p.CollectionAddMany(c.Param("id"), req.IDs)
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "collection not found"})
+		return
+	}
+	p.Save()
+	c.JSON(http.StatusOK, gin.H{"added": added})
+}
+
 // GET /api/collection/:id/posts — посты коллекции через общий posts-by-ids формат.
 func (h *Handler) CollectionPosts(c *gin.Context) {
 	p := ProfileFor(c)

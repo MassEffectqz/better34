@@ -51,6 +51,8 @@ export default [
       'no-undef': 'error',
       'no-unused-vars': ['error', { args: 'none', caughtErrors: 'none' }],
       'no-empty': ['error', { allowEmptyCatch: true }],
+      'no-eval': 'error',
+      'no-new-func': 'error',
       'no-implicit-globals': 'error',
       eqeqeq: ['error', 'smart'],
       'prefer-const': 'error',

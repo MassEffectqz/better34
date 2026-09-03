@@ -32,6 +32,40 @@ func (h *Handler) ToggleHide(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"hidden": hidden})
 }
 
+// BatchLike — массовое «лайкнуть/снять лайк» для списка постов.
+// POST /api/batch/like {ids:[...], liked:true|false}. state=true — лайкнуть,
+// false — снять (полезно для «Отменить» в тосте). Возвращает число изменённых.
+func (h *Handler) BatchLike(c *gin.Context) {
+	var req struct {
+		IDs   []int `json:"ids"`
+		Liked *bool `json:"liked"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 || req.Liked == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ids and liked required"})
+		return
+	}
+	p := ProfileFor(c)
+	changed := p.SetLiked(req.IDs, *req.Liked)
+	p.Save()
+	c.JSON(http.StatusOK, gin.H{"liked": *req.Liked, "changed": changed})
+}
+
+// BatchHide — массовое «скрыть/вернуть» для списка постов.
+func (h *Handler) BatchHide(c *gin.Context) {
+	var req struct {
+		IDs    []int `json:"ids"`
+		Hidden *bool `json:"hidden"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 || req.Hidden == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ids and hidden required"})
+		return
+	}
+	p := ProfileFor(c)
+	changed := p.SetHidden(req.IDs, *req.Hidden)
+	p.Save()
+	c.JSON(http.StatusOK, gin.H{"hidden": *req.Hidden, "changed": changed})
+}
+
 func (h *Handler) GetProfileData(c *gin.Context) {
 	p := ProfileFor(c)
 	p.mu.Lock()

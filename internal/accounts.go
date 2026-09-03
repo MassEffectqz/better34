@@ -61,7 +61,10 @@ func TokenMatches(c *gin.Context) bool {
 	if b := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "); len(b) < len(c.GetHeader("Authorization")) {
 		return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(b)), []byte(briefToken)) == 1
 	}
-	if t := c.Query("token"); t != "" {
+	if t := c.Query("token"); t != "" && strings.HasPrefix(c.Request.URL.Path, "/api/events") {
+		// Токен в query принимаем только для SSE (/api/events): EventSource
+		// не умеет заголовки. На прочих эндпоинтах токен в URL попадает в
+		// access-логи и историю браузера — там его не принимаем.
 		return subtle.ConstantTimeCompare([]byte(t), []byte(briefToken)) == 1
 	}
 	return false
@@ -409,6 +412,22 @@ func (a *Accounts) Profile(username string) *Profile {
 	p := NewProfile(filepath.Join(a.dir, username, "profile.json"))
 	a.profiles[username] = p
 	return p
+}
+
+// ForEachProfile вызывает fn для профилей всех зарегистрированных
+// пользователей (профиль загружается с диска, если ещё не был открыт).
+// Используется при объединении дубликатов постов: лайки/коллекции должны
+// переноситься во всех аккаунтах, а не только у вызвавшего.
+func (a *Accounts) ForEachProfile(fn func(*Profile)) {
+	a.mu.Lock()
+	us := make([]string, 0, len(a.users))
+	for u := range a.users {
+		us = append(us, u)
+	}
+	a.mu.Unlock()
+	for _, u := range us {
+		fn(a.Profile(u))
+	}
 }
 
 // migrateLegacyProfile переносит данные старого единого профиля в аккаунт

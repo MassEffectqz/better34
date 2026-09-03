@@ -386,7 +386,7 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
       const excl = (this._recViewed || []).join(',');
       if (excl) ep += `&exclude=${excl}`;
     } else if (this.state.isLocal) {
-      ep = `/local?page=${this.state.page}&limit=${this.pageSize()}${this.state.query ? `&tags=${encodeURIComponent(this.state.query)}` : ''}`;
+      ep = `/local?page=${this.state.page}&limit=${this.pageSize()}${this.state.query ? `&tags=${encodeURIComponent(this.state.query)}` : ''}${this.state.viewedFilter ? `&viewed=${this.state.viewedFilter}` : ''}`;
     } else {
       const rp = this.state.ratingFilter ? `&rating=${this.state.ratingFilter}` : '';
       ep = `/posts?page=${this.state.page}&limit=${this.pageSize()}${this.state.query ? `&tags=${encodeURIComponent(this.state.query)}` : ''}${rp}`;
@@ -573,16 +573,18 @@ App.createPostCard = function (post) {
   card.dataset.id = post.id;
 
   const proxyUrl = u => `/api/proxy?url=${encodeURIComponent(u)}`;
+  // Превью помечаем kind=preview: сервер отвечает immutable Cache-Control,
+  // service worker кэширует их cache-first (превью неизменяемы по построению).
+  const proxyThumb = u => `/api/proxy?url=${encodeURIComponent(u)}&kind=preview`;
   const isVideo = post.file_type === 'video';
   const isGif = post.file_type === 'gif';
   const thumbUrl = post.downloaded
     ? (isVideo
-      ? (post.preview_url ? proxyUrl(post.preview_url) : `/api/thumb/${post.id}`)
+      ? (post.preview_url ? proxyThumb(post.preview_url) : `/api/thumb/${post.id}`)
       : `/api/thumb/${post.id}`)
-    : (post.preview_url ? proxyUrl(post.preview_url) : `/api/thumb/${post.id}`);
+    : (post.preview_url ? proxyThumb(post.preview_url) : `/api/thumb/${post.id}`);
   const mediaUrl = post.downloaded ? `/api/file/${post.id}` : (post.file_url ? proxyUrl(post.file_url) : '');
   const isFirstScreen = this.state.posts.length < this.pageSize() * 0.35;
-  const imgAttrs = `alt="" decoding="async" ${isFirstScreen ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"'}`;
 
   const cb = document.createElement('div');
   cb.className = 'card-checkbox' + (this.state.selected.has(post.id) ? ' checked' : '');
@@ -595,20 +597,50 @@ App.createPostCard = function (post) {
   const ar = post.width && post.height ? Math.min(post.width / post.height, 3) : null;
   if (ar) wrap.style.aspectRatio = `${ar}`;
 
-  const fallbackUrl = `/api/thumb/${post.id}`;
-  const par = post.width && post.height ? Math.min(post.width / post.height, 3) : 1;
-  const ph = '<div class=&quot;thumb-fallback&quot; style=&quot;aspect-ratio:' + par + '&quot;></div>';
-  const onerrorAttr = fallbackUrl
-    ? `onerror="if(this.dataset.err){this.outerHTML='${ph}'}else{this.dataset.err='1';this.src='${fallbackUrl}'}"`
-    : `onerror="this.outerHTML='${ph}'"`;
-
+  // Медиа собираем через DOM API: inline onerror/onload в HTML-строке —
+  // вектор XSS (URL из внешнего API попадали в атрибуты) и барьер для CSP.
+  const img = document.createElement('img');
+  img.src = thumbUrl;
+  img.alt = '';
+  img.decoding = 'async';
+  if (isVideo) img.className = 'video-preview';
+  if (isFirstScreen) { img.loading = 'eager'; img.fetchPriority = 'high'; }
+  else img.loading = 'lazy';
+  img.addEventListener('load', () => img.classList.add('loaded'));
+  img.addEventListener('error', () => {
+    if (!img.dataset.err) {
+      img.dataset.err = '1';
+      img.src = `/api/thumb/${post.id}`;
+      return;
+    }
+    const fb = document.createElement('div');
+    fb.className = 'thumb-fallback';
+    fb.style.aspectRatio = String(post.width && post.height ? Math.min(post.width / post.height, 3) : 1);
+    img.replaceWith(fb);
+  });
 
   if (isVideo) {
-    wrap.innerHTML = `<img src="${thumbUrl}" ${imgAttrs} class="video-preview" onload="this.classList.add('loaded')" ${onerrorAttr}><video src="${mediaUrl}" preload="none" muted loop loading="lazy" class="video-source"></video><span class="video-badge">${icon('play', 16, true)}</span>`;
+    const video = document.createElement('video');
+    video.src = mediaUrl;
+    // Скачанное видео лежит на локальном диске сервера: метаданные
+    // (длительность/первый кадр) с него берутся дёшево — подгружаем сразу,
+    // чтобы ховер стартовал без ожидания. Удалённые с CDN не трогаем.
+    video.preload = post.downloaded ? 'metadata' : 'none';
+    video.muted = true;
+    video.loop = true;
+    video.loading = 'lazy';
+    video.className = 'video-source';
+    const badge = document.createElement('span');
+    badge.className = 'video-badge';
+    badge.innerHTML = icon('play', 16, true);
+    wrap.append(img, video, badge);
   } else if (isGif) {
-    wrap.innerHTML = `<img src="${thumbUrl}" ${imgAttrs} onload="this.classList.add('loaded')" ${onerrorAttr}><span class="gif-badge">GIF</span>`;
+    const badge = document.createElement('span');
+    badge.className = 'gif-badge';
+    badge.textContent = 'GIF';
+    wrap.append(img, badge);
   } else {
-    wrap.innerHTML = `<img src="${thumbUrl}" ${imgAttrs} onload="this.classList.add('loaded')" ${onerrorAttr}>`;
+    wrap.append(img);
   }
 
   const isLiked = this.state.profile.liked_posts && this.state.profile.liked_posts.includes(post.id);
@@ -856,6 +888,94 @@ App.batchHide = async function () {
     }).then(() => { API.invalidate('/profile'); this.loadProfile(); }).catch(() => {});
   });
   await all;
+};
+
+// batchLike — массовый лайк выделенного. Оптимистично обновляем карточки,
+// серверный вызов одним POST /batch/like (в отличие от batchHide не дёргаем
+// API по каждому посту). Тосты с «Отменить» для отката.
+App.batchLike = async function () {
+  const ids = Array.from(this.state.selected);
+  if (!ids.length) return;
+  this.clearSelection();
+  ids.forEach(id => this.optimisticLike(id, true));
+  API.post('/batch/like', { ids, liked: true }).then(r => {
+    const n = (r && r.changed != null) ? r.changed : ids.length;
+    this.showToastWithUndo(tf('batch.liked', { n }), () => {
+      ids.forEach(id => this.optimisticLike(id, false));
+      return API.post('/batch/like', { ids, liked: false }).catch(() => {});
+    });
+  }).catch(err => {
+    ids.forEach(id => this.optimisticLike(id, false));
+    this.showToast(`Ошибка: ${err.message}`, 'error');
+  });
+};
+
+// batchCollect — добавить выделенные посты в коллекцию. Открывает меню выбора
+// (список коллекций + создание новой); сервер добавляет всё одной кнопкой.
+App.batchCollect = async function () {
+  const ids = Array.from(this.state.selected);
+  if (!ids.length) return;
+  let cols = [];
+  try {
+    const d = await API.get('/collections', { fresh: true });
+    cols = d.collections || [];
+  } catch { /* меню останется пустым */ }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'batch-collect-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.innerHTML = `
+    <div class="batch-collect-panel">
+      <div class="batch-collect-head">
+        <span>${esc(t('batch.pickCollection'))} (${ids.length})</span>
+        <button type="button" class="btn-icon btn-icon-sm bc-close" title="Закрыть">${icon('x', 15)}</button>
+      </div>
+      <div class="batch-collect-new">
+        <input type="text" class="bc-new-input" placeholder="${esc(t('collections.newPh'))}" maxlength="60" spellcheck="false">
+        <button type="button" class="btn-primary btn-sm bc-create-btn" title="${esc(t('btn.create'))}">${icon('plus', 13)}</button>
+      </div>
+      <div class="batch-collect-list">${cols.length ? '' : `<p class="profile-empty">${esc(t('collections.empty'))}</p>`}</div>
+    </div>`;
+  const list = overlay.querySelector('.batch-collect-list');
+  cols.forEach(col => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'collect-menu-item';
+    b.innerHTML = `<span class="cm-name">${esc(col.name)}</span><span class="cm-count">${col.count}</span>`;
+    b.addEventListener('click', async () => {
+      try {
+        const r = await API.post(`/collection/${col.id}/posts`, { ids });
+        this.showToast(tf('batch.addedToCol', { n: (r && r.added) || ids.length }));
+        API.invalidate('/profile');
+        this.clearSelection();
+        overlay.remove();
+      } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+    });
+    list.appendChild(b);
+  });
+  overlay.querySelector('.bc-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+  const newInput = overlay.querySelector('.bc-new-input');
+  const create = async () => {
+    const name = newInput.value.trim();
+    if (!name) return;
+    try {
+      const d = await API.post('/collection', { name });
+      API.invalidate('/profile');
+      const r = await API.post(`/collection/${d.collection.id}/posts`, { ids });
+      this.showToast(tf('batch.addedToCol', { n: (r && r.added) || ids.length }));
+      this.clearSelection();
+      overlay.remove();
+    } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+  };
+  overlay.querySelector('.bc-create-btn').addEventListener('click', create);
+  newInput.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') { ev.preventDefault(); create(); }
+  });
+  document.body.appendChild(overlay);
+  setTimeout(() => { try { newInput.focus(); } catch {} }, 50);
 };
 
 App.setStatus = function (msg) { this.els.statusText.textContent = msg; };

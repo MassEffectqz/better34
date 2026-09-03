@@ -11,6 +11,7 @@ import './keyboard.js';
 import './profile.js';
 import './collections.js';
 import './settings.js';
+import './aliases.js';
 import './social.js';
 import './auth.js';
 import './notify.js';

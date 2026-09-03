@@ -216,7 +216,7 @@ func webSecurityMiddleware() gin.HandlerFunc {
 			}
 			accs := internal.GetAccounts()
 			if accs.Count() == 0 {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "не создано ни одного аккаунта — зарегистрируйте первый через /auth/register"})
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "no_accounts", "message": "no accounts registered yet"})
 				return
 			}
 			if cookie, err := c.Cookie(internal.SessionCookieName); err == nil {
@@ -226,7 +226,7 @@ func webSecurityMiddleware() gin.HandlerFunc {
 					return
 				}
 			}
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "login required"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "auth_required", "message": "login required"})
 			return
 		}
 		c.Next()

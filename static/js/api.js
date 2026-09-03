@@ -1,4 +1,5 @@
 import { enqueueMutation } from './offline.js';
+import { t } from './i18n.js';
 
 export const API = {
   _cache: {},
@@ -9,12 +10,16 @@ export const API = {
   _cacheMax: 200,
   _token: null,
   _err(r) {
-    return r.text().then((t) => {
+    return r.text().then((raw) => {
       try {
-        const j = JSON.parse(t);
-        return j.error || j.message || t;
+        const j = JSON.parse(raw);
+        const code = j.error || j.message || raw;
+        // Translate server error codes via i18n
+        const key = 'err.' + code;
+        const translated = t(key);
+        return translated !== key ? translated : code;
       } catch {
-        return t || `Код ${r.status}`;
+        return raw || `Код ${r.status}`;
       }
     });
   },

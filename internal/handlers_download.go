@@ -3,10 +3,29 @@ package internal
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+// sourceLabelForFileURL определяет метку «откуда пост» для file_url: имя
+// провайдера, которому принадлежит хост CDN, иначе сам хост.
+func (h *Handler) sourceLabelForFileURL(fileURL string) string {
+	if u, err := url.Parse(fileURL); err == nil && u.Hostname() != "" {
+		if h.providers != nil {
+			host := strings.ToLower(u.Hostname())
+			for _, p := range h.providers {
+				if p.AllowsHost(host) {
+					return p.Name()
+				}
+			}
+		}
+		return u.Hostname()
+	}
+	return ""
+}
 
 func (h *Handler) DownloadPost(c *gin.Context) {
 	idStr := c.Param("id")
@@ -32,6 +51,7 @@ func (h *Handler) DownloadPost(c *gin.Context) {
 		PostID:   post.ID,
 		FileURL:  post.FileURL,
 		FileType: post.FileType,
+		Source:   h.sourceLabelForFileURL(post.FileURL),
 		Referer:  h.refererForFileURL(post.FileURL),
 	})
 
@@ -73,6 +93,7 @@ func (h *Handler) DownloadMultiple(c *gin.Context) {
 				PostID:   post.ID,
 				FileURL:  post.FileURL,
 				FileType: post.FileType,
+				Source:   h.sourceLabelForFileURL(post.FileURL),
 				Referer:  h.refererForFileURL(post.FileURL),
 			})
 			queued++
@@ -100,6 +121,9 @@ func (h *Handler) DownloadResults(c *gin.Context) {
 			})
 		} else {
 			db.SetDownloaded(result.PostID, result.FilePath, result.ThumbPath)
+			if result.Source != "" {
+				db.SetPostSource(result.PostID, result.Source)
+			}
 			results = append(results, gin.H{
 				"post_id": result.PostID,
 				"success": true,

@@ -3,11 +3,14 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o briefly .
+# -trimpath — воспроизводимая сборка без локальных путей; -s -w — без
+# отладочных символов и таблицы имён (бинарник заметно меньше).
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o briefly .
 
 FROM alpine:3.22
-# Сертификаты для исходящих запросов к провайдерам, wget — для HEALTHCHECK.
-RUN apk add --no-cache ca-certificates tzdata \
+# Сертификаты для исходящих запросов к провайдерам, wget — для HEALTHCHECK,
+# tini — init-процесс: зомби от дочерних процессов не копятся.
+RUN apk add --no-cache ca-certificates tzdata tini \
  && addgroup -S briefly && adduser -S -G briefly -H briefly
 WORKDIR /app
 COPY --from=builder /build/briefly ./briefly
@@ -19,4 +22,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- "http://127.0.0.1:${BRIEFLY_PORT:-3000}/api/ready" >/dev/null 2>&1 || exit 1
 EXPOSE 3000
 VOLUME ["/app/data"]
+# tini как PID 1: форвардит сигналы и пожинает зомби-процессы.
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["./briefly"]

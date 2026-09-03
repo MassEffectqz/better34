@@ -9,7 +9,7 @@ App.toggleSettings = function () {
   }
   this.els.settingsPanel.classList.toggle('hidden', !this.state.settingsOpen);
   this._syncPanels();
-  if (this.state.settingsOpen) { this.applyPanelWidth(); this.syncCustomControls(); }
+  if (this.state.settingsOpen) { this.applyPanelWidth(); this.syncCustomControls(); this.loadAliases(); }
 };
 
 App.syncCustomControls = function () {
@@ -193,6 +193,8 @@ App.findDuplicates = async function () {
   if (btn) { btn.disabled = true; btn.textContent = 'Поиск…'; }
   if (info) info.classList.add('hidden');
   this.els.btnCleanDups.classList.add('hidden');
+  if (this.els.btnMergeDups) this.els.btnMergeDups.classList.add('hidden');
+  this._dupsGroups = [];
   try {
     const d = await API.get('/dups');
     const groups = (d && d.dups) || [];
@@ -206,6 +208,13 @@ App.findDuplicates = async function () {
     this._dupsTotal = total;
     this.els.btnCleanDups.textContent = `Удалить ${total} дубликатов`;
     this.els.btnCleanDups.classList.remove('hidden');
+    this._dupsGroups = groups;
+    const merges = collectMergeRequests(groups);
+    const mergeTotal = merges.reduce((s, m) => s + m.remove_ids.length, 0);
+    if (mergeTotal && this.els.btnMergeDups) {
+      this.els.btnMergeDups.textContent = `Объединить ${mergeTotal} дубликатов`;
+      this.els.btnMergeDups.classList.remove('hidden');
+    }
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
   if (btn) { btn.disabled = false; btn.textContent = 'Найти дубликаты'; }
 };
@@ -229,6 +238,52 @@ App.cleanDuplicates = async function () {
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
 };
 
+// ── Объединение дубликатов ────────────────────────────────────────────────
+// Вместо удаления лишних файлов посты склеиваются: лайки, коллекции и
+// комментарии переезжают на сохраняемый оригинал (/api/dups/merge).
+
+App.mergeDuplicates = async function () {
+  const merges = collectMergeRequests(this._dupsGroups || []);
+  const total = merges.reduce((s, m) => s + m.remove_ids.length, 0);
+  if (!total) { if (this.els.btnMergeDups) this.els.btnMergeDups.classList.add('hidden'); return; }
+  const ok = await this.confirmDialog({
+    title: 'Объединение дубликатов',
+    message: `Объединить <b>${total}</b> постов-дубликатов с их оригиналами? Лайки, скрытия, коллекции и комментарии перенесутся на сохранённый пост.`,
+    okText: 'Объединить',
+    danger: true,
+  });
+  if (!ok) return;
+  let done = 0;
+  try {
+    for (const m of merges) {
+      const r = await API.post('/dups/merge', m);
+      done += r.merged || 0;
+    }
+    this.showToast(`Объединено постов: ${done}`, 'success');
+    if (this.els.btnMergeDups) this.els.btnMergeDups.classList.add('hidden');
+    this._dupsGroups = [];
+    this.findDuplicates();
+  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+};
+
+// collectMergeRequests превращает группы файлов-дубликатов из /dups в запросы
+// merge: keep — пост, на который ссылается БД (иначе первый); remove — прочие.
+function collectMergeRequests(groups) {
+  const merges = [];
+  const keepSeen = new Set();
+  for (const g of groups || []) {
+    const posts = (g.posts || []).filter(p => p && p.id > 0);
+    if (posts.length < 2) continue;
+    const dl = posts.filter(p => p.downloaded);
+    const keep = (dl.length ? dl : posts)[0];
+    if (!keep || keepSeen.has(keep.id)) continue;
+    const ids = [...new Set(posts.filter(p => p.id !== keep.id).map(p => p.id))];
+    if (!ids.length) continue;
+    keepSeen.add(keep.id);
+    merges.push({ keep_id: keep.id, remove_ids: ids });
+  }
+  return merges;
+}
 // ── Полный бэкап профиля ────────────────────────────────────────────────
 
 App.exportProfile = function () {

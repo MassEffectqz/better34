@@ -36,6 +36,7 @@ App.openViewer = function (index) {
     this.toggleFullscreen();
   }
   this._recMarkViewed(post ? post.id : null);
+  this._markViewed(post ? post.id : null);
   this.scheduleRelated(post);
   if (post) this.pushState(this.state.query, post.id);
   // Предзагрузка соседей: скрытый <video> один, поэтому последним
@@ -147,7 +148,8 @@ App.loadRelated = async function (post) {
     this._relPosts = posts;
     el.classList.remove('hidden');
     const tagStr = (data.tags || []).map(esc).join(', ');
-    const prox = (u) => u ? '/api/proxy?url=' + encodeURIComponent(u) : null;
+    // kind=preview: immutable-заголовок и cache-first в service worker.
+    const prox = (u) => u ? '/api/proxy?url=' + encodeURIComponent(u) + '&kind=preview' : null;
     el.innerHTML =
       '<div class="rel-title">Похожие по тегам' + (tagStr ? ': <span style="text-transform:none;font-weight:600">' + tagStr + '</span>' : '') + '</div>' +
       '<div class="rel-row">' +
@@ -228,6 +230,74 @@ App._renderViewerTags = function () {
   }
 };
 
+// _renderViewerRelations — chip-ряд «родитель/дети» для скачанных постов.
+// Клик по chip открывает пост (в ленте, если он там есть, иначе поиском id:N).
+// Кнопка «↑ привязать» задаёт родителя текущему посту (danbooru-style связки).
+App._renderViewerRelations = function (post) {
+  const host = this.els.relations;
+  if (!host) return;
+  if (!post || !post.id) { host.classList.add('hidden'); return; }
+  API.get(`/posts/${post.id}/relations`).then(d => {
+    if (!d) return;
+    host.innerHTML = '';
+    const parent = d.parent;
+    const children = d.children || [];
+    if (parent || children.length) {
+      host.classList.remove('hidden');
+    } else {
+      host.classList.add('hidden');
+    }
+    if (parent) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'rel-chip rel-parent';
+      chip.title = 'Родитель';
+      chip.textContent = `↑ #${parent.id}${parent.file_type ? ' · ' + parent.file_type : ''}`;
+      chip.addEventListener('click', () => this._openPostById(parent.id));
+      host.appendChild(chip);
+    }
+    children.forEach(ch => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'rel-chip rel-child';
+      chip.title = 'Дочь/сын поста';
+      chip.textContent = `↓ #${ch.id}${ch.file_type ? ' · ' + ch.file_type : ''}`;
+      chip.addEventListener('click', () => this._openPostById(ch.id));
+      host.appendChild(chip);
+    });
+    if (!parent && !children.length) {
+      // Маленькая кнопка «привязать» — пост без семьи можно сделать ребёнком.
+      const setBtn = document.createElement('button');
+      setBtn.type = 'button';
+      setBtn.className = 'rel-chip rel-set';
+      setBtn.title = 'Связать с родителем';
+      setBtn.textContent = '↑ привязать';
+      setBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const input = window.prompt('Родитель (id поста):');
+        if (!input) return;
+        const pid = parseInt(input, 10);
+        if (!Number.isFinite(pid) || pid <= 0) { this.showToast('Некорректный id', 'error'); return; }
+        API.post(`/posts/${post.id}/parent`, { parent_id: pid }).then(() => {
+          this.showToast(`#${post.id} → родитель #${pid}`);
+          this._renderViewerRelations(post);
+        }).catch(err => this.showToast(`Ошибка: ${err.message}`, 'error'));
+      });
+      host.appendChild(setBtn);
+    }
+  }).catch(() => host.classList.add('hidden'));
+};
+
+App._openPostById = function (id) {
+  if (!id) return;
+  const idx = this.state.posts.findIndex(p => p.id === id);
+  if (idx >= 0) { this._gotoViewerIndex(idx, 0); return; }
+  const q = `id:${id}`;
+  this.closeViewer();
+  this.els.searchInput.value = q;
+  this.search(q);
+};
+
 App._loadViewerTagCounts = function (tags, spans) {
   if (!tags || !tags.length || !spans || !spans.length) return;
   // Режим «Все сайты»: выдача смешанная, а счётчики считает только
@@ -240,7 +310,12 @@ App._loadViewerTagCounts = function (tags, spans) {
   const q = tags.join(',');
   API.get(`/tag-counts?tags=${encodeURIComponent(q)}`, { signal: ac.signal }).then(d => {
     if (ac.signal.aborted || !d || !d.counts) return;
-    Object.assign(this._tagCounts, d.counts);
+    // Копируем по ключам с фильтром: Object.assign на json-объекте может
+    // протащить ключ "__proto__" из ответа (prototype pollution).
+    for (const k of Object.keys(d.counts)) {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      this._tagCounts[k] = d.counts[k];
+    }
     this._saveTagCounts();
     spans.forEach(({ tag, el }) => {
       const c = this._tagCounts[tag];
@@ -276,9 +351,20 @@ App.renderViewer = function (force) {
 
   this._hideViewerMediaError();
   this._removeUnmuteHint();
+  // Кнопка «1:1» от прошлого поста не должна доживать до текущего.
+  const staleOrig = viewerContent.querySelector('.viewer-orig');
+  if (staleOrig && typeof staleOrig.remove === 'function') staleOrig.remove();
 
   const isVideo = post.file_type === 'video';
-  const fileUrl = post.downloaded && post.file_path ? `/api/file/${post.id}` : `/api/proxy?url=${encodeURIComponent(post.file_url || '')}`;
+  // Тяжёлые картинки (>3МБ): сначала сжатый sample с CDN — открывается в
+  // разы быстрее; оригинал догружается по кнопке «1:1».
+  const heavyImage = !isVideo && !post.downloaded &&
+    (post.file_size || 0) > 3 * 1024 * 1024 && post.sample_url;
+  const proxyMedia = u => `/api/proxy?url=${encodeURIComponent(u)}`;
+  const fileUrl = post.downloaded && post.file_path
+    ? `/api/file/${post.id}`
+    : proxyMedia(heavyImage ? post.sample_url : (post.file_url || ''));
+  const originalUrl = (!post.downloaded && post.file_url && heavyImage) ? proxyMedia(post.file_url) : null;
   // Превью для постера видео: пока файл буферизуется, вместо чёрного
   // экрана показываем ту же картинку, что и в карточке ленты.
   const videoPosterUrl = post.preview_url
@@ -379,6 +465,31 @@ App.renderViewer = function (force) {
       this._hideBlurhashPlaceholder(viewerContent);
       viewerLoader.classList.remove('active');
     }
+    if (heavyImage && originalUrl && !viewerContent.querySelector('.viewer-orig')) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'viewer-orig';
+      btn.textContent = '1:1';
+      btn.title = 'Догрузить оригинал (крупнее и тяжелее)';
+      btn.style.cssText = 'position:absolute;top:10px;right:10px;z-index:6;padding:4px 10px;cursor:pointer;';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        btn.textContent = '…';
+        viewerLoader.classList.add('active');
+        const done = () => { viewerLoader.classList.remove('active'); btn.remove(); };
+        const fail = () => { viewerLoader.classList.remove('active'); btn.disabled = false; btn.textContent = '1:1'; };
+        mediaEl.addEventListener('load', done, { once: true });
+        mediaEl.addEventListener('error', fail, { once: true });
+        let resolved = originalUrl;
+        try {
+          const base = (typeof window !== 'undefined' && window.location) ? window.location.href : '';
+          if (base) resolved = new URL(originalUrl, base).href;
+        } catch {}
+        mediaEl.src = resolved;
+      });
+      viewerContent.appendChild(btn);
+    }
   }
 
   this.applyZoomTransform();
@@ -415,9 +526,10 @@ App.renderViewer = function (force) {
   ssSpeedInput.value = Math.round(this.state.slideshowSpeed / 1000);
 
   const isLiked = this.state.profile.liked_posts && this.state.profile.liked_posts.includes(post.id);
-  viewerInfo.textContent = `${post.id} · ${post.width||'?'}×${post.height||'?'} · ${post.file_type || '?'} · ${this.state.viewerIndex + 1}/${this.state.posts.length}`;
+  viewerInfo.textContent = `${post.source ? post.source + ' · ' : ''}${post.id} · ${post.width||'?'}×${post.height||'?'} · ${post.file_type || '?'} · ${this.state.viewerIndex + 1}/${this.state.posts.length}`;
 
   this._renderViewerTags();
+  this._renderViewerRelations(post);
 
   this.els.viewerLike.innerHTML = isLiked
     ? icon('heart', 20, true)
@@ -466,6 +578,7 @@ App.navigateViewer = function (dir) {
 App._gotoViewerIndex = function (ni, dir) {
   this._stashCurrentVideoTime();
   this.state.viewerIndex = ni;
+  this._markViewed(this.state.posts[ni] ? this.state.posts[ni].id : null);
   this.renderViewer();
   this.scheduleRelated(this.state.posts[ni]);
   if (dir > 0 && ni + 1 < this.state.posts.length) this.preloadNeighbor(this.state.posts[ni + 1]);

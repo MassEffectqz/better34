@@ -3,7 +3,9 @@ import { icon, esc } from './utils.js';
 import { API } from './api.js';
 App._thumbs = App._thumbs || {};
 
-const pfProxy = u => `/api/proxy?url=${encodeURIComponent(u)}`;
+// Превью помечаются kind=preview: immutable Cache-Control + cache-first
+// в service worker (превью неизменяемы по построению).
+const pfProxy = u => `/api/proxy?url=${encodeURIComponent(u)}&kind=preview`;
 
 const pfThumbFor = post => {
   if (post.downloaded) {
@@ -309,9 +311,12 @@ App._buildThumbTile = function (post, i) {
     ? `<span class="pf-dl" title="Скачано">${icon('check', null, true)}</span>`
     : '';
   const score = post.score ? `<span class="pf-score">${icon('star', null, true)}${post.score}</span>` : '';
-  tile.innerHTML = `<img src="${src}" alt="" loading="lazy" decoding="async" onload="this.classList.add('loaded')"><div class="pf-fallback">#${post.id}</div>${play}${dl}<div class="pf-open"><span class="pf-open-icon">${icon('externalLink')}</span></div><div class="pf-bar"><span>#${post.id}</span>${score}</div>`;
+  tile.innerHTML = `<img src="${esc(src)}" alt="" loading="lazy" decoding="async"><div class="pf-fallback">#${post.id}</div>${play}${dl}<div class="pf-open"><span class="pf-open-icon">${icon('externalLink')}</span></div><div class="pf-bar"><span>#${post.id}</span>${score}</div>`;
   const img = tile.querySelector('img');
-  if (img) img.addEventListener('error', () => { img.style.display = 'none'; }, { once: true });
+  if (img) {
+    img.addEventListener('load', () => img.classList.add('loaded'));
+    img.addEventListener('error', () => { img.style.display = 'none'; }, { once: true });
+  }
   tile.addEventListener('click', () => this.openPostFromProfile(post));
   return tile;
 };

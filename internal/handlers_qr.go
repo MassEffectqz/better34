@@ -168,17 +168,17 @@ func (h *Handler) QRClaim(c *gin.Context) {
 	}
 	user, ok := qrLogins.claim(req.Token)
 	if !ok {
-		c.JSON(http.StatusForbidden, gin.H{"error": "код недействителен или уже использован"})
+		AbortWithError(c, ErrQRInvalid)
 		return
 	}
 	acc := GetAccounts()
 	if !acc.UserExists(user) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "аккаунт не найден"})
+		AbortWithError(c, ErrQRNoAccount)
 		return
 	}
 	token, expires, err := acc.CreateSession(user)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось создать сессию"})
+		AbortWithError(c, ErrSessionCreate)
 		return
 	}
 	setSessionCookie(c, token, expires)

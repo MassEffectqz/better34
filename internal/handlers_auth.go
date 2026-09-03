@@ -48,7 +48,7 @@ func (h *Handler) AuthRegister(c *gin.Context) {
 	// иначе любой хост LAN заводит себе доступ к общим данным.
 	// Дальнейшие пользователи — по договорённости с админом (вручную).
 	if acc.Count() > 0 {
-		c.JSON(http.StatusForbidden, gin.H{"error": "регистрация закрыта: аккаунт уже существует"})
+		AbortWithError(c, ErrAccountExists)
 		return
 	}
 	var req struct {
@@ -56,7 +56,7 @@ func (h *Handler) AuthRegister(c *gin.Context) {
 		Password string `json:"password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный запрос"})
+		AbortWithError(c, ErrInvalidRequest)
 		return
 	}
 	user, err := acc.Register(req.Username, req.Password)
@@ -66,7 +66,7 @@ func (h *Handler) AuthRegister(c *gin.Context) {
 	}
 	token, expires, err := acc.CreateSession(user.Username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось создать сессию"})
+		AbortWithError(c, ErrSessionCreate)
 		return
 	}
 	setSessionCookie(c, token, expires)
@@ -89,7 +89,7 @@ func (h *Handler) AuthLogin(c *gin.Context) {
 		Password string `json:"password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный запрос"})
+		AbortWithError(c, ErrInvalidRequest)
 		return
 	}
 	acc := GetAccounts()
@@ -100,7 +100,7 @@ func (h *Handler) AuthLogin(c *gin.Context) {
 	}
 	token, expires, err := acc.CreateSession(user.Username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось создать сессию"})
+		AbortWithError(c, ErrSessionCreate)
 		return
 	}
 	setSessionCookie(c, token, expires)
@@ -119,7 +119,8 @@ func authTooMany(c *gin.Context, wait time.Duration) {
 	}
 	c.Header("Retry-After", strconv.Itoa(secs))
 	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-		"error":       "слишком много попыток входа, повторите позже",
+		"error":       ErrRateLimited.Code,
+		"message":     ErrRateLimited.Message,
 		"retry_after": secs,
 	})
 }
@@ -166,7 +167,7 @@ func (h *Handler) AuthMe(c *gin.Context) {
 func (h *Handler) UpdateProfileMeta(c *gin.Context) {
 	u := c.GetString("briefly_user")
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "требуется вход"})
+		AbortWithError(c, ErrAuthRequired)
 		return
 	}
 	var req struct {
@@ -174,7 +175,7 @@ func (h *Handler) UpdateProfileMeta(c *gin.Context) {
 		Avatar   string `json:"avatar"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный запрос"})
+		AbortWithError(c, ErrInvalidRequest)
 		return
 	}
 	if err := GetAccounts().SetMeta(u, req.Nickname, req.Avatar); err != nil {
@@ -189,7 +190,7 @@ func (h *Handler) UpdateProfileMeta(c *gin.Context) {
 func (h *Handler) AuthChangePassword(c *gin.Context) {
 	u := sessionUser(c)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "требуется вход"})
+		AbortWithError(c, ErrAuthRequired)
 		return
 	}
 	if ok, wait := authLimiter.Allow(c.ClientIP()); !ok {
@@ -201,7 +202,7 @@ func (h *Handler) AuthChangePassword(c *gin.Context) {
 		New     string `json:"new_password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный запрос"})
+		AbortWithError(c, ErrInvalidRequest)
 		return
 	}
 	if err := GetAccounts().ChangePassword(u, req.Current, req.New); err != nil {
@@ -220,7 +221,7 @@ func (h *Handler) AuthChangePassword(c *gin.Context) {
 func (h *Handler) AuthLogoutOthers(c *gin.Context) {
 	u := sessionUser(c)
 	if u == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "требуется вход"})
+		AbortWithError(c, ErrAuthRequired)
 		return
 	}
 	token, _ := c.Cookie(sessionCookieName)

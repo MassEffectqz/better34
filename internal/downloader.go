@@ -47,6 +47,8 @@ type DownloadJob struct {
 	PostID   int
 	FileURL  string
 	FileType string
+	// Source — метка «откуда пост» (провайдер/хост), проставляется в БД.
+	Source string
 	// Referer сайта-источника поста (CDN некоторых сайтов проверяет его).
 	// Пусто → легаси-значение rule34.xxx для задач из старой очереди.
 	Referer string
@@ -57,6 +59,7 @@ type DownloadResult struct {
 	FilePath    string
 	ThumbPath   string
 	DuplicateOf int
+	Source      string
 	Error       error
 }
 
@@ -126,6 +129,9 @@ func NewDownloader(workers int, onResult func(DownloadResult)) *Downloader {
 			if result.Error == nil && result.DuplicateOf == 0 {
 				db := GetDB()
 				db.SetDownloaded(result.PostID, result.FilePath, result.ThumbPath)
+				if result.Source != "" {
+					db.SetPostSource(result.PostID, result.Source)
+				}
 				db.BumpSave()
 				go d.analyzeMedia(result.PostID, result.FilePath, result.ThumbPath)
 			}
@@ -292,6 +298,7 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 			PostID:    job.PostID,
 			FilePath:  filePath,
 			ThumbPath: thumbPath,
+			Source:    job.Source,
 		}
 	}
 
@@ -356,6 +363,7 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 				PostID:    job.PostID,
 				FilePath:  filePath,
 				ThumbPath: thumbPath,
+				Source:    job.Source,
 				Error:     err,
 			}
 		default:
@@ -420,7 +428,7 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 			continue
 		}
 
-		if dup := d.checkDuplicate(partialPath, job.PostID); dup > 0 {
+		if dup := d.checkDuplicate(partialPath, filePath, job.PostID); dup > 0 {
 			return DownloadResult{PostID: job.PostID, DuplicateOf: dup}
 		}
 
@@ -434,6 +442,7 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 			PostID:    job.PostID,
 			FilePath:  filePath,
 			ThumbPath: thumbPath,
+			Source:    job.Source,
 			Error:     err,
 		}
 	}
@@ -441,25 +450,66 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 	return DownloadResult{PostID: job.PostID, Error: lastErr}
 }
 
-// checkDuplicate считает md5 скачанного файла и ищет совпадение среди уже
-// скачанных постов. При дубликате удаляет .part и возвращает id оригинала.
-// Хэш сохраняется в БД, чтобы последующие проверки работали без пересчёта.
-func (d *Downloader) checkDuplicate(path string, postID int) int {
+// checkDuplicate ищет уже скачанный пост с таким же содержимым: сначала по
+// md5 (байт-в-байт), затем по pHash для картинок (пережатые/обрезные копии,
+// порог BRIEFLY_DUP_PHASH_THRESHOLD). При дубликате удаляет .part и возвращает
+// id оригинала. Хэши сохраняются в БД, чтобы последующие проверки работали
+// без пересчёта.
+// partPath — временный файл (ext .part), finalPath — целевой путь, чьё
+// расширение определяет «это картинка» для pHash-фазы.
+func (d *Downloader) checkDuplicate(partPath, finalPath string, postID int) int {
 	if !DBReady() {
 		return 0 // глобальной БД нет (тесты/утилиты) — дедуп неприменим
 	}
-	sum, err := md5File(path)
+	sum, err := md5File(partPath)
 	if err != nil {
 		return 0
 	}
 	db := GetDB()
 	db.SetPostMD5(postID, sum)
 	if exist := db.FindDownloadedByMd5(sum, postID); exist > 0 {
-		os.Remove(path)
+		os.Remove(partPath)
 		log.Printf("dedup: пост %d — дубликат #%d (md5 %s...), файл не сохранён", postID, exist, sum[:8])
 		return exist
 	}
+	// Визуальный дедуп: точный байтовый хэш не видит пережатые копии.
+	if !isImageFilePath(finalPath) {
+		return 0
+	}
+	ph := PerceptualHashFile(partPath)
+	if ph == "" {
+		return 0
+	}
+	db.SetPostPHash(postID, ph)
+	if exist := db.FindDownloadedByPHash(ph, postID, dupPHashThreshold()); exist > 0 {
+		os.Remove(partPath)
+		log.Printf("dedup: пост %d — визуальный дубликат #%d (pHash, порог %d), файл не сохранён",
+			postID, exist, dupPHashThreshold())
+		return exist
+	}
 	return 0
+}
+
+// dupPHashThreshold — порог расстояния Хэмминга для визуального дедупа.
+// Пережатая копия обычно даёт 0-4 бита; выше порог — выше риск ложных
+// совпадений у однотипных артов. Настраивается BRIEFLY_DUP_PHASH_THRESHOLD.
+func dupPHashThreshold() int {
+	if v := strings.TrimSpace(os.Getenv("BRIEFLY_DUP_PHASH_THRESHOLD")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 64 {
+			return n
+		}
+	}
+	return 5
+}
+
+// isImageFilePath возвращает true для расширений, которые умеет декодировать
+// imaging (и для которых имеет смысл pHash).
+func isImageFilePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff":
+		return true
+	}
+	return false
 }
 
 // md5File считает md5 локального файла.
