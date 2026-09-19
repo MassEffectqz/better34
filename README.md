@@ -28,6 +28,22 @@
 
 ## 🚀 Quick Start
 
+### 🛠 Установка зависимостей (рекомендуется для новичков)
+
+Дважды кликните на **`install.bat`** — скрипт автоматически:
+
+1. Проверит, установлены ли **Go** и **Node.js/npm**;
+2. Загрузит Go-зависимости (`go mod download`);
+3. Установит npm-зависимости (`npm install`);
+4. Соберёт frontend (`npm run build`);
+5. Создаст `.env` из `.env.example`, если нужно.
+
+> ⚠️ Первоначальная установка Go и Node.js требуется вручную:
+> - **Go** → [go.dev/dl](https://go.dev/dl/)
+> - **Node.js** → [nodejs.org](https://nodejs.org/) (в комплекте с npm)
+
+---
+
 ### 1. From source (`run.cmd`)
 
 > **Requirements:** [Go ≥ 1.25](https://go.dev/dl/)
