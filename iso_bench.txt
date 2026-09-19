@@ -1,2 +1,0 @@
-PASS
-ok  	briefly/benchtmp	0.227s

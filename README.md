@@ -1,127 +1,132 @@
 # briefly (better34)
 
-Self-hosted LAN-просмотрщик боору-постов: Go-сервер (Gin + SQLite) проксирует и
-кэширует контент внешних провайдеров, PWA-фронтенд на ванильном JS.
+> **Self-hosted, offline-first LAN viewer for booru-style imageboards**
+> (rule34 & friends). Go + Gin backend with a privacy-focused PWA frontend.
 
-Запуск: `.\run.ps1` → телефон: `http://<ip-пк>:3000` (авто-редирект на HTTPS/HTTP2,
-самоподписанный сертификат — принять один раз).
-
-Ключевые подсистемы: провайдеры (`internal/rule34.go` + интерфейс `Provider`),
-дисковый media-cache (`internal/handlers_media.go`), SSE-события (`internal/sse.go`),
-аккаунты (`internal/accounts.go`), фронтенд-граф `static/js/*.js` (точка входа
-`app.js`, сборка esbuild → `static/js/dist/app.js`).
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ed?logo=docker)](Dockerfile)
+[![PWA](https://img.shields.io/badge/PWA-ready-4285EF?logo=pwa)](static/js/sw.js)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/MassEffectqz/better34/pulls)
 
 ---
 
-## Roadmap больших улучшений
+## ✨ Features
 
-### 1. Offline-first PWA — ✅ реализовано
-Телефон работает даже без сервера: ранее загруженные запросы ленты отдаются из
-кэша Service Worker (network-first + fallback), миниатюры кэшируются
-cache-first (неизменяемы по построению), мутации (лайк/скрытие/коллекция) при
-отсутствии сети ставятся в очередь IndexedDB и доотправляются при появлении
-связи (`static/js/offline.js`). Конфликты решаются last-write-wins.
-Доставка очереди не требует открытой вкладки: enqueue регистрирует Background
-Sync 'briefly-flush', и service worker выгружает очередь при появлении сети
-(Chromium; в Firefox/Safari — фолбэк: обработчик `online` и flush при старте
-страницы). Страница и воркер не дублируют запросы — flush сериализован
-через Web Locks.
+- **Self-hosted** — всё в локальной сети, без посторонних серверов.
+- **Offline-first PWA** — просматривайте раньше скачанное без интернета, даже без вкладки.
+- **Privacy-first** — ваш трафик и скачанные файлы никогда не уходят наружу.
+- **Disk cache + pHash dedup** — не качаете одно и то же дважды.
+- **Semantic search via Ollama** — ищите `?котики в шляпах`, а не только теги.
+- **Blurhash previews** — мгновенная сетка, даже для больших картинок.
+- **QR-login + remote sync** — вход по QR-коду и «пульт» для телефона/ПК.
+- **HTTP/3 (QUIC)** — если браузер поддерживает.
+- **User-defined providers** — добавляйте свои gelbooru-сайты через JSON.
+- **Accounts & collections** — лайки, скрытия, коллекции, комментарии.
 
-### 2. pHash-дедупликация и «похожие» — ✅ реализовано
-При скачивании картинки считается perceptual hash (DCT 8×8, `internal/phash.go`)
-и пишется в колонку `posts.phash`. Эндпоинт `GET /api/similar/:id` возвращает
-визуально похожие локальные посты (расстояние Хэмминга). Во вьювере — кнопка
-«похожие», открывающая их лентой. Видео не хэшируются.
+---
 
-### 3. Семантический поиск через Ollama — ✅ реализовано
-Запрос в поиске, начинающийся с `?` (например `?котики в шляпах`), отправляется
-в локальную Ollama (`POST /api/nl-search`), модель превращает фразу в теговый
-запрос бура, результат кэшируется. Настройка — переменные окружения:
-`BRIEFLY_OLLAMA` (URL, по умолчанию `http://127.0.0.1:11434`),
-`BRIEFLY_OLLAMA_MODEL` (по умолчанию `llama3.2:latest`; подойдёт и
-`qwen2.5:14b-instruct-q4_K_M` — качественнее, но тяжелее и медленнее).
+## 🚀 Quick Start
 
-### 4. Blurhash-заглушки — ✅ реализовано (MVP)
-Миниатюры дополняются blurhash (внутренний кодировщик `internal/blurhash.go`,
-колонка `posts.blurhash`). Вьювер показывает размытый плейсхолдер на canvas,
-пока грузится полное изображение — сетка и открытие поста «красятся» мгновенно.
-Полный транскодинг видео в AV1/HLS требует ffmpeg — оставлено на будущее.
+### 1. From source (`run.cmd`)
 
-### 5. QR-логин на другом устройстве — ✅ реализовано
-На ПК: настройки → «QR-вход на другом устройстве» → QR с одноразовым токеном
-(живёт 5 минут, `GET /api/auth/qr/svg`). Телефон сканирует → открывается
-`/qr?t=...` → `POST /api/auth/qr/claim` создаёт сессию без ввода пароля.
+> **Requirements:** [Go ≥ 1.25](https://go.dev/dl/)
 
-### 6. Синхронный режим / пульт — ✅ реализовано (MVP)
-`POST /api/remote/push {id}` публикует SSE-событие `remote`. Во вьювере кнопка
-«Показать на другом устройстве» открывает пост во всех подключённых клиентах
-(включая «пульт»: телефон листает — ПК показывает). Приёмник включается
-переключателем в настройках (`enable_remote`).
+```bash
+git clone --depth 1 https://github.com/MassEffectqz/better34.git
+cd better34
+copy .env.example .env    # (опционально, отредактируйте под себя)
+go mod tidy
+npm ci                  # только для разработки фронтенда
+run.cmd                 # или: go run .
+```
 
-### 9. Провайдеры без кода — ✅ реализовано
-Все gelbooru-0.2-совместимые сайты добавляются файлом `data/providers.json`
-(имя, хост, URL-шаблон dapi, HTTP(S)) — без перекомпиляции, с горячей
-загрузкой. Пример: `data/providers.json.example`. Встроенные провайдеры
-не тронуты.
-
-### 10. HTTP/3 (QUIC) — ✅ реализовано
-При включённом TLS сервер дополнительно слушает UDP:3000 (`quic-go/http3`) и
-рекламирует себя заголовком `Alt-Svc`. Браузер сам апгрейдится, если сеть
-позволяет; выключается `BRIEFLY_H3=0`.
-
-### 11. pHash-дедуп пережатых копий — ✅ реализовано
-При скачивании картинки кроме md5 (байт-в-байт) проверяется perceptual hash:
-если `posts.phash` нового файла на расстоянии Хэмминга ≤ `BRIEFLY_DUP_PHASH_THRESHOLD`
-(по умолчанию 5) от уже скачанного — файл не сохраняется, пост помечается
-дубликатом. Старые скачанные картинки (без pHash) до-хэшируются в фоне при
-старте (`BackfillPHashes`).
-
-### 12. Объединение дубликатов и «откуда пост» — ✅ реализовано
-`POST /api/dups/merge {keep_id, remove_ids}` вместо простого удаления лишних
-файлов переносит коллекции, лайки/скрытия и комментарии дубликата на пост-
-оригинал (во всех аккаунтах) и удаляет запись целиком. Кнопка «Объединить
-дубликаты» — в настройках рядом с «Удалить дубликаты». Посты запоминают
-метку источника (`posts.source`, провайдер или хост) и показывают её в
-инфо-строке вьювера — видно, откуда скачан пост.
-
-### Дальше (не начато)
-- Полный транскодинг видео (ffmpeg → AV1/HLS) — задача 4, фаза 2.
-- CRDT-синхронизация состояний между устройствами (расширение задачи 1).
-- CLIP-эмбеддинги библиотеки для поиска по описанию/картинке (фаза 2 задачи 3).
-
-## Переменные окружения
-
-| Переменная | По умолчанию | Назначение |
-|---|---|---|
-| `BRIEFLY_HOST` | `0.0.0.0` | Интерфейс сервера (`127.0.0.1` — только локально) |
-| `BRIEFLY_PORT` | `3000` | Порт |
-| `BRIEFLY_ALLOWED_HOSTS` | авто (все LAN-IP) | Белый список хостов |
-| `BRIEFLY_TLS` | `1` | HTTPS + HTTP/2 (self-signed, `data/tls`) |
-| `BRIEFLY_H3` | `1` | HTTP/3/QUIC на том же порту (отключается `=0`) |
-| `BRIEFLY_MEDIA_CACHE_GB` | `20` | Бюджет дискового media-cache (общий для LAN) |
-| `BRIEFLY_WARM` | `1` | Прогрев proxy-cache превью после выдачи поиска (`0` — выключить) |
-| `BRIEFLY_DOH_FALLBACK` | встроенный список rule34 | Замена fallback-IP для DoH: `"host=ip,host2=ip2"`; `off` — выключить fallback |
-| `BRIEFLY_FORCE_HTTPS` | — | `1` — ставить HSTS (по TLS); полный принудительный redirect — будущий флаг |
-| `BRIEFLY_SEG` | `1` | Сегментированная параллельная закачка больших видео в media-cache (`0` — выключить) |
-| `BRIEFLY_DEBUG` | — | `1` — unbundled-фронтенд + лог запросов |
-| `BRIEFLY_OLLAMA` | `http://127.0.0.1:11434` | URL локальной Ollama (семантический поиск) |
-| `BRIEFLY_OLLAMA_MODEL` | `dolphin-mistral:7b` | Модель Ollama (uncensored, не отказывает на NSFW) |
-| `BRIEFLY_MAX_DOWNLOAD_MB` | картинки 4 / видео 256 | Максимальный размер скачиваемого файла в МБ |
-| `BRIEFLY_LOG_LEVEL` | `info` | Уровень лога: `debug` / `info` / `warn` / `error` |
-| `BRIEFLY_LOG_DIR` | `data/logs` | Отдельная папка для логов (ротация 10 МБ, старший файл → `.old`) |
-| `BRIEFLY_DB_BACKUPS` | `7` | Сколько автобэкапов БД хранить в `data/backups` (`0` — выключить) |
-| `BRIEFLY_DB_BACKUP_DAYS` | `30` | Максимальный возраст автобэкапа БД в днях (`0` — без ограничения) |
-| `BRIEFLY_DUP_PHASH_THRESHOLD` | `5` | Порог расстояния Хэмминга pHash для визуального дедупа пережатых копий при скачивании |
-
-В `data/` лежат: БД `posts.db` (+WAL/SHM), `data/backups/` — автобэкапы БД,
-`data/logs/briefly.log` — ротируемый лог (10 МБ, старший файл → `.old`),
-`data/tls/` — self-signed сертификаты, `data/posts/` — скачанные файлы.
-
-## Разработка
+После запуска в консоли вы увидите свой LAN-IP — откройте в браузере:
 
 ```
-npm run check        # eslint + tsc + node-тесты фронтенда
+https://<ваш-IP-в-LAN>:3000
+```
+
+> При первом входе браузер предупредит о самоподписном сертификате — нажмите **«Дополнительно → Перейти на сайт»**.
+
+### 2. Docker (рекомендуется для постоянного сервера)
+
+```bash
+git clone https://github.com/MassEffectqz/better34.git
+cd better34
+cp docker-compose.yml.example docker-compose.yml
+docker compose up -d
+```
+
+Откройте: `https://localhost:3000`
+
+---
+
+## ⚙️ Environment Variables
+
+| Переменная                  | По умолч.          | Назначение                                      |
+|----------------------------|------------------|-------------------------------------------------|
+| `BRIEFLY_HOST`             | `0.0.0.0`        | Интерфейс сервера (`127.0.0.1` — локально)       |
+| `BRIEFLY_PORT`             | `3000`           | Порт                                            |
+| `BRIEFLY_TLS`              | `1`              | HTTPS + HTTP/2 (self-signed сертификат)        |
+| `BRIEFLY_H3`               | `1`              | HTTP/3/QUIC (отключить: `0`)                    |
+| `BRIEFLY_MEDIA_CACHE_GB`   | `20`             | Дисковый кэш медиа                              |
+| `BRIEFLY_OLLAMA`           | `127.0.0.1:11434`| URL локальной Ollama                            |
+| `BRIEFLY_OLLAMA_MODEL`     | `dolphin-mistral:7b` | Модель для семантического поиска            |
+| `BRIEFLY_ALLOWED_HOSTS`    | авто             | Белый список хостов для доступа                 |
+| `BRIEFLY_DEBUG`            | —                | `1` = unbundled frontend + лог запросов         |
+
+Полный список → [.env.example](.env.example)
+
+---
+
+## 🛠 Development
+
+```bash
+npm run check        # eslint + tsc + frontend tests
+npm run build        # пересборка static/js/dist/app.js после правок
 go test ./...        # Go-тесты
-npm run build        # пересборка static/js/dist/app.js (нужна после правок JS)
-go run .             # сервер (или .\run.ps1 с сетевыми дефолтами)
+go run .             # запуск сервера
 ```
+
+---
+
+## 📄 Documentation
+
+- [Environment variables](.env.example)
+- [Dockerfile build](Dockerfile)
+- [Docker Compose setup](docker-compose.yml.example)
+- [Architecture notes → Wiki](https://github.com/MassEffectqz/better34/wiki)
+
+---
+
+## 🤝 Contributing
+
+PR-ы приветствуются! Перед тем как открывать PR — проверьте:
+
+```bash
+npm run check && go test ./...
+```
+
+---
+
+## 📜 License
+
+MIT © [better34 contributors](https://github.com/MassEffectqz/better34/graphs/contributors)
+
+---
+
+<!--
+  ┌────────────────────────────────────────────────────────────┐
+  │  Screenshots:                                                │
+  │  Replace the lines below with real screenshots.  │
+  │  Suggested sections:                                         │
+  │  1) Feed grid with blurhash placeholders                    │
+  │  2) Single post viewer                                      │
+  │  3) Settings / QR-login                                     │
+  │                                                              │
+  │  ![Feed](docs/screenshot-feed.png)                          │
+  │  ![Viewer](docs/screenshot-viewer.png)                      │
+  │  ![Settings](docs/screenshot-settings.png)                  │
+  └────────────────────────────────────────────────────────────┘
+-->
