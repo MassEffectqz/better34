@@ -375,7 +375,7 @@ App.updateAuthUI = function () {
   // Заполняем скрытое username-поле формы смены пароля — без него Chrome
   // ругается "[DOM] Password forms should have username fields" в консоли.
   const un = document.getElementById('input-current-username');
-  if (un && u && u.username) un.value = u.username;
+    if (un && u && u.username) /** @type {HTMLInputElement} */ (un).value = u.username;
 };
 
 /** @this {AppType} */
@@ -383,7 +383,7 @@ App.changePassword = async function () {
   const current = (this.els.inputCurrentPassword?.value || '').trim();
   const next = this.els.inputNewPassword?.value || '';
   const unField = document.getElementById('input-current-username');
-  if (unField && !unField.value && this.state.user?.username) unField.value = this.state.user.username;
+    if (unField && !/** @type {HTMLInputElement} */ (unField).value && this.state.user?.username) /** @type {HTMLInputElement} */ (unField).value = this.state.user.username;
   if (!current || next.length < 6) {
     this.showToast('Введите текущий и новый пароль (мин. 6 символов)', 'error');
     return;
