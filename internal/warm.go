@@ -36,8 +36,8 @@ var (
 )
 
 const (
-	maxWarmPending   = 8
-	maxMediaWarm     = 2
+	maxWarmPending = 8
+	maxMediaWarm   = 2
 )
 
 func warmEnabled() bool {
