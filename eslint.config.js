@@ -42,6 +42,7 @@ export default [
         clearInterval: 'readonly',
         performance: 'readonly',
         CustomEvent: 'readonly',
+        DOMParser: 'readonly',
         console: 'readonly',
                  BarcodeDetector: 'readonly',
          Notification: 'readonly',

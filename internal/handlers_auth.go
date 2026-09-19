@@ -44,13 +44,6 @@ func (h *Handler) AuthRegister(c *gin.Context) {
 		return
 	}
 	acc := GetAccounts()
-	// Саморегистрация открыта только до создания первого аккаунта:
-	// иначе любой хост LAN заводит себе доступ к общим данным.
-	// Дальнейшие пользователи — по договорённости с админом (вручную).
-	if acc.Count() > 0 {
-		AbortWithError(c, ErrAccountExists)
-		return
-	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -138,7 +131,6 @@ func (h *Handler) AuthLogout(c *gin.Context) {
 // GET /api/auth/me
 func (h *Handler) AuthMe(c *gin.Context) {
 	acc := GetAccounts()
-	registerOpen := acc.Count() == 0
 	if u := sessionUser(c); u != "" {
 		user, ok := acc.Get(u)
 		if ok {
@@ -151,15 +143,15 @@ func (h *Handler) AuthMe(c *gin.Context) {
 				},
 				"users_exist":   true,
 				"is_admin":      acc.IsAdmin(u),
-				"register_open": registerOpen,
+				"register_open": true,
 			})
 			return
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"authed":        false,
-		"users_exist":   !registerOpen,
-		"register_open": registerOpen,
+		"users_exist":   acc.Count() > 0,
+		"register_open": true,
 	})
 }
 

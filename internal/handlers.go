@@ -358,6 +358,16 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 	}
 
 	db := GetDB()
+	// Обогащение и запись метаданных — батчами: один SELECT ... WHERE id IN (...)
+	// и одна транзакция вставки. Раньше это были ~120 раздельных транзакций
+	// (Get + UpsertMeta на пост) на страницу выдачи — доминирующая нагрузка
+	// на запись при автоподгрузке ленты (P1-3).
+	ids := make([]int, 0, len(posts))
+	for _, p := range posts {
+		ids = append(ids, p.ID)
+	}
+	byID := db.GetMany(ids)
+	upserts := make([]*Post, 0, len(posts))
 	enriched := make([]gin.H, 0)
 	for _, p := range posts {
 		entry := gin.H{
@@ -375,7 +385,7 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 			"downloaded":  false,
 		}
 
-		if existing := db.Get(p.ID); existing != nil {
+		if existing := byID[p.ID]; existing != nil {
 			entry["downloaded"] = existing.Downloaded
 			entry["file_path"] = existing.FilePath
 			if existing.ThumbPath != "" {
@@ -383,7 +393,7 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 			}
 		}
 
-		db.UpsertMeta(&Post{
+		upserts = append(upserts, &Post{
 			ID:         p.ID,
 			Tags:       p.Tags,
 			FileURL:    p.FileURL,
@@ -399,11 +409,37 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 
 		enriched = append(enriched, entry)
 	}
+	db.UpsertMetaMany(upserts)
 
 	// Прогрев: превью этой страницы фоново качаются в proxy-cache, пока
 	// пользователь смотрит текущую, — сетка следующих страниц грузится
 	// с локального диска, а не с CDN (выключается BRIEFLY_WARM=0).
 	go warmPreviewCache(h, enriched)
+
+	// Предзагрузка превью первого экрана: браузер стартует сетевые запросы
+	// до вставки <img> в DOM, до первого рендера сетки (см. preload в SPA).
+	// Только нескачанные картинки: у скачанных есть локальный /api/thumb.
+	if len(enriched) > 0 {
+		links := make([]string, 0, 6)
+		for _, e := range enriched {
+			if len(links) >= 6 {
+				break
+			}
+			dl, _ := e["downloaded"].(bool)
+			ft, _ := e["file_type"].(string)
+			if dl || ft == "video" {
+				continue
+			}
+			purl, _ := e["preview_url"].(string)
+			if purl == "" {
+				continue
+			}
+			links = append(links, fmt.Sprintf(`</api/proxy?url=%s&kind=preview>; rel=preload; as=image`, url.QueryEscape(purl)))
+		}
+		if len(links) > 0 {
+			c.Header("Link", strings.Join(links, ", "))
+		}
+	}
 
 	sortedCopy := make([]gin.H, len(enriched))
 	copy(sortedCopy, enriched)
@@ -459,10 +495,20 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 	db := GetDB()
 	enriched := make([]gin.H, 0)
 
-	var apiIDs []int
+	// Обогащение мета батчем: один SELECT ... WHERE id IN (...) вместо до 2000
+	// одиночных db.Get(id), запись — батчевой UpsertMetaMany вместо ~2000
+	// отдельных UpsertMeta (P1-3). GetMany/UpsertMetaMany внутри чанкируют,
+	// чтобы не упереться в SQLITE_LIMIT_VARIABLE_NUMBER.
+	byID := db.GetMany(ids)
+	apiIDs := make([]int, 0, len(ids))
+	upsertBatch := make([]*Post, 0, len(ids))
 	for _, id := range ids {
-		existing := db.Get(id)
-		if existing != nil && existing.PreviewURL != "" {
+		existing, ok := byID[id]
+		// BUG (профиль): старые лайки могли быть записаны в БД до появления
+		// PreviewURL или с пустым preview (импорт, удаление на источнике).
+		// Если пост скачан/имеет локальную миниатюру — отдаём запись из БД
+		// (превью профиля берёт /api/thumb/:id), иначе пост терялся бы навсегда.
+		if ok && (existing.PreviewURL != "" || existing.Downloaded || existing.ThumbPath != "") {
 			entry := gin.H{
 				"id":          existing.ID,
 				"tags":        existing.Tags,
@@ -490,8 +536,8 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 
 	if len(apiIDs) > 0 {
 		prov := h.provider()
-		upsert := func(p Rule34Post) {
-			db.UpsertMeta(&Post{
+		tryUpsert := func(p Rule34Post) {
+			upsertBatch = append(upsertBatch, &Post{
 				ID:         p.ID,
 				Tags:       p.Tags,
 				FileURL:    p.FileURL,
@@ -546,7 +592,7 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 					if !want[p.ID] {
 						continue // страховка от сайтов, игнорирующих id-список
 					}
-					upsert(p)
+					tryUpsert(p)
 				}
 			}
 		} else if prefix := providerSingleID(prov); prefix != "" {
@@ -580,10 +626,11 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 			wg.Wait()
 			for _, id := range apiIDs {
 				if p, ok := fetched[id]; ok {
-					upsert(p)
+					tryUpsert(p)
 				}
 			}
 		}
+		db.UpsertMetaMany(upsertBatch)
 	}
 
 	// Прогрев превью для профиля/вьювера — тем же механизмом, что и для

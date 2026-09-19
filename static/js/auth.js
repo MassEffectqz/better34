@@ -1,6 +1,8 @@
 import { App } from './state.js';
 import { _ } from './utils.js';
 import { API } from './api.js';
+
+/** @this {AppType} */
 App.initAuth = async function () {
   this._resolveAuth = null;
   this.authReady = new Promise(res => { this._resolveAuth = res; });
@@ -22,18 +24,19 @@ App.initAuth = async function () {
   await this.authReady;
 };
 
+/** @this {AppType} */
 App.showAuth = function (mode) {
   this._authMode = mode === 'register' ? 'register' : 'login';
   const o = _('auth-overlay');
   o.classList.remove('hidden');
   // Пока форма скрыта, поля задизейблены (см. hideAuth) — возвращаем.
-  ['auth-username', 'auth-password', 'auth-password2'].forEach(id => { _(id).disabled = false; });
+  ['auth-username', 'auth-password', 'auth-password2'].forEach(id => { /** @type {HTMLInputElement} */ (_(id)).disabled = false; });
   _('auth-title').textContent = this._authMode === 'register' ? 'Создание аккаунта' : 'Вход';
   _('auth-submit').textContent = this._authMode === 'register' ? 'Создать аккаунт' : 'Войти';
   _('auth-toggle').textContent = this._authMode === 'register' ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Создать';
   _('auth-pw2-field').style.display = this._authMode === 'register' ? '' : 'none';
-  _('auth-password').autocomplete = this._authMode === 'register' ? 'new-password' : 'current-password';
-  _('auth-password').placeholder = this._authMode === 'register' ? 'минимум 6 символов' : 'пароль';
+  /** @type {HTMLInputElement} */ (_('auth-password')).autocomplete = this._authMode === 'register' ? 'new-password' : 'current-password';
+  /** @type {HTMLInputElement} */ (_('auth-password')).placeholder = this._authMode === 'register' ? 'минимум 6 символов' : 'пароль';
   const meter = _('auth-meter');
   if (meter) {
     meter.style.display = this._authMode === 'register' ? '' : 'none';
@@ -48,33 +51,36 @@ App.showAuth = function (mode) {
     _('auth-password2').addEventListener('input', () => this.updateAuthMatch());
   }
   this.setAuthError('');
-  setTimeout(() => _('auth-username').focus(), 50);
+  if (window.innerWidth > 768) setTimeout(() => /** @type {HTMLInputElement} */ (_('auth-username')).focus(), 50);
   this.loadAuthChips();
 };
 
+/** @this {AppType} */
 App.updateAuthMeter = function () {
   const meter = _('auth-meter');
   if (!meter) return;
-  const p = _('auth-password').value;
+  const p = /** @type {HTMLInputElement} */ (_('auth-password')).value;
   if (!p) { meter.dataset.level = '0'; return; }
-  const variety = /[a-z]/.test(p) + /[A-Z]/.test(p) + /\d/.test(p) + /[^A-Za-z0-9]/.test(p);
+  const variety = Number( /[a-z]/.test(p) ) + Number( /[A-Z]/.test(p) ) + Number( /\d/.test(p) ) + Number( /[^A-Za-z0-9]/.test(p) );
   let level;
   if (p.length < 6) level = 1;
   else if (p.length < 10) level = 2;
   else level = variety >= 2 ? 4 : 3;
-  meter.dataset.level = level;
+  meter.dataset.level = String(level);
 };
 
+/** @this {AppType} */
 App.updateAuthMatch = function () {
   const hint = _('auth-hint');
   if (!hint) return;
-  const p1 = _('auth-password').value;
-  const p2 = _('auth-password2').value;
+  const p1 = /** @type {HTMLInputElement} */ (_('auth-password')).value;
+  const p2 = /** @type {HTMLInputElement} */ (_('auth-password2')).value;
   if (!p2) { hint.textContent = ''; hint.className = 'auth-hint'; return; }
   if (p1 === p2) { hint.textContent = 'пароли совпадают'; hint.className = 'auth-hint ok'; }
   else { hint.textContent = 'пароли не совпадают'; hint.className = 'auth-hint bad'; }
 };
 
+/** @this {AppType} */
 App.loadAuthChips = async function () {
   if (this._authChipsLoaded) return;
   this._authChipsLoaded = true;
@@ -87,7 +93,7 @@ App.loadAuthChips = async function () {
       this._rafPending = true;
       requestAnimationFrame(() => {
         this._rafPending = false;
-        const c = document.querySelector('.auth-chips');
+        const c = /** @type {HTMLElement} */ (document.querySelector('.auth-chips'));
         if (!c) return;
         c.style.setProperty('--px', ((e.clientX / innerWidth) - 0.5) * 30 + 'px');
         c.style.setProperty('--py', ((e.clientY / innerHeight) - 0.5) * 30 + 'px');
@@ -115,16 +121,18 @@ App.loadAuthChips = async function () {
 };
 
 App._chipSeed = 12345;
+/** @this {AppType} */
 App._chipRnd = function () {
   this._chipSeed = (this._chipSeed * 1103515245 + 12345) & 0x7fffffff;
   return this._chipSeed / 0x7fffffff;
 };
 
+/** @this {AppType} */
 App.buildChipSlots = function () {
   this._chipSeed = 12345;
   const slots = [];
   for (let i = 0; i < 64; i++) {
-    let x, y, t;
+    let x = 0, y = 0, t;
     for (t = 0; t < 50; t++) {
       x = 2 + this._chipRnd() * 95;
       y = 2 + this._chipRnd() * 93;
@@ -139,6 +147,7 @@ App.buildChipSlots = function () {
   return slots;
 };
 
+/** @this {AppType} */
 App.renderPopularTags = function () {
   const cont = document.querySelector('.auth-chips');
   if (!cont || !this._popularTags || !this._popularTags.length) return;
@@ -214,12 +223,13 @@ App.renderPopularTags = function () {
   }
 };
 
+/** @this {AppType} */
 App.hideAuth = function () {
   // Очищаем пароли и дизейблим поля формы: пока аккаунт авторизован,
   // форма входа не должна выглядеть для браузера как «активная логин-форма»,
   // иначе он постоянно предлагает «Сохранить пароль?» при любом вводе.
   ['auth-username', 'auth-password', 'auth-password2'].forEach((id) => {
-    const el = _(id);
+    const el = /** @type {HTMLInputElement} */ (_(id));
     el.value = '';
     el.disabled = true;
     if (el === document.activeElement) el.blur();
@@ -227,6 +237,7 @@ App.hideAuth = function () {
   _('auth-overlay').classList.add('hidden');
 };
 
+/** @this {AppType} */
 App.setAuthError = function (msg) {
   const el = _('auth-error');
   el.textContent = msg;
@@ -235,21 +246,22 @@ App.setAuthError = function (msg) {
     const card = document.querySelector('.auth-card');
     if (card) {
       card.classList.remove('shake');
-      void card.offsetWidth;
+      void /** @type {HTMLElement} */ (card).offsetWidth;
       card.classList.add('shake');
     }
   }
 };
 
+/** @this {AppType} */
 App.authSubmit = async function () {
-  const u = _('auth-username').value.trim().toLowerCase();
-  const p = _('auth-password').value;
+  const u = /** @type {HTMLInputElement} */ (_('auth-username')).value.trim().toLowerCase();
+  const p = /** @type {HTMLInputElement} */ (_('auth-password')).value;
   if (!u || !p) { this.setAuthError('Заполните логин и пароль'); return; }
   if (this._authMode === 'register') {
-    if (p !== _('auth-password2').value) { this.setAuthError('Пароли не совпадают'); return; }
+    if (p !== /** @type {HTMLInputElement} */ (_('auth-password2')).value) { this.setAuthError('Пароли не совпадают'); return; }
     if (p.length < 6) { this.setAuthError('Пароль: минимум 6 символов'); return; }
   }
-  const btn = _('auth-submit');
+  const btn = /** @type {HTMLButtonElement} */ (_('auth-submit'));
   btn.disabled = true;
   btn.classList.add('loading');
   this.setAuthError('');
@@ -273,6 +285,7 @@ App.authSubmit = async function () {
 // QR-вход с экрана авторизации: телефон сканирует QR, показанный ПК
 // (ПК залогинен → Настройки → Показать QR). Телефон считывает ссылку
 // /qr?t=TOKEN и переходит на неё — дальше страница /qr сама обработает.
+/** @this {AppType} */
 App.authQR = async function () {
   this.setAuthError('');
   if (!('BarcodeDetector' in window) && !navigator.mediaDevices?.getUserMedia) {
@@ -297,12 +310,12 @@ App.authQR = async function () {
     if (stream) stream.getTracks().forEach(t => t.stop());
     if (ov.parentNode) ov.remove();
   };
-  ov.querySelector('#auth-qr-scan-cancel').addEventListener('click', cleanup);
+  /** @type {HTMLElement} */ (ov.querySelector('#auth-qr-scan-cancel')).addEventListener('click', cleanup);
   ov.addEventListener('click', (e) => { if (e.target === ov) cleanup(); });
 
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    const video = ov.querySelector('#auth-qr-video');
+    const video = /** @type {HTMLVideoElement} */ (ov.querySelector('#auth-qr-video'));
     video.srcObject = stream;
     await video.play();
 
@@ -310,7 +323,7 @@ App.authQR = async function () {
       if (!scanning) return;
       if ('BarcodeDetector' in window) {
         try {
-          const barcodes = await new BarcodeDetector({ formats: ['qr_code'] }).detect(video);
+          const barcodes = await new /** @type {any} */ (BarcodeDetector)({ formats: ['qr_code'] }).detect(video);
           if (barcodes.length) {
             const val = barcodes[0].rawValue;
             // Только ссылки этого же origin: QR со сторонним URL
@@ -331,7 +344,7 @@ App.authQR = async function () {
     if ('BarcodeDetector' in window) {
       detect();
     } else {
-      ov.querySelector('#auth-qr-scan-status').textContent =
+      /** @type {HTMLElement} */ (ov.querySelector('#auth-qr-scan-status')).textContent =
         'BarcodeDetector недоступен — откройте ссылку вручную';
     }
   } catch (err) {
@@ -340,25 +353,37 @@ App.authQR = async function () {
   }
 };
 
+/** @this {AppType} */
 App.afterLogin = async function () {
   await this.loadProfile();
   this.updateAuthUI();
-  this.showToast(`Добро пожаловать, ${this.state.user.nickname || this.state.user.username}!`);
+  const name = this.state.user ? this.state.user.nickname || this.state.user.username : '';
+  this.showToast(`Добро пожаловать, ${name}!`);
   await this.loadPosts(true);
 };
 
+/** @this {AppType} */
 App.authToggleMode = function () {
   this.showAuth(this._authMode === 'register' ? 'login' : 'register');
 };
 
+/** @this {AppType} */
 App.updateAuthUI = function () {
   const u = this.state.user;
   const item = document.querySelector('.header-menu-item[data-action="logout"]');
-  if (item) item.style.display = u ? '' : 'none';
+  if (item) /** @type {HTMLElement} */ (item).style.display = u ? '' : 'none';
+  // Заполняем скрытое username-поле формы смены пароля — без него Chrome
+  // ругается "[DOM] Password forms should have username fields" в консоли.
+  const un = document.getElementById('input-current-username');
+  if (un && u && u.username) un.value = u.username;
 };
+
+/** @this {AppType} */
 App.changePassword = async function () {
   const current = (this.els.inputCurrentPassword?.value || '').trim();
   const next = this.els.inputNewPassword?.value || '';
+  const unField = document.getElementById('input-current-username');
+  if (unField && !unField.value && this.state.user?.username) unField.value = this.state.user.username;
   if (!current || next.length < 6) {
     this.showToast('Введите текущий и новый пароль (мин. 6 символов)', 'error');
     return;
@@ -375,6 +400,7 @@ App.changePassword = async function () {
   }
 };
 
+/** @this {AppType} */
 App.logoutOthers = async function () {
   const ok = await this.confirmDialog({
     title: 'Завершить другие сессии?',
@@ -391,7 +417,10 @@ App.logoutOthers = async function () {
   }
 };
 
+/** @this {AppType} */
 App.logout = async function () {
+  const ok = await this.confirmDialog({ title: 'Выйти из аккаунта?', message: 'Вы будете перенаправлены на страницу входа.', okText: 'Выйти', danger: true });
+  if (!ok) return;
   try { await API.post('/auth/logout'); } catch {}
   API.invalidate('/');
   // Сбрасываем кэш авторизации API (legacy-токен читается из meta —

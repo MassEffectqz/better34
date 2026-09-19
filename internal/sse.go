@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,11 +27,8 @@ func publishSSE(payload map[string]any) {
 		select {
 		case ch <- string(data):
 		default:
-			// Медленный подписчик: не блокируем остальных и не теряем
-			// события молча — разрываем соединение, клиент переподключится
-			// (EventSource auto-reconnect) и получит свежий статус.
-			delete(hub.subs, ch)
-			close(ch)
+			// Канал подписчика заполнен: пропускаем событие.
+			// Не удаляем подписчика — он может быть просто медленным.
 		}
 	}
 }
@@ -70,13 +68,16 @@ func (h *Handler) StreamEvents(c *gin.Context) {
 	ch, unsubscribe := subscribeSSE()
 	defer unsubscribe()
 
+	sendData := func(data string) {
+		c.SSEvent("event", data)
+		flusher.Flush()
+	}
 	sendJSON := func(payload map[string]any) {
 		data, err := json.Marshal(payload)
 		if err != nil {
 			return
 		}
-		c.SSEvent("event", string(data))
-		flusher.Flush()
+		sendData(string(data))
 	}
 
 	if h.downloader != nil {
@@ -93,16 +94,54 @@ func (h *Handler) StreamEvents(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	// Heartbeat комментарием раз в 25с: мобильные NAT/gateway не рубят
+	// простое соединение, и статус загрузок не теряется до переподключения.
+
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+	// Коалесинг статус-событий: пачка событий загрузки схлопывается в одно.
+
+	var (
+		lastStatus    time.Time
+		pendingStatus string
+		flushAt       <-chan time.Time
+	)
+	flushPending := func() {
+		if pendingStatus != "" {
+			lastStatus = time.Now()
+			sendData(pendingStatus)
+			pendingStatus = ""
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ch:
-			if !ok {
-				return // канал закрыт: медленного подписчика отключили — клиент переподключится
+		case <-ticker.C:
+			// SSE-комментарий клиент игнорирует, но держит соединение живым.
+			if _, err := c.Writer.WriteString(": ping\n\n"); err != nil {
+				return
 			}
-			c.SSEvent("event", msg)
 			flusher.Flush()
+			flushPending()
+		case <-flushAt:
+			flushAt = nil
+			flushPending()
+		case msg := <-ch:
+			// Канал подписчика не закрывается извне (publishSSE только шлёт,
+			// unsubscribe удаляет из карты) — ветка !ok недостижима, не проверяем.
+			var ev map[string]any
+			if json.Unmarshal([]byte(msg), &ev) == nil && ev["type"] == "status" {
+				pendingStatus = msg // последнее событие выигрывает
+				if time.Since(lastStatus) >= 50*time.Millisecond {
+					flushPending()
+				} else if flushAt == nil {
+					wait := 50*time.Millisecond - time.Since(lastStatus)
+					flushAt = time.After(wait)
+				}
+				continue
+			}
+			sendData(msg)
 		}
 	}
 }

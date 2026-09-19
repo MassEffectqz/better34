@@ -84,10 +84,13 @@ console.log('offline-очередь: isQueueable, enqueueMutation, flushOfflineQ
     calls[0].opts.method === 'POST' && calls[0].opts.body === JSON.stringify({ id: 77 }),
     calls[0].opts.body);
 
-  // ── 3. 400/404 считаются доставленными (повтор бессмысленен) ──
+  // ── 3. 400/404 не залипают в очереди ──
+  // PB-4: 400 — данные устарели/сессия истекла: элемент выбрасывается с
+  // уведомлением, поэтому в «доставленных» он не считается (flushed=0),
+  // но из очереди удаляется — повтор бессмысленен.
   store = [{ id: 5, method: 'POST', endpoint: '/like/1', body: {}, ts: 5 }];
   globalThis.fetch = async () => ({ ok: false, status: 400 });
-  check('flush: 400 не залипает в очереди', (await flushOfflineQueue()) === 1 && store.length === 0);
+  check('flush: 400 не залипает в очереди', (await flushOfflineQueue()) === 0 && store.length === 0);
   store = [{ id: 6, method: 'POST', endpoint: '/like/2', body: {}, ts: 6 }];
   globalThis.fetch = async () => ({ ok: false, status: 404 });
   check('flush: 404 (пост удалён) тоже вычищается', (await flushOfflineQueue()) === 1 && store.length === 0);

@@ -90,6 +90,10 @@ func setupBatchTestRouter(t *testing.T) *httptest.Server {
 	os.Chdir(dir)
 	t.Cleanup(func() { os.Chdir(oldWd) })
 	os.MkdirAll("data", 0o755)
+	// Сбрасываем глобальные синглтоны (профиль, аккаунты, конфиг): при
+	// -count=2 повторный прогон теста иначе получил бы состояние предыдущего
+	// (уже лайкнутые посты, созданные коллекции) из старой data/.
+	resetGlobalTestState(t)
 
 	gin.SetMode(gin.TestMode)
 	h := NewHandler()

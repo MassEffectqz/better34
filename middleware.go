@@ -3,6 +3,7 @@ package main
 import (
 	"briefly/internal"
 	"compress/gzip"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -23,54 +24,32 @@ func debugMiddleware() gin.HandlerFunc {
 	}
 }
 
-type gzipWriter struct {
+// compressedWriter — общая обёртка сжатого ответа для gzip и brotli:
+// дублирующиеся gzipWriter/brotliWriter (Write/WriteString/WriteHeader/Flush)
+// сведены к одному типу с делегированием через функции (P2-13).
+type compressedWriter struct {
 	gin.ResponseWriter
-	gz *gzip.Writer
+	write func([]byte) (int, error)
+	flush func() error
 }
 
-func (g *gzipWriter) Write(p []byte) (int, error) {
-	g.Header().Del("Content-Length")
-	return g.gz.Write(p)
+func (w *compressedWriter) Write(p []byte) (int, error) {
+	w.Header().Del("Content-Length")
+	return w.write(p)
 }
 
-func (g *gzipWriter) WriteString(s string) (int, error) {
-	return g.Write([]byte(s))
+func (w *compressedWriter) WriteString(s string) (int, error) {
+	return w.Write([]byte(s))
 }
 
-func (g *gzipWriter) WriteHeader(code int) {
-	g.Header().Del("Content-Length")
-	g.ResponseWriter.WriteHeader(code)
+func (w *compressedWriter) WriteHeader(code int) {
+	w.Header().Del("Content-Length")
+	w.ResponseWriter.WriteHeader(code)
 }
 
-func (g *gzipWriter) Flush() {
-	_ = g.gz.Flush()
-	if f, ok := g.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-type brotliWriter struct {
-	gin.ResponseWriter
-	bw *brotli.Writer
-}
-
-func (b *brotliWriter) Write(p []byte) (int, error) {
-	b.Header().Del("Content-Length")
-	return b.bw.Write(p)
-}
-
-func (b *brotliWriter) WriteString(s string) (int, error) {
-	return b.Write([]byte(s))
-}
-
-func (b *brotliWriter) WriteHeader(code int) {
-	b.Header().Del("Content-Length")
-	b.ResponseWriter.WriteHeader(code)
-}
-
-func (b *brotliWriter) Flush() {
-	_ = b.bw.Flush()
-	if f, ok := b.ResponseWriter.(http.Flusher); ok {
+func (w *compressedWriter) Flush() {
+	_ = w.flush()
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
@@ -106,7 +85,11 @@ func gzipMiddleware() gin.HandlerFunc {
 			bw := brotli.NewWriterLevel(c.Writer, 6)
 			c.Header("Content-Encoding", "br")
 			c.Header("Vary", "Accept-Encoding")
-			c.Writer = &brotliWriter{ResponseWriter: c.Writer, bw: bw}
+			c.Writer = &compressedWriter{
+				ResponseWriter: c.Writer,
+				write: func(p []byte) (int, error) { return bw.Write(p) },
+				flush: func() error { return bw.Flush() },
+			}
 			c.Next()
 			_ = bw.Close()
 		case strings.Contains(ace, "gzip"):
@@ -121,7 +104,11 @@ func gzipMiddleware() gin.HandlerFunc {
 			}
 			c.Header("Content-Encoding", "gzip")
 			c.Header("Vary", "Accept-Encoding")
-			c.Writer = &gzipWriter{ResponseWriter: c.Writer, gz: gz}
+			c.Writer = &compressedWriter{
+				ResponseWriter: c.Writer,
+				write: func(p []byte) (int, error) { return gz.Write(p) },
+				flush: func() error { return gz.Flush() },
+			}
 			c.Next()
 			_ = gz.Close()
 		default:
@@ -145,9 +132,40 @@ func staticCacheMiddleware() func(c *gin.Context) {
 		if strings.Contains(lower, "/dist/") {
 			c.Header("Cache-Control", "public, max-age=31536000, immutable")
 		} else if strings.HasSuffix(lower, ".js") || strings.HasSuffix(lower, ".css") {
-			c.Header("Cache-Control", "no-cache")
+			// no-cache -> must-revalidate: тот же RTT валидации, но при 304
+			// тело не ретранслируется (ETag ниже).
+
+			c.Header("Cache-Control", "max-age=0, must-revalidate")
 		} else {
 			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		// Предсжатый бандл (.br/.gz от сборки) отдаётся файлом: gzip-middleware
+		// пропускается через Abort; HTML и несобранные модули сжимает как раньше.
+
+		if strings.HasPrefix(lower, "/static/js/dist/") {
+			ace := c.Request.Header.Get("Accept-Encoding")
+			if strings.Contains(ace, "br") && staticPrecompressedReady(c, ".br") {
+				servePrecompressed(c, lower, ".br", "br")
+				return
+			}
+			if strings.Contains(ace, "gzip") && staticPrecompressedReady(c, ".gz") {
+				servePrecompressed(c, lower, ".gz", "gzip")
+				return
+			}
+		}
+		// Несобранные модули: слабый ETag от mtime+size, при If-None-Match —
+		// 304 без ретрансляции тела.
+
+		if !strings.Contains(lower, "/dist/") && (strings.HasSuffix(lower, ".js") || strings.HasSuffix(lower, ".css")) &&
+			c.Request.Method == http.MethodGet && c.Request.Header.Get("Range") == "" {
+			if info, err := os.Stat("static" + c.Request.URL.Path); err == nil && !info.IsDir() {
+				etag := fmt.Sprintf(`W/"%x-%x"`, info.ModTime().UnixNano(), info.Size())
+				c.Header("ETag", etag)
+				if inm := c.Request.Header.Get("If-None-Match"); inm != "" && weakETagMatch(inm, etag) {
+					c.AbortWithStatus(http.StatusNotModified)
+					return
+				}
+			}
 		}
 		c.Next()
 	}
@@ -173,9 +191,53 @@ func bodyLimitMiddleware() gin.HandlerFunc {
 	}
 }
 
+// staticPrecompressedReady — существует ли предсжатая версия файла.
+
+func staticPrecompressedReady(c *gin.Context, suffix string) bool {
+	_, err := os.Stat("static" + c.Request.URL.Path + suffix)
+	return err == nil
+}
+
+// servePrecompressed отдаёт предсжатый файл с нужными заголовками.
+
+func servePrecompressed(c *gin.Context, lower, suffix, enc string) {
+	c.Header("Content-Encoding", enc)
+	c.Header("Vary", "Accept-Encoding")
+	if strings.HasSuffix(lower, ".css") {
+		c.Header("Content-Type", "text/css; charset=utf-8")
+	} else {
+		c.Header("Content-Type", "application/javascript; charset=utf-8")
+	}
+	c.File("static" + c.Request.URL.Path + suffix)
+	c.Abort()
+}
+
+// weakETagMatch сравнивает If-None-Match (список через запятую) с нашим
+// слабым ETag, игнорируя префикс W/.
+
+func weakETagMatch(header, etag string) bool {
+	norm := func(s string) string { return strings.TrimPrefix(strings.TrimSpace(s), "W/") }
+	etag = norm(etag)
+	for _, part := range strings.Split(header, ",") {
+		if norm(part) == etag || strings.TrimSpace(part) == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 func debugEnabled() bool {
 	v := strings.ToLower(os.Getenv("BRIEFLY_DEBUG"))
 	return v == "1" || v == "true"
+}
+
+// forceHTTPSEnabled — опциональный режим S-4: при BRIEFLY_FORCE_HTTPS=1
+// сервер рекламирует HSTS (только по TLS), давая понять клиентам, что
+// HTTPS обязателен. Редирект http→https на этом же порту и так включён
+// (tls.go), отдельно — для reverse-proxy сценариев сервер не трогает.
+func forceHTTPSEnabled() bool {
+	v := strings.ToLower(os.Getenv("BRIEFLY_FORCE_HTTPS"))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 func webSecurityMiddleware() gin.HandlerFunc {
@@ -190,6 +252,19 @@ func webSecurityMiddleware() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "no-referrer")
 		c.Header("X-Frame-Options", "SAMEORIGIN")
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		// S-3: CSP внедряем поэтапно, начиная с Report-Only в debug-режиме:
+		// политику не блокирует ничего, но нарушения видны в консоли браузера
+		// и в сетевом трафике — так собираем whitelist перед ужесточением.
+		if debugEnabled() {
+			c.Header("Content-Security-Policy-Report-Only",
+				"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+				"img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; " +
+				"font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'")
+		}
+		// S-4: при BRIEFLY_FORCE_HTTPS=1 — HSTS для отвеченных по TLS запросов.
+		if forceHTTPSEnabled() && c.Request.TLS != nil {
+			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		if origin := c.GetHeader("Origin"); origin != "" {
 			expected := sameOriginHost(c.Request)
 			c.Header("Vary", "Origin")

@@ -301,6 +301,16 @@ func (h *Handler) ProxyRemote(c *gin.Context) {
 	noRange := c.GetHeader("Range") == ""
 	var upstream *http.Response
 
+	// Браузер почти всегда открывает <video> запросом `Range: bytes=0-`.
+	// Такой запрос не попадает в media-cache (это диапазон!), поэтому без
+	// вмешательства первый просмотр не прогревал бы кэш: повторный
+	// просмотр и перемотка снова ходили бы на CDN. Качаем файл целиком
+	// фоном, не завися от текущего ответа клиенту, — к следующему
+	// просмотру/перемотке он уже лежит на диске.
+	if !noRange && isVideoURL(u) && mediaCacheGet(u.String()) == "" {
+		go warmMediaCacheFile(h, u)
+	}
+
 	// Большие видео без Range качаем сегментами: CDN семейства часто
 	// режет скорость одного соединения, параллельные byte-range заполняют
 	// media-cache в разы быстрее (без прокси). Проба внутри: апстрим без
@@ -375,7 +385,6 @@ func (h *Handler) ProxyRemote(c *gin.Context) {
 // (лидер singleflight); иначе запрос выполняется здесь.
 func (h *Handler) streamUpstream(c *gin.Context, u *url.URL,
 	resp *http.Response, cc string) {
-	ownResp := false
 	if resp == nil {
 		var err error
 		resp, err = h.proxyUpstream(c, u, c.GetHeader("Range"))
@@ -383,12 +392,13 @@ func (h *Handler) streamUpstream(c *gin.Context, u *url.URL,
 			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream fetch failed"})
 			return
 		}
-		ownResp = true
 	}
+	// Закрываем resp.Body ВСЕГДА: и для собственного запроса, и для ответа
+	// лидера singleflight, переданного из ProxyRemote (errProxyStream). До
+	// фикса это было только при ownResp — соединение с CDN не возвращалось
+	// в пул после отдачи клиенту, копилась утечка на каждый большой файл.
 	defer func() {
-		if ownResp {
-			resp.Body.Close()
-		}
+		resp.Body.Close()
 	}()
 
 	cacheable := c.GetHeader("Range") == "" && resp.StatusCode == http.StatusOK &&
@@ -683,7 +693,7 @@ func serveMediaCacheFile(c *gin.Context, path string) bool {
 	wh := c.Writer.Header()
 	wh.Set("Content-Type", ct)
 	wh.Set("Accept-Ranges", "bytes")
-	wh.Set("Cache-Control", "private, max-age=86400")
+	wh.Set("Cache-Control", proxyCacheControl(c))
 	http.ServeContent(c.Writer, c.Request, "", fi.ModTime(), f)
 	return true
 }

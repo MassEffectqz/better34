@@ -18,12 +18,14 @@ import (
 )
 
 const (
-	minRecLikes    = 5
-	recLikedWindow = 50
-	recMaxTags     = 12
-	recWeightsTTL  = 90 * time.Second
-	recFreqTTL     = 5 * time.Minute
-	recMaxQueryLen = 3700
+	minRecLikes     = 5
+	recLikedWindow  = 50
+	recMaxTags      = 12
+	recWeightsTTL   = 90 * time.Second
+	recFreqTTL      = 5 * time.Minute
+	recMaxQueryLen  = 3700
+	recTimeDecaySec = 7 * 24 * 3600
+	recUCB          = 0.15 // exploration-бонус редких тегов (UCB)
 )
 
 type RecTagWeight struct {
@@ -80,8 +82,12 @@ func (h *Handler) fetchPostsByIDs(ids []int) []Rule34Post {
 	db := GetDB()
 	var posts []Rule34Post
 	var apiIDs []int
+	// Локальные посты — одним SELECT ... WHERE id IN (...) вместо N одиночных
+	// db.Get(id) (P1-3); чанкинг внутри GetMany страховывает от лимита
+	// параметров SQLite при большом числе id.
+	byID := db.GetMany(ids)
 	for _, id := range ids {
-		if ex := db.Get(id); ex != nil && ex.PreviewURL != "" {
+		if ex, ok := byID[id]; ok && ex.PreviewURL != "" {
 			posts = append(posts, Rule34Post{
 				ID: ex.ID, Tags: ex.Tags, FileURL: ex.FileURL, PreviewURL: ex.PreviewURL,
 				FileType: ex.FileType, Width: ex.Width, Height: ex.Height,
@@ -92,6 +98,35 @@ func (h *Handler) fetchPostsByIDs(ids []int) []Rule34Post {
 		}
 	}
 	if len(apiIDs) == 0 {
+		return posts
+	}
+	// Провайдеры с batchIDs (rule34/gelbooru) умеют запрашивать пачку id
+	// одним HTTP-вызовом "id:1,2,3" — не множим N одиночных запросов (P2-14).
+	if bc, ok := h.provider().(*booruClient); ok && bc.spec.batchIDs {
+		const idsPerBatch = 50
+		for start := 0; start < len(apiIDs); start += idsPerBatch {
+			end := start + idsPerBatch
+			if end > len(apiIDs) {
+				end = len(apiIDs)
+			}
+			batch := apiIDs[start:end]
+			want := make(map[int]bool, len(batch))
+			idStrs := make([]string, len(batch))
+			for i, id := range batch {
+				want[id] = true
+				idStrs[i] = strconv.Itoa(id)
+			}
+			found, e := bc.SearchPosts("id:"+strings.Join(idStrs, ","), 1, len(batch), 0)
+			if e != nil {
+				continue
+			}
+			for _, p := range found {
+				if !want[p.ID] {
+					continue // страховка от сайтов, игнорирующих id-список
+				}
+				posts = append(posts, p)
+			}
+		}
 		return posts
 	}
 	type result struct {
@@ -209,24 +244,41 @@ func (h *Handler) computeRecWeights(p *Profile) ([]RecTagWeight, int, error) {
 	}
 
 	freq := globalTagFreq()
-	n := float64(len(entries))
 	score := make(map[string]float64)
-	for r, post := range posts {
-		recency := 1.0
-		if n > 1 {
-			recency = 1 - 0.5*float64(r)/n
+	count := make(map[string]int)
+	tsByID := make(map[int]int64, len(entries))
+	for _, e := range entries {
+		tsByID[e.id] = e.ts
+	}
+	nowUnix := time.Now().Unix()
+	for _, post := range posts {
+		ts, ok := tsByID[post.ID]
+		if !ok {
+			continue // пост не нашёлся ни в БД, ни в API — пропускаем
 		}
+		// Time-decay: свежие лайки весят экспоненциально больше (полураспад
+		// ≈ 4.8 дня без жёсткого окна).
+
+		recency := math.Exp(-float64(nowUnix-ts) / recTimeDecaySec)
 		for _, t := range strings.Fields(post.Tags) {
 			if hidden[t] || genericTags[t] || disliked[t] > 0 {
 				continue
 			}
 			score[t] += recency
+			count[t]++
 		}
 	}
 	weights := make([]RecTagWeight, 0, len(score))
+	N := float64(len(entries))
 	for t, s := range score {
 		pop := float64(freq[t])
 		s = s / (1 + 0.9*math.Log10(1+pop))
+		// UCB-exploration: редкие среди лайков теги получают бонус, убывающий
+		// с числом наблюдений — не тонут в «популярной спирали».
+
+		if c := count[t]; c > 0 {
+			s += recUCB * math.Sqrt(math.Log(N)/float64(c))
+		}
 		if s < 0.05 {
 			continue
 		}

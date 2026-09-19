@@ -9,15 +9,18 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": false,
     "noImplicitThis": false,
-    "strictNullChecks": false,
+    "strictNullChecks": true,
     "types": []
   },
   // Инкрементальная типизация: ядро проверяется целиком, остальные модули
   // добавляются сюда по мере касания (полный прогон на нетипизированном
   // App-коде даёт сотни шума от this-инференса).
   "include": [
+    "types/**/*.d.ts",
     "static/js/utils.js",
     "static/js/api.js",
-    "static/js/video.js"
+    "static/js/video.js",
+    "static/js/auth.js",
+    "static/js/feed.js"
   ]
 }

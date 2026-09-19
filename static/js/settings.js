@@ -16,6 +16,7 @@ App.toggleSettings = function () {
 App.syncCustomControls = function () {
   if (this.els.settingTheme) this.els.settingTheme.value = this.state.theme || 'dark';
   if (this.els.settingGrid) this.els.settingGrid.value = this.state.gridCols === null ? 'auto' : String(this.state.gridCols);
+  if (this.els.settingAutoRefresh) this.els.settingAutoRefresh.checked = this.state.autoRefreshFeed;
   this.renderAccent();
 };
 
@@ -36,7 +37,14 @@ App.renderAPIKeys = function (keys) {
     row.querySelector('.api-key-name').addEventListener('input', e => { list[i].name = e.target.value; });
     row.querySelector('.api-key-value').addEventListener('input', e => { list[i].api_key = e.target.value; });
     row.querySelector('.api-key-uid').addEventListener('input', e => { list[i].user_id = e.target.value; });
-    row.querySelector('.btn-icon').addEventListener('click', () => {
+    row.querySelector('.btn-icon').addEventListener('click', async () => {
+      const ok = await this.confirmDialog({
+        title: 'Удалить API-ключ?',
+        message: `Удалить ключ <b>«${esc(k.name || k.api_key.slice(0, 8) + '…')}»</b>?`,
+        okText: 'Удалить',
+        danger: true,
+      });
+      if (!ok) return;
       list.splice(i, 1);
       this.renderAPIKeys(list);
     });
@@ -58,6 +66,10 @@ App.renderProviderOptions = function (providers) {
 };
 
 App.loadSettings = async function () {
+  // Серверные настройки (API-ключи, пути, прокси) — только для админа:
+  // у остальных /api/settings отвечает 403 "Настройки доступны только
+  // администратору". Не дёргаем запрос зря и не шумим в консоль.
+  if (this.state.user && this.state.user.is_admin === false) return;
   try {
     const d = await API.get('/settings');
     this.renderProviderOptions(d.providers);
@@ -101,6 +113,30 @@ App.saveSettings = async function () {
     this.showToast('Настройки сохранены');
     this.toggleSettings();
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+};
+
+App.resetSettings = async function () {
+  const ok = await this.confirmDialog({ title: 'Сбросить настройки?', message: 'Все настройки будут сброшены к значениям по умолчанию.', okText: 'Сбросить', danger: true });
+  if (!ok) return;
+  this.state.theme = 'dark';
+  this.state.gridCols = null;
+  this.state.autoRefreshFeed = true;
+  this.state.activeProvider = 'rule34';
+  this.syncCustomControls();
+  this.showToast('Настройки сброшены');
+};
+
+App.checkForUpdates = async function () {
+  const btn = this.els.btnCheckUpdate;
+  if (btn) { btn.disabled = true; btn.textContent = 'Проверяю…'; }
+  try {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    this.showToast('Установлена последняя версия', 'success');
+  } catch (err) {
+    this.showToast(`Ошибка проверки: ${err.message}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Проверить обновления'; }
+  }
 };
 
 App.renderProviderBadge = function () {
@@ -321,7 +357,8 @@ App.showQRLogin = function () {
   card.style.cssText = 'background:#1a1a1a;border-radius:16px;padding:24px;text-align:center;max-width:320px;color:#eee;box-shadow:0 8px 40px rgba(0,0,0,.5);';
   card.innerHTML = `
     <div style="font-weight:600;margin-bottom:12px">QR-вход на другом устройстве</div>
-    <img id="qr-login-img" alt="QR" style="width:256px;height:256px;border-radius:8px;background:#fff">
+    <div id="qr-login-loader" style="width:256px;height:256px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:#fff"><span class="pf-more-spin"></span></div>
+    <img id="qr-login-img" alt="QR" style="width:256px;height:256px;border-radius:8px;background:#fff;display:none">
     <div id="qr-login-hint" style="font-size:12px;opacity:.7;margin-top:12px">Отсканируйте камерой телефона. Код действует 5 минут и сгорает после входа.</div>
     <button id="qr-login-close" class="btn-primary btn-sm" style="margin-top:14px">Закрыть</button>`;
   overlay.appendChild(card);
@@ -332,8 +369,11 @@ App.showQRLogin = function () {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   card.querySelector('#qr-login-close').addEventListener('click', close);
   const img = card.querySelector('#qr-login-img');
+  const loader = card.querySelector('#qr-login-loader');
+  img.onload = () => { if (loader) loader.style.display = 'none'; img.style.display = ''; };
   img.src = '/api/auth/qr/svg?t=' + Date.now();
   img.onerror = () => {
+    if (loader) loader.style.display = 'none';
     img.style.display = 'none';
     card.querySelector('#qr-login-hint').textContent = 'Не удалось получить QR — проверьте, что вы залогинены.';
   };

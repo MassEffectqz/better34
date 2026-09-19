@@ -3,6 +3,18 @@
 // и доставляются при появлении сети. Сетевой кэш ленты — в sw.js,
 // тут только очередь мутаций.
 
+// Листовый модуль (как a11y.js): импортирует App из state.js, который
+// сам импортирует этот модуль — ES-цикл безопасен, App используется
+// только внутри функций (живая привязка модулей).
+import { App } from './state.js';
+
+// toast — безопасная обёртка: в реальном приложении showToast приходит из
+// toast.js, а в изолированных тестах (импортируют этот модуль без toast.js)
+// его нет — не должны падать на уведомлении.
+const toast = (msg, kind) => {
+  if (typeof App !== 'undefined' && App.showToast) App.showToast(msg, kind);
+};
+
 const DB_NAME = 'briefly-offline';
 const DB_VER = 1;
 // Тег Background Sync (задача 2): по нему service worker будится при
@@ -68,6 +80,9 @@ export async function enqueueMutation(method, endpoint, body) {
       tx.onerror = () => reject(tx.error);
     });
     registerSync();
+    if (typeof App !== 'undefined' && App.showToast) {
+      App.showToast('Действие отложено — будет отправлено при появлении сети', 'info');
+    }
     return true;
   } catch {
     return false;
@@ -113,7 +128,7 @@ export async function flushOfflineQueue() {
 
 async function doFlush() {
   const items = await listAll();
-  let flushed = 0;
+  let flushed = 0, discarded = 0;
   for (const item of items) {
     try {
       const res = await fetch('/api' + item.endpoint, {
@@ -126,14 +141,25 @@ async function doFlush() {
         await removeItem(item.id);
         flushed++;
       } else {
-        // 400/401/403 — данные устарели, повторять бессмысленно.
+        // PB-4: 400/401/403 — данные устарели или сессия истекла, повторять
+        // бессмысленно (иначе элемент застрянет в очереди навсегда), но
+        // молча выбрасывать нельзя — пользователь терял действие незаметно.
         await removeItem(item.id);
-        flushed++;
+        discarded++;
       }
     } catch {
       // Сети всё ещё нет — останавливаемся, остальное уедет в следующий раз.
       break;
     }
+  }
+  if (flushed > 0) {
+    toast('Доставлено действий: ' + flushed, 'success');
+  }
+  if (discarded > 0) {
+    toast(
+      'Отклонено сервером действий: ' + discarded + ' — возможно, истекла сессия. Войдите заново и повторите',
+      'error'
+    );
   }
   return flushed;
 }

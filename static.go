@@ -19,6 +19,9 @@ var (
 	versionMu  sync.Mutex
 	versionVal string
 	lastWalk   time.Time
+	// refreshing — идёт ли фоновый пересчёт версии: singleflight, чтобы при
+	// наплыве запросов после TTL не плодилась горутина на каждый запрос.
+	refreshing bool
 	// distBundleOK — собран ли esbuild-бандл (static/js/dist/app.js).
 	// Обновляется вместе с перечитыванием index.html: пересборка бандла
 	// меняет mtime дерева static/ и, значит, версию.
@@ -27,20 +30,26 @@ var (
 	distAppJSPath = filepath.Join("static", "js", "dist", "app.js")
 )
 
-func staticVersion() string {
-	versionMu.Lock()
-	defer versionMu.Unlock()
-	// В проде версию достаточно пересчитывать раз в 30с: walk по дереву
-	// static/ на каждый запрос главной не нужен. BRIEFLY_DEBUG=1 —
-	// пересчёт на каждый вызов, чтобы правки фронтенда подхватывались сразу.
-	ttl := 30 * time.Second
+func staticVersionTTL() time.Duration {
 	if debugEnabled() {
-		ttl = 0
+		return 0
 	}
-	if versionVal != "" && time.Since(lastWalk) < ttl {
-		return versionVal
+	return 30 * time.Second
+}
+
+// walkStaticVersion пересчитывает версию статики и перечитывает index.html.
+// walk по дереву static/ идёт БЕЗ versionMu: он долгий и не должен блокировать
+// синхронный путь loadIndex/staticVersion (P2-11). force — принудительный
+// пересчёт (debug-режим: правки фронтенда подхватываются сразу).
+func walkStaticVersion(force bool) {
+	versionMu.Lock()
+	if !force && versionVal != "" && time.Since(lastWalk) < staticVersionTTL() {
+		refreshing = false
+		versionMu.Unlock()
+		return // уже свежая
 	}
-	lastWalk = time.Now()
+	versionMu.Unlock()
+
 	var latest int64
 	filepath.Walk("static", func(_ string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && info.ModTime().UnixNano() > latest {
@@ -49,6 +58,10 @@ func staticVersion() string {
 		return nil
 	})
 	v := strconv.FormatInt(latest, 16)
+
+	versionMu.Lock()
+	lastWalk = time.Now()
+	refreshing = false
 	if v != versionVal {
 		versionVal = v
 		indexOnce = sync.Once{}
@@ -56,7 +69,47 @@ func staticVersion() string {
 		_, distErr := os.Stat(distAppJSPath)
 		distBundleOK = distErr == nil
 	}
+	versionMu.Unlock()
+}
+
+// staticVersion возвращает версию статики. TTL-просрочка отдаёт старую версию,
+// а пересчёт запускает один раз (dedup по refreshing), а не в горутине на
+// каждый запрос. Первый вызов и debug считают синхронно.
+func staticVersion() string {
+	if staticVersionTTL() == 0 {
+		// debug: синхронный пересчёт на каждый вызов.
+		walkStaticVersion(true)
+		versionMu.Lock()
+		v := versionVal
+		versionMu.Unlock()
+		return v
+	}
+	versionMu.Lock()
+	if versionVal != "" && time.Since(lastWalk) < staticVersionTTL() {
+		versionMu.Unlock()
+		return versionVal
+	}
+	if versionVal != "" {
+		// Stale-while-revalidate: сразу отдаём прошлую версию, пересчёт — в фон.
+		if !refreshing {
+			refreshing = true
+			go walkStaticVersion(false)
+		}
+		versionMu.Unlock()
+		return versionVal
+	}
+	versionMu.Unlock()
+	// Первый запрос после старта: считаем синхронно.
+	walkStaticVersion(false)
+	versionMu.Lock()
+	v := versionVal
+	versionMu.Unlock()
 	return v
+}
+
+// refreshStaticVersion пересчитывает версию и index.html (совместимость).
+func refreshStaticVersion() {
+	walkStaticVersion(false)
 }
 
 func loadIndex() ([]byte, error) {

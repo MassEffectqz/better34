@@ -50,9 +50,12 @@ var allowedHosts = func() []string {
 		return hosts
 	}
 	for _, h := range strings.Split(extra, ",") {
-		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
-			hosts = append(hosts, h)
+		if h = strings.ToLower(strings.TrimSpace(h)); h == "" {
+			continue
 		}
+		// Wildcard-домен: запись вида ".trycloudflare.com" разрешает
+		// любой поддомен (для cloudflared quick-туннелей).
+		hosts = append(hosts, h)
 	}
 	return hosts
 }()
@@ -67,6 +70,13 @@ func hostAllowed(r *http.Request) bool {
 	h = strings.ToLower(strings.Trim(strings.TrimSpace(h), "[]"))
 	h = strings.TrimSuffix(h, ".")
 	for _, a := range allowedHosts {
+		// Wildcard-запись ".example.com" разрешает example.com и любые поддомены.
+		if strings.HasPrefix(a, ".") {
+			if h == strings.TrimPrefix(a, ".") || strings.HasSuffix(h, a) {
+				return true
+			}
+			continue
+		}
 		if h == a {
 			return true
 		}

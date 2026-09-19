@@ -3,6 +3,7 @@ import { icon, getHistory, addHistory, removeHistory, togglePinHistory, clearHis
 import { API } from './api.js';
 App._suggestSeq = 0;
 App._profileSuggestSeq = 0;
+App._nlSearching = false;
 
 App.onSearchInput = function () {
   const q = this.els.searchInput.value;
@@ -96,7 +97,8 @@ App.updateQueryMeta = function (q) {
   groups.forEach((g, i) => {
     worstLen = Math.max(worstLen, g.length + (i === 0 ? ratingLen : 0));
   });
-  let budget = (this.state.maxQueryLen || 3800) - worstLen;
+  // U10: budget не может быть отрицательным — иначе hidden-теги не будут учтены.
+  let budget = Math.max(0, (this.state.maxQueryLen || 3800) - worstLen);
   let local = 0;
   for (const t of hidden) {
     if (budget - (t.length + 2) >= 0) { budget -= t.length + 2; }
@@ -191,13 +193,27 @@ App.onSearchKeydown = function (e) {
 App.renderSuggestions = function (tags) {
   const el = this.els.suggestions;
   el.innerHTML = '';
-  if (!tags.length) { el.classList.remove('active'); return; }
+  if (!tags.length) {
+    el.classList.remove('active');
+    el.removeAttribute('role');
+    this.els.searchInput.setAttribute('aria-expanded', 'false');
+    this.els.searchInput.removeAttribute('aria-activedescendant');
+    return;
+  }
   el.classList.add('active');
-  tags.forEach(tag => {
+  el.setAttribute('role', 'listbox');
+  el.setAttribute('id', 'suggestions-listbox');
+  this.els.searchInput.setAttribute('aria-expanded', 'true');
+  this.els.searchInput.setAttribute('aria-controls', 'suggestions-listbox');
+  this.els.searchInput.setAttribute('aria-autocomplete', 'list');
+  tags.forEach((tag, i) => {
     const label = tag.label || tag.value || tag;
     const value = tag.value || tag;
     const div = document.createElement('div');
-    div.className = 'suggestion-item'; div.dataset.value = value;
+    div.className = 'suggestion-item';
+    div.dataset.value = value;
+    div.setAttribute('role', 'option');
+    div.setAttribute('id', `sugg-opt-${i}`);
     const span = document.createElement('span');
     span.textContent = label;
     div.appendChild(span);
@@ -268,15 +284,21 @@ App.showHistory = function () {
   const h = getHistory();
   if (!h.length || this.els.searchInput.value.trim()) return;
   const el = this.els.historyDropdown;
-  this._histIdx = -1;
   // Закреплённые сверху, далее по частоте.
   const sorted = [...h].sort((a, b) => (b.pin - a.pin) || (b.count - a.count));
   el.innerHTML = '';
   el.classList.add('active');
-  sorted.forEach(entry => {
+  el.setAttribute('role', 'listbox');
+  el.setAttribute('id', 'history-listbox');
+  this.els.searchInput.setAttribute('aria-expanded', 'true');
+  this.els.searchInput.setAttribute('aria-controls', 'history-listbox');
+  this.els.searchInput.setAttribute('aria-autocomplete', 'list');
+  sorted.forEach((entry, i) => {
     const d = document.createElement('div');
     d.className = 'history-item';
     d.dataset.q = entry.q;
+    d.setAttribute('role', 'option');
+    d.setAttribute('id', `hist-opt-${i}`);
 
     if (entry.pin) {
       const pm = document.createElement('span');
@@ -318,7 +340,12 @@ App.showHistory = function () {
   el.appendChild(clear);
 };
 
-App.hideHistory = function () { this.els.historyDropdown.classList.remove('active'); };
+App.hideHistory = function () {
+  this.els.historyDropdown.classList.remove('active');
+  this.els.historyDropdown.removeAttribute('role');
+  this.els.searchInput.setAttribute('aria-expanded', 'false');
+  this.els.searchInput.removeAttribute('aria-activedescendant');
+};
 
 App.suggestProfileTag = function (type) {
   const input = type === 'fav' ? this.els.favTagInput : this.els.hiddenTagInput;
@@ -359,8 +386,14 @@ App.search = async function (query) {
   clearTimeout(this._searchTimer);
   // Семантический поиск: «?котики в шляпах» → Ollama → теговый запрос.
   if (query && query.trim().startsWith('?') && query.trim().length > 1) {
+    // Защита от дубля: state.loading — фаг постов, не блокирует search().
+    // Без этого быстрый повторный ввод уходит вторым запросом к Ollama (двойной инференс).
+    if (this._nlSearching) return;
     const nl = query.trim().slice(1).trim();
+    this._nlSearching = true;
     this.showToast('Спрашиваю модель…');
+    this.state.loading = true;
+    this.els.searchBox.classList.add('loading');
     try {
       const d = await API.get('/nl-search?q=' + encodeURIComponent(nl));
       if (!d.query) throw new Error('пустой ответ');
@@ -370,7 +403,12 @@ App.search = async function (query) {
       this.showToast('Распознано: ' + query, 'success');
     } catch (e) {
       this.showToast('Семантический поиск недоступен: ' + (e && e.message || 'ошибка'), 'error');
+      this._nlSearching = false;
+      this.state.loading = false;
+      this.els.searchBox.classList.remove('loading');
       return;
+    } finally {
+      this._nlSearching = false;
     }
   }
   this._lastSearchQuery = query;
@@ -392,14 +430,16 @@ App.search = async function (query) {
   if (query) this._clearFeedCache();
   this.els.btnLocal.innerHTML = icon('house', 18);
   this.pushState(query, null);
-  this.renderFilterChips();
-  if (!query) { await this.loadPosts(true); return; }
-  await this.loadPosts(true);
+  this.renderQueryChips(query);
+  // forceRefresh=true: добавляет v=timestamp к URL, чтобы обойти кэш API.get.
+  // Без этого поиск возвращал кэшированные результаты предыдущего запроса.
+  await this.loadPosts(true, null, true);
 };
 
 // Логотип → на главную: сброс режимов, поиска и роута.
 App.goHome = function () {
   this.state.isLocal = false;
+  this.state.focusedIndex = -1; // U6: сброс выделения карточки
   if (this.els.btnLocal) this.els.btnLocal.innerHTML = icon('house', 18);
   if (this.state.viewerOpen) { this.closeViewer(); }
   if (this.els.searchInput.value) {

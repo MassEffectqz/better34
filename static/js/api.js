@@ -8,7 +8,7 @@ export const API = {
   _inflightAborts: {},
   _cacheTTL: 60000,
   _cacheMax: 200,
-  _token: null,
+  /** @type {string | null} */ _token: null,
   _err(r) {
     return r.text().then((raw) => {
       try {

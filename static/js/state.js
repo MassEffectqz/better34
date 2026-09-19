@@ -7,15 +7,17 @@ import { flushOfflineQueue } from './offline.js';
 
 export const App = {
   state: {
-    posts: [], page: 1, loading: false, hasMore: true, query: '',
+    /** @type {Post[]} */ posts: [], page: 1, loading: false, hasMore: true, query: '',
     isLocal: false, viewerOpen: false, viewerIndex: 0, recommendActive: false,
     settingsOpen: false, profileOpen: false,
     downloadQueue: new Set(), downloading: new Set(), focusedIndex: -1,
     profile: { liked_posts: [], hidden_posts: [], presets: [], fav_tags: [], hidden_tags: [] },
     selected: new Set(), slideshowActive: false, slideshowSpeed: 3000, minId: null, hoveredIndex: -1,
-    sortBy: '',
+        sortBy: '',
     displayMode: 'search', displayIds: [], theme: 'dark',
-    gridCols: null,
+    /** @type {number | null} */ gridCols: null,
+    // Авто-рефреш ленты после скачивания (через SSE post_saved).
+    autoRefreshFeed: true,
     // Активный источник (заполняется из /settings): 'all' — режим «Все сайты».
     activeProvider: 'rule34', ratingFilter: '',
     // Фильтр «просмотрено» для локальной ленты: '' — все, '0' — новые, '1' — виденное.
@@ -49,7 +51,7 @@ export const App = {
       settingProvider: _('setting-provider'),
       settingConcurrent: _('setting-concurrent'),
       settingTheme: _('setting-theme'), settingGrid: _('setting-grid'), settingAccent: _('setting-accent'),
-      settingLang: _('setting-lang'),
+      settingLang: _('setting-lang'), settingAutoRefresh: _('setting-auto-refresh-feed'),
       profilePanel: _('profile-panel'), profileClose: _('profile-close'),
       presetName: _('preset-name'), btnSavePreset: _('btn-save-preset'), presetCurrent: _('preset-current'),
       presetsList: _('presets-list'), likesList: _('likes-list'), hidesList: _('hides-list'),
@@ -62,7 +64,6 @@ export const App = {
       batchLike: _('batch-like'), batchCollect: _('batch-collect'),
       historyDropdown: _('history-dropdown'),
       slideshowBtn: _('slideshow-btn'),
-
       btnHome: _('btn-home'),
       viewerLoader: _('viewer-loader'),
       profileSuggestions: _('profile-suggestions'), favSuggestions: _('fav-suggestions'),
@@ -99,7 +100,8 @@ export const App = {
       btnQRLogin: _('btn-qr-login'), btnRemotePush: _('btn-remote-push'), viewerSimilar: _('viewer-similar'),
     };
     this.loadTheme();
-    this.loadGridSetting();
+          this.loadGridSetting();
+      this.loadAutoRefreshSetting();
     try {
       const savedScroll = parseInt(sessionStorage.getItem('briefly_scroll_top') || '', 10);
       if (Number.isFinite(savedScroll) && savedScroll > 0) this._pendingScrollTop = savedScroll;
@@ -109,10 +111,15 @@ export const App = {
     this.bindEvents();
     this.initIntersectionObserver();
     this.initPullToRefresh();
+    this.initHeaderFilters();
     this.startDlPoll();
     try { if (localStorage.getItem('briefly_viewer_panel') === '1') this.els.viewerMobileActions.classList.add('collapsed'); } catch (_) {}
     this.loadAccent();
     this.loadSettings();
+    try {
+      const arf = localStorage.getItem('briefly_auto_refresh_feed');
+      if (arf !== null) this.state.autoRefreshFeed = arf === '1';
+    } catch {}
     await this.loadProfile();
     this.loadProfileMeta();
     this._loadTagCounts();
@@ -128,6 +135,12 @@ export const App = {
       if (m) restorePostId = parseInt(m[1]);
     }
     this.loadPosts(true, restorePostId);
+    window.addEventListener('unhandledrejection', (e) => {
+      console.error('Unhandled rejection:', e.reason);
+      if (typeof App !== 'undefined' && App.showToast) {
+        App.showToast('Произошла непредвиденная ошибка', 'error');
+      }
+    });
   },
 
   onPopState(ev) {
@@ -238,6 +251,15 @@ export const App = {
         }
       }
     });
+    // Быстрые действия в шапке профиля (data-quick): статистика / настройки.
+    document.querySelectorAll('[data-quick]').forEach((/** @type {HTMLElement} */ btn) => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.quick;
+        if (action === 'settings') this.toggleSettings();
+        else if (action === 'stats') go(this.showStats());
+        else if (action === 'help') this.toggleHelp();
+      });
+    });
     e.viewerRelated.addEventListener('click', (ev) => {
       const it = ev.target.closest('.rel-item');
       if (!it) return;
@@ -301,11 +323,21 @@ export const App = {
       e.settingLang.value = getLang();
       e.settingLang.addEventListener('change', () => setLang(e.settingLang.value));
     }
-    e.settingTheme.addEventListener('change', () => this.setTheme(e.settingTheme.value));
-    e.settingGrid.addEventListener('change', () => this.setGridSetting(e.settingGrid.value));
+    e.settingTheme.addEventListener('change', () => { this.setTheme(e.settingTheme.value); this.showToast('Сохранено', 'success'); });
+        e.settingGrid.addEventListener('change', () => { this.setGridSetting(e.settingGrid.value); this.showToast('Сохранено', 'success'); });
+    if (e.settingAutoRefresh) e.settingAutoRefresh.addEventListener('change', () => {
+      this.state.autoRefreshFeed = e.settingAutoRefresh.checked;
+      try { localStorage.setItem('briefly_auto_refresh_feed', e.settingAutoRefresh.checked ? '1' : '0'); } catch {}
+      this.showToast('Сохранено', 'success');
+    });
     e.settingAccent.addEventListener('click', (ev) => {
       const sw = ev.target.closest('.accent-swatch');
-      if (sw) this.setAccent(sw.dataset.accent);
+      if (sw) { this.setAccent(sw.dataset.accent); this.showToast('Сохранено', 'success'); }
+    });
+    // Свой цвет акцента: применяется сразу при выборе в color-picker.
+    document.getElementById('setting-accent-custom')?.addEventListener('input', () => {
+      this.setAccent('custom');
+      this.showToast('Сохранено', 'success');
     });
     e.btnAddApiKey.addEventListener('click', () => this.renderAPIKeys([...this.state.apiKeys, { name: '', api_key: '', user_id: '' }]));
     e.btnDBClean.addEventListener('click', () => go(this.cleanDB()));
@@ -448,11 +480,24 @@ export const App = {
     document.addEventListener('keyup', (ev) => this.onKeyup(ev));
     window.addEventListener('popstate', (ev) => this.onPopState(ev));
     // Оффлайн-очередь (задача 1): когда сеть вернулась — доставляем отложенные мутации.
+    const updateOfflineIndicator = () => {
+      const header = document.getElementById('header');
+      if (!header) return;
+      if (navigator.onLine) {
+        header.classList.remove('offline');
+      } else {
+        header.classList.add('offline');
+        this.showToast('Нет подключения к сети — действия будут отложены', 'info');
+      }
+    };
     window.addEventListener('online', () => {
+      updateOfflineIndicator();
       flushOfflineQueue().then((n) => {
         if (n > 0) this.showToast(`Доставлено оффлайн-изменений: ${n}`, 'success');
       });
     });
+    window.addEventListener('offline', updateOfflineIndicator);
+    updateOfflineIndicator();
     // Задача 2: очередь могла накопиться, пока вкладка была закрыта (её тогда
     // доставлял Background Sync — а мог и не доставить: нет SyncManager или
     // сеть появилась только что). Флашим и на всякий случай просим sync.
@@ -471,6 +516,9 @@ export const App = {
       clearTimeout(pwT);
       pwT = setTimeout(() => this.applyPanelWidth(), 150);
     });
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (typeof App !== 'undefined' && App.loadTheme) App.loadTheme();
+    });
   },
 
   bindAuthEvents() {
@@ -488,9 +536,9 @@ export const App = {
     _('auth-password2').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); go(this.authSubmit()); } });
     const EYE_ON = icon('eye');
     const EYE_OFF = icon('eyeOff');
-    document.querySelectorAll('.auth-pw-toggle').forEach((btn) => {
+    document.querySelectorAll('.auth-pw-toggle').forEach((/** @type {HTMLElement} */ btn) => {
       btn.addEventListener('click', () => {
-        const inp = /** @type {HTMLInputElement} */ (document.getElementById(/** @type {HTMLElement} */ (btn).dataset.target));
+        const inp = /** @type {HTMLInputElement} */ (document.getElementById(btn.dataset.target || ''));
         const show = inp.type === 'password';
         inp.type = show ? 'text' : 'password';
         btn.innerHTML = show ? EYE_OFF : EYE_ON;
@@ -502,7 +550,7 @@ export const App = {
   loadTheme() {
     let theme = 'auto';
     try { theme = localStorage.getItem('briefly_theme') || 'auto'; } catch {}
-    if (theme !== 'dark' && theme !== 'light' && theme !== 'auto') theme = 'auto';
+    if (!this.THEMES.includes(theme)) theme = 'auto';
     this.state.theme = theme;
     this.applyResolvedTheme();
     // Режим «Авто»: следим за системной темой вживую.
@@ -531,11 +579,15 @@ export const App = {
   },
 
   setTheme(theme) {
-    if (theme !== 'dark' && theme !== 'light' && theme !== 'auto') return;
+    if (!this.THEMES.includes(theme)) return;
     this.state.theme = theme;
     this.applyResolvedTheme();
     try { localStorage.setItem('briefly_theme', theme); } catch {}
   },
+
+  // Доступные темы: базовые — авто/тёмная/светлая, плюс «цветовые схемы»:
+  // deep — AMOLED-чёрный для OLED-экранов, sepia — тёплая «бумажная» светлая.
+  THEMES: ['auto', 'dark', 'light', 'deep', 'sepia'],
 
   toggleTheme() {
     const next = this.resolvedTheme() === 'dark' ? 'light' : 'dark';
@@ -558,6 +610,12 @@ export const App = {
     this.rebuildMasonry();
   },
 
+    loadAutoRefreshSetting() {
+      let v = null;
+      try { v = localStorage.getItem('briefly_auto_refresh_feed'); } catch {}
+      this.state.autoRefreshFeed = v !== '0';
+    },
+
   renderGridMenu() {
     const active = this.state.gridCols === null ? 'auto' : String(this.state.gridCols);
     document.querySelectorAll('.grid-opt').forEach((/** @type {HTMLElement} */ b) => {
@@ -566,6 +624,33 @@ export const App = {
   },
 
   // Полоса глубины скролла + скрытие хедера при прокрутке вниз.
+  // Мобильный хедер — один ряд: логотип | поиск | меню. Фильтры
+  // (рейтинг, viewed, источник) переезжают в меню «⋯» на экранах <=600px.
+  // Обработчики висят на самих узлах, поэтому перенос в DOM их не рвёт.
+  initHeaderFilters() {
+    const actions = document.querySelector('.header-actions');
+    const slot = document.getElementById('header-menu-filters');
+    if (!actions || !slot) return;
+    const nodes = [];
+    for (const id of ['rating-toggle', 'viewed-toggle', 'provider-control']) {
+      const n = document.getElementById(id);
+      if (n) nodes.push(n);
+    }
+    if (!nodes.length) return;
+    const sync = () => {
+      const parent = window.matchMedia('(max-width:600px)').matches ? slot : actions;
+      for (const n of nodes) {
+        if (n && typeof n === 'object' && 'nodeType' in n && n.parentElement !== parent) {
+          parent.appendChild(/** @type {Node} */ (n));
+        }
+      }
+    };
+    sync();
+    const mq = window.matchMedia('(max-width:600px)');
+    if (mq.addEventListener) mq.addEventListener('change', sync);
+    else if (mq.addListener) mq.addListener(sync); // старые Safari/Edge
+  },
+
   onMainScroll() {
     const main = document.getElementById('main');
     if (!main) return;
@@ -586,7 +671,9 @@ export const App = {
     if (y <= 60 || y < last - 4 || inputFocused || !dropdownsClosed) {
       hd.classList.remove('header-hidden');
     } else if (y > last + 8) {
-      if (!hd.style.getPropertyValue('--hh')) hd.style.setProperty('--hh', '-' + hd.offsetHeight + 'px');
+      // Пересчитываем при каждом скрытии: высота хедера меняется
+      // (появились чипы запроса, viewed-toggle и т.п.) — иначе остаётся зазор.
+      hd.style.setProperty('--hh', '-' + hd.offsetHeight + 'px');
       hd.classList.add('header-hidden');
     }
     this._lastST = y;
@@ -594,29 +681,72 @@ export const App = {
 
   ACCENTS: {
     purple: ['#a78bfa', '#7c5cbf'],
+    indigo: ['#818cf8', '#4f46e5'],
     blue: ['#60a5fa', '#3b82f6'],
+    sky: ['#38bdf8', '#0284c7'],
     cyan: ['#22d3ee', '#0891b2'],
+    teal: ['#2dd4bf', '#0d9488'],
     green: ['#34d399', '#059669'],
-    pink: ['#f472b6', '#db2777'],
+    lime: ['#a3e635', '#65a30d'],
+    amber: ['#fbbf24', '#d97706'],
     orange: ['#fb923c', '#ea580c'],
+    rose: ['#fb7185', '#e11d48'],
+    pink: ['#f472b6', '#db2777'],
     red: ['#f87171', '#dc2626'],
+  },
+
+  // mixColor затемняет шестизначный hex к чёрному (ratio 0..1) — из него
+  // строится --accent-dim для кастомного цвета.
+  mixColor(hex, ratio) {
+    const n = parseInt(hex.slice(1), 16);
+    if (!Number.isFinite(n)) return hex;
+    const r = (n >> 16) & 0xFF, g = (n >> 8) & 0xFF, b = n & 0xFF;
+    const dim = (v) => Math.round(v * (1 - ratio)).toString(16).padStart(2, '0');
+    return '#' + dim(r) + dim(g) + dim(b);
+  },
+
+  customAccentColor() {
+    try {
+      const v = localStorage.getItem('briefly_accent_custom');
+      return (v && /^#[0-9a-f]{6}$/i.test(v)) ? v.toLowerCase() : null;
+    } catch { return null; }
   },
 
   loadAccent() {
     let name = 'purple';
     try { name = localStorage.getItem('briefly_accent') || 'purple'; } catch {}
-    if (!this.ACCENTS[name]) name = 'purple';
+    if (name !== 'custom' && !this.ACCENTS[name]) name = 'purple';
     this.state.accent = name;
     this.applyAccent(name);
   },
 
   applyAccent(name) {
-    const [a, d] = this.ACCENTS[name];
+    let a, d;
+    if (name === 'custom') {
+      const c = this.customAccentColor();
+      if (!c) { a = this.ACCENTS.purple[0]; d = this.ACCENTS.purple[1]; }
+      else { a = c; d = this.mixColor(c, 0.34); }
+    } else {
+      const pair = this.ACCENTS[name];
+      if (!pair) return;
+      a = pair[0]; d = pair[1];
+    }
     document.documentElement.style.setProperty('--accent', a);
     document.documentElement.style.setProperty('--accent-dim', d);
   },
 
   setAccent(name) {
+    if (name === 'custom') {
+      const input = /** @type {HTMLInputElement | null} */ (document.getElementById('setting-accent-custom'));
+      const raw = input && /^#[0-9a-f]{6}$/i.test(input.value) ? input.value.toLowerCase() : this.customAccentColor();
+      if (!raw) return;
+      try { localStorage.setItem('briefly_accent_custom', raw); } catch {}
+      this.state.accent = 'custom';
+      this.applyAccent('custom');
+      try { localStorage.setItem('briefly_accent', 'custom'); } catch {}
+      this.renderAccent();
+      return;
+    }
     if (!this.ACCENTS[name]) return;
     this.state.accent = name;
     this.applyAccent(name);
@@ -628,6 +758,14 @@ export const App = {
     document.querySelectorAll('.accent-swatch').forEach((/** @type {HTMLElement} */ b) => {
       b.classList.toggle('active', b.dataset.accent === this.state.accent);
     });
+    const inp = /** @type {HTMLInputElement | null} */ (document.getElementById('setting-accent-custom'));
+    if (inp) {
+      inp.classList.toggle('active', this.state.accent === 'custom');
+      if (this.state.accent === 'custom') {
+        const c = this.customAccentColor();
+        if (c) inp.value = c;
+      }
+    }
   },
 
   pushState(query, postId) {
@@ -696,7 +834,7 @@ export const App = {
     if (!file.type.startsWith('image/')) { this.showToast('Только изображения', 'error'); return; }
     const reader = new FileReader();
     reader.onload = (e) => {
-      const src = /** @type {string} */ (e.target.result);
+      const src = /** @type {string} */ (/** @type {FileReader} */ (e.target).result);
       const img = new Image();
       img.onload = () => {
         const MAX = 512;
@@ -708,7 +846,7 @@ export const App = {
         }
         const canvas = document.createElement('canvas');
         canvas.width = width; canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d')).drawImage(img, 0, 0, width, height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
         this.els.profileAvatarImg.src = dataUrl;
         this.els.profileAvatarImg.style.display = 'block';
@@ -726,11 +864,14 @@ export const App = {
     this._lastUserInput = 0;
     const markUser = () => { this._lastUserInput = Date.now(); };
     ['wheel', 'touchmove', 'mousedown', 'pointerdown', 'keydown'].forEach(t => window.addEventListener(t, markUser, { passive: true }));
+    // root: null → viewport; root: main → контейнер с overflow. Используем main,
+    // но на случай если элемент не найден — fallback на viewport (null).
+    const mainEl = _('main');
+    if (this.observer) { this.observer.disconnect(); }
     this.observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting && !this.state.loading && !this.state.viewerOpen && this.state.hasMore) this.loadMore();
-    }, { root: _('main'), rootMargin: '2000px 0px' });
+    }, { root: mainEl || null, rootMargin: '2000px 0px' });
     this.observer.observe(this.els.sentinel);
-    const mainEl = _('main');
     if (mainEl) {
       mainEl.addEventListener('scroll', () => {
         clearTimeout(this._scrollLoadTimer);
@@ -761,14 +902,18 @@ export const App = {
   },
 
   defaultPanelWidth() {
+    // Панель — комфортная боковая колонка: на десктопе не меньше 420px,
+    // стремится к ~55% свободного места справа от ленты (но не уже минимума).
     const side = this.panelSide();
-    const v = Math.round(side * 0.6);
-    return Math.min(Math.max(v, 320), Math.max(320, Math.round(side * 0.92)));
+    const lo = 420;
+    const v = Math.round(side * 0.55);
+    return Math.min(Math.max(v, lo), Math.max(lo, Math.round(side * 0.92)));
   },
 
   clampPanelWidth(w) {
+    // Пользовательский resize — как и дефолт, но с запасом на десктопе.
     const side = this.panelSide();
-    const lo = 280, hi = Math.max(280, Math.round(side * 0.92));
+    const lo = 340, hi = Math.max(360, Math.round(side * 0.94));
     return Math.min(Math.max(w, lo), hi);
   },
 
@@ -776,13 +921,18 @@ export const App = {
     const w = this.clampPanelWidth(this._panelWidth || this.defaultPanelWidth());
     this.els.profilePanel.style.width = w + 'px';
     this.els.settingsPanel.style.width = w + 'px';
+    // Колонки превью профиля адаптируются под реальную ширину панели.
+    const cols = w >= 560 ? 5 : w >= 470 ? 4 : w >= 380 ? 3 : 2;
+    this.els.profilePanel.style.setProperty('--pf-cols', String(cols));
+    this.els.settingsPanel.style.setProperty('--pf-cols', String(cols));
   },
 
   _syncPanels() {
     if (!this.els.panelBackdrop) return;
     const anyOpen = this.state.profileOpen || this.state.settingsOpen;
     this.els.panelBackdrop.classList.toggle('active', anyOpen);
-    document.getElementById('app').classList.toggle('panel-open', anyOpen);
+    const appEl = document.getElementById('app');
+    if (appEl) appEl.classList.toggle('panel-open', anyOpen);
   },
 
   savePanelWidth(w) {
@@ -920,6 +1070,9 @@ export const App = {
       else if (d.type === 'result') applyResult(d);
       else if (d.type === 'comment' && this._onCommentEvent) this._onCommentEvent(d.post_id);
       else if (d.type === 'remote' && d.id > 0) this.onRemotePost(d.id);
+      else if (d.type === 'post_saved' && this.state.isLocal && this.state.autoRefreshFeed) {
+        this.loadPosts(true);
+      }
     });
     es.onerror = () => {  };
     this._sse = es;
@@ -1158,8 +1311,10 @@ export const App = {
     if (!this.state.profileOpen && !this._profileFresh) {
       try { await this.loadProfile(); } catch (_) {}
     }
-    const presets = ((this.state.profile && this.state.profile.presets) || [])
-      .filter(p => (p.kind || 'query') === 'query');
+    /** @type {{kind?: string, query?: string, name?: string}[]} */
+    const presets = /** @type {{kind?: string, query?: string, name?: string}[]} */ (
+      (this.state.profile && this.state.profile.presets) || []
+    ).filter(p => (p.kind || 'query') === 'query');
     let html = `<button class="header-menu-item" data-action="presets-back">${icon('chevronLeft', 16)} Назад</button>`;
     if (!presets.length) {
       html += `<div class="header-menu-empty">Пресетов поиска пока нет — сохраните в профиле</div>`;

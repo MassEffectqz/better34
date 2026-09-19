@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,17 @@ var (
 	// warmSlots — общий semaphore на все прогревы: не душим CDN
 	// параллельной закачкой всей страницы.
 	warmSlots = make(chan struct{}, 4)
+	// warmPending — число живых горутин прогрева: при быстрых переходах по
+	// страницам без лимита за слоты копились бы сотни висящих горутин (P2-17).
+	warmPending atomic.Int32
+	// mediaWarmInFlight — отдельный лимит на долгие видео-прогревы (оба
+	// ограничителя вместе не дают одному видео занять все слоты навсегда).
+	mediaWarmInFlight atomic.Int32
+)
+
+const (
+	maxWarmPending   = 8
+	maxMediaWarm     = 2
 )
 
 func warmEnabled() bool {
@@ -63,11 +75,26 @@ func warmPreviewCache(h *Handler, entries []gin.H) {
 		if _, busy := warmInflight.LoadOrStore(key, struct{}{}); busy {
 			continue
 		}
+		// Лимит живых горутин: при быстрых переходах по страницам не копим
+		// очередь ожидающих слот (P2-17).
+		if int(warmPending.Load()) >= maxWarmPending {
+			warmInflight.Delete(key)
+			continue
+		}
+		warmPending.Add(1)
 		go func(key string, u *url.URL) {
-			defer warmInflight.Delete(key)
-			warmSlots <- struct{}{}
-			defer func() { <-warmSlots }()
-			warmOne(h, key, u)
+			defer func() {
+				warmPending.Add(-1)
+				warmInflight.Delete(key)
+			}()
+			select {
+			case warmSlots <- struct{}{}:
+				defer func() { <-warmSlots }()
+				warmOne(h, key, u)
+			default:
+				// Слоты заняты (например, долгим видео-прогревом): не копим
+				// очередь — превью догреется через обычный proxy-путь.
+			}
 		}(key, u)
 	}
 }
@@ -110,4 +137,75 @@ func warmOne(h *Handler, key string, u *url.URL) bool {
 	}
 	proxyCache.store(key, data, resp.Header.Get("Content-Type"))
 	return true
+}
+
+// ── Прогрев полного медиа (видео) в дисковый media-cache ──────────────
+// Превью (warmPreviewCache) достаточно для сетки, но первый просмотр
+// <video> идёт через /api/proxy с `Range: bytes=0-`: браузер часто рвёт
+// соединение сразу после чтения moov-заголовка, и media-cache не успевает
+// заполниться из обычного стрима. warmMediaCacheFile качает файл целиком
+// фоном (не завися от клиента), и перемотка/повторный просмотр к этому
+// моменту уже обслуживаются локально.
+
+func warmMediaCacheFile(h *Handler, u *url.URL) {
+	if !warmEnabled() || h == nil || u == nil {
+		return
+	}
+	if mediaCacheGet(u.String()) != "" {
+		return
+	}
+	if !h.proxyHostAllowed(u.Hostname()) {
+		return
+	}
+	key := u.String()
+	if _, busy := warmInflight.LoadOrStore(key, struct{}{}); busy {
+		return
+	}
+	// Долгие видео-прогревы ограничиваем отдельно: иначе пара роликов может
+	// занять все слоты warmSlots на полчаса и задушить превью-прогрев (P2-9).
+	if int(mediaWarmInFlight.Load()) >= maxMediaWarm {
+		warmInflight.Delete(key)
+		return
+	}
+	mediaWarmInFlight.Add(1)
+	defer func() {
+		mediaWarmInFlight.Add(-1)
+	}()
+	defer warmInflight.Delete(key)
+	warmSlots <- struct{}{}
+	defer func() { <-warmSlots }()
+
+	// Пока стояли в очереди слотов, файл могли докачать другие пути.
+	if mediaCacheGet(u.String()) != "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("Referer", h.refererForHost(u.Hostname()))
+
+	resp, err := MediaHTTPClient().Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	sink := newMediaCacheSink(u.String())
+	if sink == nil {
+		return
+	}
+	written, werr := io.Copy(sink, io.LimitReader(resp.Body, mediaCacheMaxItem+1))
+	if werr != nil || written == 0 || written > mediaCacheMaxItem {
+		sink.abort()
+		return
+	}
+	sink.commit()
 }

@@ -1,12 +1,15 @@
 package internal
 
 import (
+	"context"
 	"image"
+	"log"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/disintegration/imaging"
 )
@@ -66,17 +69,22 @@ func percepHashVideo(path string) string {
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
-	cmd := exec.Command(ffmpegPath,
-		"-y",
-		"-ss", "0.5",
-		"-i", path,
-		"-vframes", "1",
-		"-q:v", "2",
-		tmpPath,
-	)
-	cmd.Stderr = nil
+	args := []string{"-y"}
+	if os.Getenv("BRIEFLY_FFMPEG_HWACCEL") == "1" {
+		args = append(args, "-hwaccel", "auto")
+	}
+	args = append(args, "-ss", "0.5", "-i", path, "-vframes", "1", "-q:v", "2", tmpPath)
+
+	// Зависший ffmpeg на битом файле не должен блокировать воркер навсегда:
+	// таймаут через CommandContext, stderr собираем для диагностики.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	stderr := new(strings.Builder)
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
+		log.Printf("ffmpeg phash %s failed: %v; stderr=%s", path, err, stderr.String())
 		return ""
 	}
 
@@ -201,6 +209,13 @@ func decodePHash(s string) (uint64, bool) {
 	}
 	return h, true
 }
+
+// phashSeed — старшие 16 бит хэша: корзина для поиска похожих. Биты
+// Хэмминга ниже 48 не влияют на старший байт, поэтому соседние корзины (±1)
+// покрывают все «близкие» хэши. Кандидаты берутся только из трёх корзин,
+// а не из всего скана хэшей.
+
+func phashSeed(h uint64) int { return int(h >> 48) }
 
 // HammingPHash — расстояние Хэмминга между двумя hex-pHash.
 func HammingPHash(a, b string) (int, bool) {

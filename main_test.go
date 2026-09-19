@@ -40,6 +40,32 @@ func TestHostAllowed(t *testing.T) {
 	}
 }
 
+func TestHostAllowedWildcard(t *testing.T) {
+	orig := allowedHosts
+	allowedHosts = []string{".trycloudflare.com"}
+	defer func() { allowedHosts = orig }()
+
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"match-track-eau-evaluating.trycloudflare.com", true},
+		{"sub.trycloudflare.com:443", true},
+		{"trycloudflare.com", true},
+		{"trycloudflare.com:3000", true},
+		{"eviltunnel.trycloudflare.com.evil.com", false},
+		{"nottrycloudflare.com", false},
+		{"localhost.evil.com:3000", false},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Host = tc.host
+		if got := hostAllowed(req); got != tc.want {
+			t.Errorf("hostAllowed(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}
+
 func TestTokenMatches(t *testing.T) {
 	orig := authToken
 	authToken = "secret"

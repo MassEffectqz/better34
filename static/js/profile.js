@@ -7,13 +7,18 @@ App._thumbs = App._thumbs || {};
 // в service worker (превью неизменяемы по построению).
 const pfProxy = u => `/api/proxy?url=${encodeURIComponent(u)}&kind=preview`;
 
-const pfThumbFor = post => {
-  if (post.downloaded) {
-    return (post.file_type === 'video' && post.preview_url)
-      ? pfProxy(post.preview_url)
-      : `/api/thumb/${post.id}`;
-  }
-  return post.preview_url ? pfProxy(post.preview_url) : `/api/thumb/${post.id}`;
+// Кандидаты превью по порядку предпочтения. Для старых лайков preview_url на
+// CDN часто протухает (хотлинк/удаление поста), а оригинал или локальная
+// миниатюра при этом живы — tile перебирает кандидатов при ошибке загрузки.
+const pfCandidatesFor = post => {
+  const out = [];
+  const push = u => { if (u && !out.includes(u)) out.push(u); };
+  if (post.preview_url) push(pfProxy(post.preview_url));
+  if (post.downloaded || post.thumb_path) push(`/api/thumb/${post.id}`);
+  if (post.sample_url) push(pfProxy(post.sample_url));
+  if (post.file_url) push(pfProxy(post.file_url));
+  if (!out.length) push(`/api/thumb/${post.id}`);
+  return out;
 };
 
 App.renderProfile = function () {
@@ -71,9 +76,13 @@ App.renderTagPresetSelects = function () {
 };
 
 App.onTagFilter = function () {
-  this._tagFilter = (this.els.tagFilter.value || '').toLowerCase().trim();
-  this.renderTagLists();
-  this._updateTagFilterCount();
+  // U9: debounce 300ms — фильтрация на каждый keydown тормозит на больших списках.
+  clearTimeout(this._tagFilterTimer);
+  this._tagFilterTimer = setTimeout(() => {
+    this._tagFilter = (this.els.tagFilter.value || '').toLowerCase().trim();
+    this.renderTagLists();
+    this._updateTagFilterCount();
+  }, 300);
 };
 
 App._updateTagFilterCount = function () {
@@ -221,14 +230,14 @@ App.renderThumbs = function (type, ids) {
 
   if (!list.length) {
     el.innerHTML = '';
-    empty.style.display = '';
-    gridBtn.style.display = 'none';
+    if (empty) empty.style.display = '';
+    if (gridBtn) gridBtn.style.display = 'none';
     this._hideThumbMore(type);
-    this._thumbs[type] = { key: '', ids: [], posts: [], loaded: 0, token: 0 };
+    this._thumbs[type] = { key: '', ids: [], posts: [], loaded: 0, token: 0, missing: [] };
     return;
   }
-  empty.style.display = 'none';
-  gridBtn.style.display = '';
+  if (empty) empty.style.display = 'none';
+  if (gridBtn) gridBtn.style.display = '';
 
   const key = list.join(',');
   const tabEl = document.getElementById(type === 'likes' ? 'tab-likes' : 'tab-hides');
@@ -239,13 +248,14 @@ App.renderThumbs = function (type, ids) {
     if (ex.loaded > 0 && tabActive) {
       el.innerHTML = '';
       this._appendThumbs(el, ex.posts);
+      if (ex.missing && ex.missing.length) this._appendMissingThumbs(el, ex.missing);
       this._updateThumbMore(type);
       return;
     }
     if (!tabActive) { el.innerHTML = ''; return; }
   }
 
-  this._thumbs[type] = { key, ids: list, posts: [], loaded: 0, token: 0 };
+  this._thumbs[type] = { key, ids: list, posts: [], loaded: 0, token: 0, missing: [] };
   el.innerHTML = '';
   const n = Math.min(6, list.length);
   for (let i = 0; i < n; i++) {
@@ -265,15 +275,25 @@ App.loadMoreThumbs = async function (type) {
   const token = ++s.token;
   if (moreBtn) { moreBtn.disabled = true; moreBtn.style.display = ''; moreBtn.innerHTML = '<span class="pf-more-spin"></span>Загрузка…'; }
   const next = Math.min(s.loaded + this._thumbsBatch, total);
+  const ids = s.ids.slice(s.loaded, next);
   try {
-    const data = await API.get(`/posts-by-ids?ids=${s.ids.slice(s.loaded, next).join(',')}`);
+    const data = await API.get(`/posts-by-ids?ids=${ids.join(',')}`);
     if (s.token !== token) return;
     const posts = (data && data.posts) || [];
+    const found = new Set(posts.map(p => p.id).filter(Number.isFinite));
     posts.forEach(p => s.posts.push(p));
     s.loaded = next;
     const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
     this._appendThumbs(el, posts);
     el.querySelectorAll('.pf-thumb-skeleton').forEach(s => s.remove());
+    // Старые лайки, которых уже нет ни в локальной БД, ни на источнике:
+    // показываем заглушку «недоступен», чтобы было видно, что id учитывался.
+    const already = new Set(s.missing || []);
+    const missing = ids.filter(id => !found.has(id) && !already.has(id));
+    if (missing.length) {
+      s.missing = [...(s.missing || []), ...missing];
+      this._appendMissingThumbs(el, missing);
+    }
     this._updateThumbMore(type);
   } catch (err) {
     if (s.token === token && moreBtn) { moreBtn.disabled = false; moreBtn.textContent = 'Ошибка — повторить'; }
@@ -301,7 +321,7 @@ App._buildThumbTile = function (post, i) {
   tile.className = 'pf-thumb';
   tile.style.setProperty('--d', `${Math.min(i, 14) * 26}ms`);
   if (post.width && post.height) tile.style.aspectRatio = String(Math.min(post.width / post.height, 1.4));
-  const src = pfThumbFor(post);
+  const srcs = pfCandidatesFor(post);
   const play = post.file_type === 'video'
     ? `<span class="pf-play">${icon('play', null, true)}</span>`
     : post.file_type === 'gif'
@@ -311,17 +331,66 @@ App._buildThumbTile = function (post, i) {
     ? `<span class="pf-dl" title="Скачано">${icon('check', null, true)}</span>`
     : '';
   const score = post.score ? `<span class="pf-score">${icon('star', null, true)}${post.score}</span>` : '';
-  tile.innerHTML = `<img src="${esc(src)}" alt="" loading="lazy" decoding="async"><div class="pf-fallback">#${post.id}</div>${play}${dl}<div class="pf-open"><span class="pf-open-icon">${icon('externalLink')}</span></div><div class="pf-bar"><span>#${post.id}</span>${score}</div>`;
+  tile.innerHTML = `<img src="" alt="" loading="lazy" decoding="async"><div class="pf-fallback">#${post.id}<span class="pf-err"></span></div>${play}${dl}<div class="pf-open"><span class="pf-open-icon">${icon('externalLink')}</span></div><div class="pf-bar"><span>#${post.id}</span>${score}</div>`;
   const img = tile.querySelector('img');
+  const errEl = tile.querySelector('.pf-err');
   if (img) {
-    img.addEventListener('load', () => img.classList.add('loaded'));
-    img.addEventListener('error', () => { img.style.display = 'none'; }, { once: true });
+    // Перебор кандидатов: preview_url → локальная миниатюра → sample → original.
+    // Смена src отменяет старый запрос («error» по aborted-запросу) — отсекаем
+    // по номеру попытки.
+    let attempt = 0;
+    let done = false;
+    img.dataset.attempt = '0';
+    const tryNext = () => {
+      if (done) return;
+      if (attempt >= srcs.length) {
+        tile.classList.add('pf-broken');
+        if (errEl) errEl.textContent = 'недоступно';
+        return;
+      }
+      img.dataset.attempt = String(++attempt);
+      img.src = srcs[attempt - 1];
+    };
+    img.addEventListener('load', () => {
+      if (String(attempt) !== img.dataset.attempt) return;
+      done = true;
+      img.classList.add('loaded');
+      tile.classList.remove('pf-broken');
+    });
+    img.addEventListener('error', () => {
+      if (done || String(attempt) !== img.dataset.attempt) return;
+      img.style.display = 'none';
+      tryNext();
+    }, { once: false });
+    tryNext();
   }
   tile.addEventListener('click', () => this.openPostFromProfile(post));
   return tile;
 };
 
+// Заглушки для лайков/скрытий, которых нет ни локально, ни на источнике
+// (пост удалён/CDN отдаёт 404): пользователь видит, что id учтён в профиле.
+App._appendMissingThumbs = function (el, ids) {
+  if (!el || !ids || !ids.length) return;
+  const frag = document.createDocumentFragment();
+  ids.forEach(id => {
+    const tile = document.createElement('div');
+    tile.className = 'pf-thumb pf-broken pf-missing';
+    tile.title = `Пост #${id} недоступен на источнике`;
+    tile.textContent = '';
+    tile.appendChild((() => {
+      const fb = document.createElement('div');
+      fb.className = 'pf-fallback';
+      fb.textContent = `#${id} · недоступен`;
+      return fb;
+    })());
+    frag.appendChild(tile);
+  });
+  el.appendChild(frag);
+};
+
 App._appendThumbs = function (el, posts) {
+  if (!el) return;
   const frag = document.createDocumentFragment();
   posts.forEach((post, i) => {
     if (!post || post.id == null) return;
@@ -367,6 +436,7 @@ App._matchTag = function (t) {
 
 App.renderTagList = function (elId, tags, type) {
   const el = this.els[elId];
+  if (!el) return;
   el.innerHTML = '';
   const q = this._tagFilter || '';
   if (q) tags = (tags || []).filter(t => t.toLowerCase().includes(q));

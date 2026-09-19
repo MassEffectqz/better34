@@ -1,10 +1,11 @@
-const _ = id => document.getElementById(id);
+/** @param {string} id @returns {HTMLElement} */
+const _ = id => /** @type {HTMLElement} */ (document.getElementById(id));
 
 const HISTORY_KEY = 'briefly_search_history';
 // v2: [{q, count, pin}]; legacy-формат (строки) мигрируется на лету.
 function getHistory() {
   try {
-    const raw = JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
+    const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
     return raw
       .map(e => typeof e === 'string'
         ? { q: e, count: 1, pin: false }
@@ -95,11 +96,30 @@ const ICONS = {
   pip: '<path d="M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/><rect width="10" height="7" x="12" y="13" rx="1"/>'
 };
 
+/**
+ * SVG-иконка строкой.
+ * @param {string} name
+ * @param {number} [size]
+ * @param {boolean} [solid]
+ * @returns {string}
+ */
 function icon(name, size, solid) {
   const inner = ICONS[name];
   if (!inner) return '';
   const wh = size ? ` width="${size}" height="${size}"` : '';
   return `<svg${wh} viewBox="0 0 24 24" fill="${solid ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+}
+
+/**
+ * Преобразует SVG-строку из icon() в DOM-Node для использования с appendChild.
+ * @param {string} svgString
+ * @returns {Node}
+ */
+function iconToNode(svgString) {
+  if (!svgString) return document.createTextNode('');
+  const tmp = document.createElement('template');
+  tmp.innerHTML = svgString;
+  return tmp.content.firstChild || document.createTextNode('');
 }
 
 function renderLucideIcons(root) {
@@ -117,5 +137,5 @@ function renderLucideIcons(root) {
 
 // Единая точка входа браузера вызывает renderLucideIcons() при инициализации:
 // на верхнем уровне модуля DOM-обращений быть не должно (import-safe для тестов).
-export { _, esc, go, icon, renderLucideIcons, getHistory, saveHistory, addHistory,
+export { _, esc, go, icon, iconToNode, renderLucideIcons, getHistory, saveHistory, addHistory,
          removeHistory, togglePinHistory, clearHistory };

@@ -143,7 +143,8 @@ func (l *chanListener) Addr() net.Addr { return l.addr }
 // demuxAccept раскладывает соединения основного листенера по двум
 // каналам-листенерам. Дедлайн на Peek обязателен: молчащее соединение
 // (сканер, зависший клиент) иначе навсегда блокировало бы accept-цикл.
-func demuxAccept(ln net.Listener, tlsLn, plainLn *chanListener) {
+// done — канал для остановки: разблокирует отправку в каналы-листенеры.
+func demuxAccept(ln net.Listener, tlsLn, plainLn *chanListener, done <-chan struct{}) {
 	defer ln.Close()
 	defer tlsLn.Close()
 	defer plainLn.Close()
@@ -158,10 +159,20 @@ func demuxAccept(ln net.Listener, tlsLn, plainLn *chanListener) {
 		_ = conn.SetReadDeadline(time.Time{})
 		pc := &peekConn{Conn: conn, r: br}
 		if perr == nil && first[0] == 0x16 {
-			tlsLn.ch <- pc
+			select {
+			case tlsLn.ch <- pc:
+			case <-done:
+				conn.Close()
+				return
+			}
 		} else {
 			// Не TLS (включая обрывы): редиректор ответит или закроет сам.
-			plainLn.ch <- pc
+			select {
+			case plainLn.ch <- pc:
+			case <-done:
+				conn.Close()
+				return
+			}
 		}
 	}
 }
@@ -195,13 +206,17 @@ func httpsRedirectHandler() http.Handler {
 }
 
 // setupTLS настраивает TLS-сервер, demux и HTTP/3. Возвращает scheme,
-// основной listener, plain-сервер и H3-сервер (могут быть nil).
-func setupTLS(addr string) (scheme string, rawLn net.Listener, plainSrv *http.Server, h3Server *http3.Server) {
+// tlsLn — listener TLS-соединений (выход демукса), plainSrv, H3-сервер,
+// rawLn — основной listener (для явного закрытия при shutdown),
+// done — канал для остановки demuxAccept (разблокирует отправку в каналы),
+// cert — сертификат, сгенерированный ОДИН раз: его же использует HTTPS-сервер
+// в main.go (иначе при неудаче записи на диск TLS и H3 получали разные ключи).
+func setupTLS(addr string) (scheme string, tlsLn net.Listener, plainSrv *http.Server, h3Server *http3.Server, rawLn net.Listener, done chan struct{}, cert tls.Certificate) {
 	scheme = "http"
 	if !tlsEnabled() {
 		return
 	}
-	_, err := loadOrGenerateCert()
+	cert, err := loadOrGenerateCert()
 	if err != nil {
 		slog.Warn("BRIEFLY_TLS: не удалось подготовить сертификат, работаю по HTTP", "error", err)
 		return
@@ -211,9 +226,11 @@ func setupTLS(addr string) (scheme string, rawLn net.Listener, plainSrv *http.Se
 	if err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
-	tlsLn := newChanListener(rawLn.Addr(), 64)
+	tlsChanLn := newChanListener(rawLn.Addr(), 64)
 	plainLn := newChanListener(rawLn.Addr(), 64)
-	go demuxAccept(rawLn, tlsLn, plainLn)
+	done = make(chan struct{})
+	go demuxAccept(rawLn, tlsChanLn, plainLn, done)
+	tlsLn = tlsChanLn
 	plainSrv = &http.Server{
 		Handler:           httpsRedirectHandler(),
 		ReadHeaderTimeout: 5 * time.Second,
@@ -224,16 +241,20 @@ func setupTLS(addr string) (scheme string, rawLn net.Listener, plainSrv *http.Se
 	}()
 	// Задача 10: HTTP/3 (QUIC) — отдельный UDP-сокет на том же порту.
 	// Браузер видит Alt-Svc и сам уходит на h3, если сеть позволяет.
+	// Сертификат передаём из памяти (не читаем с диска), чтобы H3 и HTTPS
+	// использовали один и тот же сертификат.
 	if strings.ToLower(strings.TrimSpace(os.Getenv("BRIEFLY_H3"))) != "0" {
+		h3TLSConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			NextProtos: []string{"h3"},
+			Certificates: []tls.Certificate{cert},
+		}
 		h3Server = &http3.Server{
-			Addr: addr,
-			TLSConfig: &tls.Config{
-				MinVersion: tls.VersionTLS12,
-				NextProtos: []string{"h3"},
-			},
+			Addr:      addr,
+			TLSConfig: h3TLSConfig,
 		}
 		go func() {
-			if err := h3Server.ListenAndServeTLS(tlsCertPath, tlsKeyPath); err != nil &&
+			if err := h3Server.ListenAndServeTLS("", ""); err != nil &&
 				!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 				slog.Warn("HTTP/3: QUIC недоступен, продолжаем по TCP", "error", err)
 			}

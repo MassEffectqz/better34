@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="/static/css/style.css?v=__VERSION__">
 </head>
 <body>
+<a href="#main" class="skip-link">Перейти к содержимому</a>
 <div id="app">
   <header id="header">
     <div class="header-content">
@@ -22,6 +23,7 @@
         <svg class="brand-logo" viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="brand-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c5cbf"/></linearGradient></defs><rect x="4" y="4" width="92" height="92" rx="24" class="brand-logo-bg"/><circle cx="45" cy="45" r="20" fill="none" stroke="url(#brand-g)" stroke-width="8"/><line x1="59" y1="59" x2="76" y2="76" stroke="url(#brand-g)" stroke-width="9" stroke-linecap="round"/></svg>
         <span class="auth-name brand-name"><span>better</span><span class="auth-name-34">34</span></span>
       </button>
+      <nav aria-label="Основная навигация">
       <div class="search-box">
         <i class="search-icon" data-lucide="search" data-size="15"></i>
         <input type="text" id="search-input" placeholder="Поиск тегов..." spellcheck="false" autocomplete="off" title="Пробел — И · -тег — исключить · | — чередование лент · / или Ctrl+K — фокус">
@@ -51,9 +53,13 @@
           </div>
         </div>
       </div>
+      </nav>
       <button id="btn-header-menu" class="btn-icon" title="Меню" aria-label="Меню"><i data-lucide="menu" data-size="17"></i></button>
 
       <div id="header-menu" class="header-menu hidden">
+        <div class="header-menu-group" id="header-menu-filters">
+          <div class="header-menu-title" data-i18n="menu.filters">Фильтры</div>
+        </div>
         <div class="header-menu-group">
           <div class="header-menu-title" data-i18n="menu.search">Поиск</div>
           <button class="header-menu-item" data-action="random"><i data-lucide="shuffle" data-size="16"></i> <span data-i18n="menu.random">Случайный пост</span></button>
@@ -150,13 +156,17 @@
 
   <div id="panel-backdrop" class="panel-backdrop"></div>
 
-  <div id="profile-panel" class="profile-panel hidden">
+  <aside id="profile-panel" class="profile-panel hidden" aria-label="Профиль">
     <div class="panel-resize" aria-hidden="true"></div>
     <div class="profile-hero">
       <div class="profile-hero-glow" aria-hidden="true"></div>
       <div class="profile-hero-top">
         <span class="profile-panel-title" data-i18n="pf.title">Профиль</span>
-        <button class="btn-icon" id="profile-close" title="Закрыть (Esc)"><i data-lucide="x" data-size="18"></i></button>
+        <div class="profile-hero-actions">
+          <button class="btn-icon" id="profile-quick-stats" data-quick="stats" title="Статистика"><i data-lucide="chart" data-size="16"></i></button>
+          <button class="btn-icon" id="profile-quick-settings" data-quick="settings" title="Настройки"><i data-lucide="settings" data-size="16"></i></button>
+          <button class="btn-icon" id="profile-close" title="Закрыть (Esc)"><i data-lucide="x" data-size="18"></i></button>
+        </div>
       </div>
       <div class="profile-identity">
         <div class="profile-avatar" id="profile-avatar" title="Загрузить аватар">
@@ -257,9 +267,9 @@
         </div>
       </div>
     </div>
-  </div>
+  </aside>
 
-  <div id="settings-panel" class="settings-panel hidden">
+  <aside id="settings-panel" class="settings-panel hidden" aria-label="Настройки">
     <div class="panel-resize" aria-hidden="true"></div>
     <div class="profile-hero">
       <div class="profile-hero-glow" aria-hidden="true"></div>
@@ -289,6 +299,8 @@
             <option value="auto" data-i18n="theme.auto">Авто (системная)</option>
             <option value="dark" data-i18n="theme.dark">Тёмная</option>
             <option value="light" data-i18n="theme.light">Светлая</option>
+            <option value="deep" data-i18n="theme.deep">AMOLED (чёрный)</option>
+            <option value="sepia" data-i18n="theme.sepia">Сепия (тёплая)</option>
           </select>
         </label>
         <label class="setting-group">
@@ -306,14 +318,29 @@
           <span class="setting-label" data-i18n="set.accent">Акцентный цвет</span>
           <div class="accent-row" id="setting-accent">
             <button class="accent-swatch" data-accent="purple" style="--sw:#a78bfa" title="Фиолетовый"></button>
+            <button class="accent-swatch" data-accent="indigo" style="--sw:#818cf8" title="Индиго"></button>
             <button class="accent-swatch" data-accent="blue" style="--sw:#60a5fa" title="Синий"></button>
+            <button class="accent-swatch" data-accent="sky" style="--sw:#38bdf8" title="Небесный"></button>
             <button class="accent-swatch" data-accent="cyan" style="--sw:#22d3ee" title="Бирюзовый"></button>
+            <button class="accent-swatch" data-accent="teal" style="--sw:#2dd4bf" title="Бирюза-зелёный"></button>
             <button class="accent-swatch" data-accent="green" style="--sw:#34d399" title="Зелёный"></button>
-            <button class="accent-swatch" data-accent="pink" style="--sw:#f472b6" title="Розовый"></button>
+            <button class="accent-swatch" data-accent="lime" style="--sw:#a3e635" title="Лаймовый"></button>
+            <button class="accent-swatch" data-accent="amber" style="--sw:#fbbf24" title="Янтарный"></button>
             <button class="accent-swatch" data-accent="orange" style="--sw:#fb923c" title="Оранжевый"></button>
+            <button class="accent-swatch" data-accent="rose" style="--sw:#fb7185" title="Розово-красный"></button>
+            <button class="accent-swatch" data-accent="pink" style="--sw:#f472b6" title="Розовый"></button>
             <button class="accent-swatch" data-accent="red" style="--sw:#f87171" title="Красный"></button>
+            <input type="color" id="setting-accent-custom" class="accent-custom" value="#e879f9" title="Свой цвет" aria-label="Свой цвет акцента">
           </div>
         </div>
+        <label class="setting-group">
+          <span class="setting-label" data-i18n="set.autoRefreshFeed">Авто-рефреш ленты после скачивания</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-auto-refresh-feed" checked>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="setting-hint" data-i18n="set.autoRefreshFeedHint">Лента будет перезагружаться автоматически, когда новый пост окажется в библиотеке.</span>
+        </label>
       </div>
       <div class="profile-tab-content" id="stab-network">
         <label class="setting-group">
@@ -349,8 +376,12 @@
         </label>
         <div class="setting-group">
           <span class="setting-label" data-i18n="sec.password">Смена пароля</span>
-          <input type="password" id="input-current-password" placeholder="текущий пароль" autocomplete="current-password">
-          <input type="password" id="input-new-password" placeholder="новый пароль (мин. 6)" autocomplete="new-password">
+          <form onsubmit="return false;" style="display:contents">
+            <!-- Скрытое username-поле: Chrome требует его в password-формах (доступность/менеджер паролей) -->
+            <input type="text" id="input-current-username" name="username" autocomplete="username" tabindex="-1" aria-hidden="true" style="display:none">
+            <input type="password" id="input-current-password" placeholder="текущий пароль" autocomplete="current-password">
+            <input type="password" id="input-new-password" placeholder="новый пароль (мин. 6)" autocomplete="new-password">
+          </form>
           <button id="btn-change-password" class="btn-primary btn-sm"><span data-i18n="btn.changePassword">Сменить пароль</span></button>
           <button id="btn-logout-others" class="btn-primary btn-sm"><span data-i18n="btn.logoutOthers">Выйти на остальных устройствах</span></button>
         </div>
@@ -399,7 +430,7 @@
     <div class="settings-foot">
       <button id="btn-save-settings" class="btn-primary" data-i18n="btn.saveSettings">Сохранить</button>
     </div>
-  </div>
+  </aside>
 
   <div id="stats-modal" class="modal hidden">
     <div class="modal-backdrop"></div>

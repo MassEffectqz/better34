@@ -1,10 +1,13 @@
 package internal
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -149,5 +152,112 @@ func TestProxyPreviewImmutableCacheControl(t *testing.T) {
 	h.ProxyRemote(c2)
 	if cc := w2.Header().Get("Cache-Control"); strings.Contains(cc, "immutable") {
 		t.Fatalf("non-preview Cache-Control = %q, must not be immutable", cc)
+	}
+}
+
+// ── warmMediaCacheFile: прогрев полного медиа в дисковый кэш ────────────
+// Первый просмотр <video> (через `Range: bytes=0-`) докачивает весь файл
+// фоном; повторный просмотр/перемотка обслуживаются из media-cache без CDN.
+
+func TestWarmMediaCacheFileStoresFullFile(t *testing.T) {
+	payload := make([]byte, 300<<10)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	h, srv, hits := warmTestSetup(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		w.Write(payload)
+	})
+
+	u, err := url.Parse(srv.URL + "/v.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	warmMediaCacheFile(h, u)
+
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("upstream hits = %d, want 1", got)
+	}
+	p := mediaCacheGet(srv.URL + "/v.mp4")
+	if p == "" {
+		t.Fatal("full media not committed to media cache")
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b, payload) {
+		t.Fatalf("cached body corrupted: got %d bytes, want %d", len(b), len(payload))
+	}
+
+	// Файл уже в кэше—повторный прогрев не ходит на CDN.
+
+	warmMediaCacheFile(h, u)
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("cached URL re-fetched: hits = %d, want 1", got)
+	}
+	if n := countTmpFiles(); n != 0 {
+		t.Fatalf("leftover temp files: %d", n)
+	}
+}
+
+// Параллельные вызовы одного URL дедуплицируются через warmInflight: CDN
+// получает ровно один запрос, файл — один раз в кэше.
+
+func TestWarmMediaCacheFileDedupParallel(t *testing.T) {
+	payload := make([]byte, 64<<10)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	h, srv, hits := warmTestSetup(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond) // держим лидера: параллельные успевают сгруппироваться
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Write(payload)
+	})
+
+	u, err := url.Parse(srv.URL + "/v.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 8
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			warmMediaCacheFile(h, u)
+		}()
+	}
+	wg.Wait()
+
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("upstream hits = %d, want 1 (dedup via warmInflight)", got)
+	}
+	if p := mediaCacheGet(srv.URL + "/v.mp4"); p == "" {
+		t.Fatal("warmed file missing from media cache")
+	}
+	if n := countTmpFiles(); n != 0 {
+		t.Fatalf("leftover temp files: %d", n)
+	}
+}
+
+// Ошибка апстрима(не-200) не оставляет ни файла, ни мусора в кэше.
+
+func TestWarmMediaCacheFileFailsClean(t *testing.T) {
+	h, srv, _ := warmTestSetup(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	})
+	u, err := url.Parse(srv.URL + "/v.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	warmMediaCacheFile(h, u)
+
+	if p := mediaCacheGet(srv.URL + "/v.mp4"); p != "" {
+		t.Fatal("failed warm left file in media cache")
+	}
+	if n := countTmpFiles(); n != 0 {
+		t.Fatalf("leftover temp files: %d", n)
 	}
 }

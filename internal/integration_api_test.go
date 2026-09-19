@@ -111,8 +111,13 @@ func TestIntegrationReadyMetricsSettingsPassword(t *testing.T) {
 	os.Chdir(dir)
 	defer os.Chdir(oldWd)
 	os.MkdirAll("data", 0o755)
+	// Сбрасываем глобальные синглтоны профиля/аккаунтов/конфига: повторный
+	// прогон (-count=2) иначе увидел бы уже зарегистрированного юзера из
+	// data/accounts предыдущего прогона и упал бы на register 409.
+	resetGlobalTestState(t)
 
-	// Автобэкап-цикл (StartDBAutoBackup из GetDB) в тесте не нужен: 0 копий.
+	// Автобэкап-цикл (StartDBAutoBackup и GetDB) в тесте не нужен: 0 копий.
+
 	t.Setenv("BRIEFLY_DB_BACKUPS", "0")
 	// Глобальная БД держит файл открытым — закрываем до удаления TempDir и
 	// сбрасываем sync.Once, чтобы GetDB() в последующих тестах создал свежую

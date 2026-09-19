@@ -1,11 +1,13 @@
 import { App } from './state.js';
 import { icon, esc } from './utils.js';
 import { API } from './api.js';
-import { t } from './i18n.js';
+import { t, tf } from './i18n.js';
 import { decodeBlurHash } from './blurhash.js';
 const VIEWER_X_ICO = icon('x', 9);
-const SS_PLAY_ICO = icon('play', 16, true) + ' Слайдшоу';
-const SS_PAUSE_ICO = icon('pause', 16, true) + ' Слайдшоу';
+// i18n (#11): подписи слайдшоу зависят от текущего языка — вычисляем их в
+// момент вызова, а не при загрузке модуля (иначе смена языка не применится).
+const SS_PLAY_ICO = () => icon('play', 16, true) + ' ' + t('viewer.slideshow');
+const SS_PAUSE_ICO = () => icon('pause', 16, true) + ' ' + t('viewer.slideshow');
 
 App.openViewer = function (index) {
   if (index < 0 || index >= this.state.posts.length) return;
@@ -14,17 +16,24 @@ App.openViewer = function (index) {
   const main = document.getElementById('main');
   this.state._savedScrollTop = main ? main.scrollTop : 0;
   this.state.viewerIndex = index;
-     this.state.viewerOpen = true;
-   this.els.viewer.setAttribute('role', 'dialog');
-   this.els.viewer.setAttribute('aria-modal', 'true');
-   this.els.viewer.setAttribute('aria-label', t('viewer.title'));
+  this.state.viewerOpen = true;
+  // Perf (#8) / Race (#1): сбрасываем кэш zoom-метрик (контейнер мог
+  // изменить размер) и дедуп chips-запросов «родитель/дети».
+  this._zoomMetricsCache = null;
+  this._relChipsFor = null;
+  this.els.viewer.setAttribute('role', 'dialog');
+  this.els.viewer.setAttribute('aria-modal', 'true');
+  this.els.viewer.setAttribute('aria-label', t('viewer.title'));
+  if (typeof this.announce === 'function') {
+    this.announce(tf('viewer.postOf', { i: index + 1, n: this.state.posts.length }));
+  }
    // a11y (#4): фон скрываем от скринридеров (aria-hidden), а не просто скрываем.
    if (main) this.setAriaHidden(main, true);
    this.els.viewer.classList.remove('hidden');
    // focusable контейнер + trap Tab внутри хедера вьювера.
    this.els.viewerContent.setAttribute('tabindex', '-1');
    if (typeof this.trapFocus === 'function') {
-     this._releaseViewerTrap = this.trapFocus(this.els.viewerHead, this.els.viewerClose);
+      this._releaseViewerTrap = this.trapFocus(this.els.viewer, this.els.viewerClose);
    }
   this._showViewerHud();
   document.body.style.overflow = 'hidden';
@@ -52,11 +61,31 @@ App.closeViewer = function () {
   // Отменяем в-полёте запросы похожих/счётчиков тегов — вьюер закрыт.
   if (this._relAbort) { this._relAbort.abort(); this._relAbort = null; }
   if (this._countAbort) { this._countAbort.abort(); this._countAbort = null; }
+  // Race (#2): отложенный loadRelated не должен стрелять уже после закрытия —
+  // снимаем таймер scheduleRelated вместе с AbortController'ами.
+  clearTimeout(this._relTimer);
+  this._relTimer = null;
+  this._relChipsToken = (this._relChipsToken || 0) + 1;
+  if (this._relChipsAbort) { this._relChipsAbort.abort(); this._relChipsAbort = null; }
+  if (this._touchCleanup) { this._touchCleanup(); this._touchCleanup = null; }
   // Останавливаем фоновую предзагрузку видео, чтобы не держать скачивание.
   this._stashCurrentVideoTime();
+  // Очищаем слушатели видео через AbortController (P1-14).
+  const vCur = this.currentVideo();
+  if (vCur) this._unbindVideoEvents(vCur);
+  // Memory (#4): у ТЕКУЩЕГО видео тоже снимаем воспроизведение и буфер —
+  // раньше src чистился только у preload-видео, а играющее видео могло
+  // продолжать докачивать данные до GC.
+  this._stopVideoEl(vCur);
   clearTimeout(this._preloadDwellTimer);
   this._preloadDwellTimer = null;
-  if (this._preloadVideoEl) { try { this._preloadVideoEl.src = ''; } catch { /* noop */ } }
+  if (this._preloadVideoEl) {
+    try { this._preloadVideoEl.src = ''; } catch { /* noop */ }
+    // Memory (#14): не оставляем скрытый <video> висеть в <body> на весь
+    // жизненный цикл страницы — при следующем preloadVideo он создастся заново.
+    try { this._preloadVideoEl.remove(); } catch { /* noop */ }
+    this._preloadVideoEl = null;
+  }
   this._preloadVideoUrl = null;
   this._unmuteHintEl = null;
   this._viewerErrorEl = null;
@@ -79,6 +108,8 @@ App.closeViewer = function () {
   this.els.viewerRelated.classList.add('hidden');
   document.body.style.overflow = '';
   this.els.viewerContent.classList.remove('video-loading');
+  // Удаляем кнопку "1:1" (U5: накапливалась при каждом открытии вьюера).
+  this.els.viewerContent.querySelectorAll('.viewer-orig').forEach(el => el.remove());
   this.els.viewerContent.innerHTML = '';
      if (this.state.posts.length) {
     this.state.focusedIndex = Math.min(this.state.viewerIndex, this.state.posts.length - 1);
@@ -96,10 +127,23 @@ App.closeViewer = function () {
     this.loadPosts(true, null, true);
   }
   this._cancelPan();
+  // Minor (#15): гасим и инерцию панорамирования — иначе висящий rAF-кадр
+  // сделает один лишний panBy уже после закрытия вьюера.
+  this._cancelInertia();
+  // Perf (#8): метрики контейнера после закрытия невалидны.
+  this._zoomMetricsCache = null;
   this._zoomActive = false; this._zoomScale = 1; this._zoomTx = 0; this._zoomTy = 0;
   if (this.els.zoomLabel) this.els.zoomLabel.textContent = '100%';
   try { localStorage.removeItem('briefly_zoom'); } catch {}
   if (this._touchCleanup) { this._touchCleanup(); }
+};
+
+// Memory (#4): замена <video> через innerHTML='' не останавливает элемент —
+// браузер может продолжать докачивать буфер до GC. Явные pause + src=''.
+App._stopVideoEl = function (v) {
+  if (!v || v.tagName !== 'VIDEO') return;
+  try { v.pause(); } catch { /* noop */ }
+  try { v.removeAttribute('src'); v.load(); } catch { /* noop */ }
 };
 
 App._viewerIsFullscreen = function () {
@@ -142,7 +186,7 @@ App.loadRelated = async function (post) {
     const posts = (data && data.posts) || [];
     if (!posts.length) {
       el.classList.remove('hidden');
-      el.innerHTML = '<div class="rel-title">Похожих по тегам не нашлось</div>';
+      el.innerHTML = '<div class="rel-title">' + t('viewer.relatedEmpty') + '</div>';
       return;
     }
     this._relPosts = posts;
@@ -151,11 +195,15 @@ App.loadRelated = async function (post) {
     // kind=preview: immutable-заголовок и cache-first в service worker.
     const prox = (u) => u ? '/api/proxy?url=' + encodeURIComponent(u) + '&kind=preview' : null;
     el.innerHTML =
-      '<div class="rel-title">Похожие по тегам' + (tagStr ? ': <span style="text-transform:none;font-weight:600">' + tagStr + '</span>' : '') + '</div>' +
+      '<div class="rel-title">' + t('viewer.relatedTitle') + (tagStr ? ': <span style="text-transform:none;font-weight:600">' + tagStr + '</span>' : '') + '</div>' +
       '<div class="rel-row">' +
       posts.map((p, i) => {
         const thumb = p.downloaded ? ('/api/thumb/' + p.id) : prox(p.preview_url);
-        return `<div class="rel-item" data-idx="${i}" title="#${p.id}">${thumb ? `<img src="${thumb}" alt="" loading="lazy" decoding="async">` : ''}<span class="rel-id">#${p.id}</span></div>`;
+        // XSS (#7): p.id приходит из внешнего источника — экранируем (esc
+        // безопасен и в атрибутном контексте). A11y (#13): rel-item — кнопка
+        // с ролью и фокусом, иначе ряд «Похожие» недоступен с клавиатуры.
+        const pid = esc(p.id);
+        return `<div class="rel-item" role="button" tabindex="0" data-idx="${i}" aria-label="#${pid}" title="#${pid}">${thumb ? `<img src="${thumb}" alt="" loading="lazy" decoding="async">` : ''}<span class="rel-id">#${pid}</span></div>`;
       }).join('') +
       '</div>';
   } catch (err) {
@@ -163,10 +211,77 @@ App.loadRelated = async function (post) {
     const cur = this.state.posts[this.state.viewerIndex];
     if (!cur || cur.id !== post.id) return;
     el.classList.remove('hidden');
-    el.innerHTML = '<div class="rel-title">Не удалось загрузить похожие</div>';
+    el.innerHTML = '<div class="rel-title">' + t('viewer.relatedError') + '</div>';
   } finally {
     if (this._relAbort === ac) this._relAbort = null;
   }
+};
+
+// Perf (#9): вместо 4 слушателей на каждый тег при каждом посте — 4
+// делегированных слушателя на контейнер, навешиваются один раз.
+App._bindViewerTagDelegation = function () {
+  const host = this.els.viewerTags;
+  if (!host || typeof host.addEventListener !== 'function' || host._tagDelegated) return;
+  host._tagDelegated = true;
+  // Тег хранится экспандо-свойством (надёжнее dataset для тестового DOM).
+  const tagOf = (span) => (span && span._brieflyTag) || '';
+  const hideTag = (span) => {
+    const tag = tagOf(span);
+    API.post('/hidden-tag', { tag }).then((r) => {
+      API.invalidate('/profile');
+      this.invalidateFeedCache();
+      this.loadProfile();
+      this._viewerTagChanged = true;
+      span.classList.toggle('tag-hidden');
+      this.showToast(r.hidden ? tf('viewer.tagHidden', { tag }) : tf('viewer.tagShown', { tag }));
+    }).catch(() => {});
+  };
+  const favTag = (span) => {
+    const tag = tagOf(span);
+    API.post('/fav-tag', { tag }).then(() => {
+      API.invalidate('/profile');
+      this.invalidateFeedCache();
+      this.loadProfile();
+      span.classList.toggle('tag-fav');
+    }).catch(() => {});
+  };
+  const openTag = (span) => {
+    const tag = tagOf(span);
+    const current = this.state.query;
+    const newQ = current ? `${current} +${tag}` : `+${tag}`;
+    this.closeViewer();
+    this.els.searchInput.value = newQ;
+    this.search(newQ);
+  };
+  const inXBtn = (e) => !!(e.target.closest && e.target.closest('.tag-hide-btn'));
+  const inTag = (e) => e.target.closest && e.target.closest('.viewer-tag');
+  host.addEventListener('click', (e) => {
+    const span = inTag(e);
+    if (!span) return;
+    if (inXBtn(e)) { hideTag(span); return; }
+    openTag(span);
+  });
+  host.addEventListener('dblclick', (e) => {
+    const span = inTag(e);
+    if (!span || inXBtn(e)) return;
+    e.stopPropagation();
+    favTag(span);
+  });
+  host.addEventListener('contextmenu', (e) => {
+    const span = inTag(e);
+    if (!span) return;
+    e.preventDefault();
+    hideTag(span);
+  });
+  // A11y (#15): теги фокусируемы — Enter/Space активируют как клик.
+  host.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const span = inTag(e);
+    if (!span) return;
+    e.preventDefault();
+    if (inXBtn(e)) { hideTag(span); return; }
+    openTag(span);
+  });
 };
 
 App._renderViewerTags = function () {
@@ -175,6 +290,7 @@ App._renderViewerTags = function () {
   if (!viewerTags) return;
   viewerTags.innerHTML = '';
   if (!post || !post.tags) return;
+  this._bindViewerTagDelegation();
   const allTags = post.tags.split(' ').filter(Boolean);
   const isFav = t => this.state.profile.fav_tags && this.state.profile.fav_tags.includes(t);
   const isHid = t => this.state.profile.hidden_tags && this.state.profile.hidden_tags.includes(t);
@@ -185,6 +301,11 @@ App._renderViewerTags = function () {
   allTags.forEach(tag => {
     const span = document.createElement('span');
     span.className = 'viewer-tag' + (isFav(tag) ? ' tag-fav' : '') + (isHid(tag) ? ' tag-hidden' : '') + (isQ(tag) ? ' tag-query' : '');
+    span._brieflyTag = tag;
+    // A11y (#15): тег — интерактивный элемент: роль + фокус с клавиатуры.
+    span.tabIndex = 0;
+    try { span.setAttribute('role', 'button'); } catch { /* тестовый DOM без setAttribute */ }
+    try { span.setAttribute('aria-label', tag); } catch { /* noop */ }
     const text = document.createElement('span');
     text.textContent = tag;
     span.appendChild(text);
@@ -200,27 +321,10 @@ App._renderViewerTags = function () {
     const xBtn = document.createElement('button');
     xBtn.className = 'tag-hide-btn';
     xBtn.innerHTML = VIEWER_X_ICO;
-    xBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      API.post('/hidden-tag', { tag }).then((r) => { API.invalidate('/profile'); this.invalidateFeedCache(); this.loadProfile(); this._viewerTagChanged = true; span.classList.toggle('tag-hidden'); this.showToast(r.hidden ? `Скрыт: ${tag}` : `Показан: ${tag}`); }).catch(() => {});
-    });
+    // A11y (#12): SVG-иконка без текста — даём кнопке имя для скринридеров.
+    xBtn.title = t('viewer.tagHide');
+    try { xBtn.setAttribute('aria-label', t('viewer.tagHide')); } catch { /* тестовый DOM */ }
     span.appendChild(xBtn);
-    span.addEventListener('click', (e) => {
-      if (e.target === xBtn) return;
-      const current = this.state.query;
-      const newQ = current ? `${current} +${tag}` : `+${tag}`;
-      this.closeViewer();
-      this.els.searchInput.value = newQ;
-      this.search(newQ);
-    });
-    span.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      API.post('/fav-tag', { tag }).then(() => { API.invalidate('/profile'); this.invalidateFeedCache(); this.loadProfile(); span.classList.toggle('tag-fav'); }).catch(() => {});
-    });
-    span.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      API.post('/hidden-tag', { tag }).then(() => { API.invalidate('/profile'); this.invalidateFeedCache(); this.loadProfile(); this._viewerTagChanged = true; span.classList.toggle('tag-hidden'); }).catch(() => {});
-    });
     viewerTags.appendChild(span);
   });
   // В полном экране подвал скрыт — счётчики не запрашиваем; они подтянутся
@@ -237,8 +341,25 @@ App._renderViewerRelations = function (post) {
   const host = this.els.relations;
   if (!host) return;
   if (!post || !post.id) { host.classList.add('hidden'); return; }
-  API.get(`/posts/${post.id}/relations`).then(d => {
-    if (!d) return;
+  // Race (#1), дедуп: renderViewer вызывается и повторно для того же поста —
+  // не дёргаем API, если chips уже отрисованы. Принудительное обновление
+  // (после «привязать») сбрасывает _relChipsFor.
+  if (this._relChipsFor === post.id) return;
+  // Race (#1): token + AbortController + проверка актуальности поста после
+  // await — как в loadRelated. Иначе ответ прошлого поста при быстрой
+  // навигации перезапишет chips-ряд «родитель/дети» от чужого поста.
+  const token = (this._relChipsToken = (this._relChipsToken || 0) + 1);
+  if (this._relChipsAbort) { this._relChipsAbort.abort(); }
+  const ac = new AbortController();
+  this._relChipsAbort = ac;
+  this._relChipsFor = post.id;
+  const relevant = () => {
+    if (token !== this._relChipsToken || !this.state.viewerOpen || ac.signal.aborted) return false;
+    const cur = this.state.posts[this.state.viewerIndex];
+    return !!(cur && cur.id === post.id);
+  };
+  API.get(`/posts/${post.id}/relations`, { signal: ac.signal }).then(d => {
+    if (!relevant() || !d) return;
     host.innerHTML = '';
     const parent = d.parent;
     const children = d.children || [];
@@ -251,7 +372,7 @@ App._renderViewerRelations = function (post) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'rel-chip rel-parent';
-      chip.title = 'Родитель';
+      chip.title = t('viewer.relParent');
       chip.textContent = `↑ #${parent.id}${parent.file_type ? ' · ' + parent.file_type : ''}`;
       chip.addEventListener('click', () => this._openPostById(parent.id));
       host.appendChild(chip);
@@ -260,7 +381,7 @@ App._renderViewerRelations = function (post) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'rel-chip rel-child';
-      chip.title = 'Дочь/сын поста';
+      chip.title = t('viewer.relChild');
       chip.textContent = `↓ #${ch.id}${ch.file_type ? ' · ' + ch.file_type : ''}`;
       chip.addEventListener('click', () => this._openPostById(ch.id));
       host.appendChild(chip);
@@ -270,22 +391,36 @@ App._renderViewerRelations = function (post) {
       const setBtn = document.createElement('button');
       setBtn.type = 'button';
       setBtn.className = 'rel-chip rel-set';
-      setBtn.title = 'Связать с родителем';
-      setBtn.textContent = '↑ привязать';
+      setBtn.title = t('viewer.relSetHint');
+      setBtn.textContent = t('viewer.relSetBtn');
       setBtn.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        const input = window.prompt('Родитель (id поста):');
-        if (!input) return;
-        const pid = parseInt(input, 10);
-        if (!Number.isFinite(pid) || pid <= 0) { this.showToast('Некорректный id', 'error'); return; }
-        API.post(`/posts/${post.id}/parent`, { parent_id: pid }).then(() => {
-          this.showToast(`#${post.id} → родитель #${pid}`);
-          this._renderViewerRelations(post);
-        }).catch(err => this.showToast(`Ошибка: ${err.message}`, 'error'));
+        // A11y (#14): window.prompt блокирует страницу, не стилизуется и
+        // выпадает из focus-trap — используем модальный promptDialog
+        // (нативный prompt оставлен как fallback для тестового окружения).
+        const ask = (typeof this.promptDialog === 'function')
+          ? this.promptDialog({ title: t('viewer.parentPrompt'), okText: t('viewer.relSetHint') })
+          : Promise.resolve(window.prompt(t('viewer.parentPrompt')));
+        ask.then((input) => {
+          if (!input) return;
+          const pid = parseInt(input, 10);
+          if (!Number.isFinite(pid) || pid <= 0) { this.showToast(t('viewer.badId'), 'error'); return; }
+          API.post(`/posts/${post.id}/parent`, { parent_id: pid }).then(() => {
+            this.showToast(tf('viewer.linked', { id: post.id, pid }));
+            this._relChipsFor = null; // форс-обновление chips
+            this._renderViewerRelations(post);
+          }).catch(err => this.showToast(`${t('viewer.error')}: ${err.message}`, 'error'));
+        });
       });
       host.appendChild(setBtn);
     }
-  }).catch(() => host.classList.add('hidden'));
+  }).catch(() => {
+    // Ошибка прошлого запроса не должна прятать chips текущего поста.
+    if (!relevant()) return;
+    host.classList.add('hidden');
+  }).finally(() => {
+    if (this._relChipsAbort === ac) this._relChipsAbort = null;
+  });
 };
 
 App._openPostById = function (id) {
@@ -325,7 +460,7 @@ App._loadViewerTagCounts = function (tags, spans) {
     if (this._countAbort === ac) this._countAbort = null;
   });
 };
-App._tagCountsCacheKey = 'briefly_tag_counts';
+App._tagCountsCacheKey = 'briefly_tag_counts_v2'; // v2: сброс старого кэша с фальшивыми нулями (баг prefix-only GetTagCount)
 
 App._loadTagCounts = function () {
   try {
@@ -339,6 +474,18 @@ App._loadTagCounts = function () {
 };
 
 App._saveTagCounts = function () {
+  // Memory (#5): кэш счётчиков не должен расти неограниченно — при переполнении
+  // выбрасываем ключи с наименьшими счётчиками (иначе при долгом использовании
+  // копятся десятки тысяч ключей и синхронная сериализация на каждый запрос).
+  const tc = this._tagCounts;
+  if (tc) {
+    const keys = Object.keys(tc);
+    const max = 4000;
+    if (keys.length > max) {
+      keys.sort((a, b) => (tc[a] || 0) - (tc[b] || 0));
+      for (let i = 0; i < keys.length - max; i++) delete tc[keys[i]];
+    }
+  }
   try {
     localStorage.setItem(this._tagCountsCacheKey, JSON.stringify({ ts: Date.now(), counts: this._tagCounts }));
   } catch {}
@@ -356,14 +503,14 @@ App.renderViewer = function (force) {
   if (staleOrig && typeof staleOrig.remove === 'function') staleOrig.remove();
 
   const isVideo = post.file_type === 'video';
-  // Тяжёлые картинки (>3МБ): сначала сжатый sample с CDN — открывается в
-  // разы быстрее; оригинал догружается по кнопке «1:1».
-  const heavyImage = !isVideo && !post.downloaded &&
-    (post.file_size || 0) > 3 * 1024 * 1024 && post.sample_url;
+  // Perf (#8): метрики контейнера могли измениться (новое медиа) — сброс кэша.
+  this._zoomMetricsCache = null;
+  // Дедуп (#17): единая точка расчёта URL медиа (раньше логика «downloaded /
+  // heavy-sample / оригинал» была продублирована в preloadImage и prefetchFull).
+  const plan = this._viewerMediaPlan(post);
+  const heavyImage = plan.heavy;
+  const fileUrl = plan.url;
   const proxyMedia = u => `/api/proxy?url=${encodeURIComponent(u)}`;
-  const fileUrl = post.downloaded && post.file_path
-    ? `/api/file/${post.id}`
-    : proxyMedia(heavyImage ? post.sample_url : (post.file_url || ''));
   const originalUrl = (!post.downloaded && post.file_url && heavyImage) ? proxyMedia(post.file_url) : null;
   // Превью для постера видео: пока файл буферизуется, вместо чёрного
   // экрана показываем ту же картинку, что и в карточке ленты.
@@ -378,6 +525,13 @@ App.renderViewer = function (force) {
 
   if (force) {
     // Принудительный ререндер (кнопка «Повторить») — пересобираем медиа-элемент.
+    // Memory (#4): старый <video> снимаем с воспроизведения ДО удаления из DOM.
+    const stale = viewerContent.querySelector('video');
+    if (stale && stale.tagName === 'VIDEO') {
+      if (typeof this._stashCurrentVideoTime === 'function') this._stashCurrentVideoTime();
+      this._unbindVideoEvents(stale);
+      this._stopVideoEl(stale);
+    }
     viewerContent.innerHTML = '';
     viewerContent.appendChild(viewerLoader);
   }
@@ -509,7 +663,7 @@ App.renderViewer = function (force) {
       [0.5, 0.75, 1, 1.25, 1.5, 2].map(r => `<option value="${r}">${r}×</option>`).join('') +
       '</select>' +
       `<button type="button" class="btn-ss btn-pip" title="Картинка в картинке">${icon('pip', 16)}</button>` +
-      `<button type="button" class="btn-ss" id="slideshow-btn">${SS_PLAY_ICO}</button>`;
+      `<button type="button" class="btn-ss" id="slideshow-btn">${SS_PLAY_ICO()}</button>`;
     barHost.appendChild(ssBar);
     this.els.slideshowBtn = ssBar.querySelector('#slideshow-btn');
     this.els.slideshowBtn.addEventListener('click', () => this.toggleSlideshow());
@@ -673,9 +827,26 @@ App._hideBlurhashPlaceholder = function (container) {
   if (c && typeof c.remove === 'function') c.remove();
 };
 
+// Дедуп (#17): единая точка расчёта URL медиа (раньше логика «downloaded /
+// heavy-sample / оригинал» была продублирована в preloadImage и prefetchFull).
+App._viewerMediaPlan = function (post) {
+  if (!post) return { heavy: false, url: '' };
+  const heavy = !post.downloaded && (post.file_size || 0) > 3 * 1024 * 1024 && post.sample_url;
+  const url = post.downloaded
+    ? `/api/file/${post.id}`
+    : `/api/proxy?url=${encodeURIComponent(heavy ? post.sample_url : (post.file_url || ''))}`;
+  return { heavy, url };
+};
+
 App.preloadImage = function (post) {
   if (!post || post.file_type === 'video') return;
-  const url = post.downloaded ? `/api/file/${post.id}` : `/api/proxy?url=${encodeURIComponent(post.file_url || '')}`;
+  // Тяжёлая картинка открывается вьювером как sample (см. renderViewer) —
+  // предзагружаем именно его, иначе прогреваем оригинал.
+
+  const heavy = !post.downloaded && (post.file_size || 0) > 3 * 1024 * 1024 && post.sample_url;
+  const url = post.downloaded
+    ? `/api/file/${post.id}`
+    : `/api/proxy?url=${encodeURIComponent(heavy ? post.sample_url : (post.file_url || ''))}`;
   this._warmImage(url);
 };
 
@@ -683,7 +854,13 @@ App.prefetchFull = function (post) {
   if (!post || post.file_type === 'video') return;
   if (this._prefetchUrl === post.id) return;
   this._prefetchUrl = post.id;
-  const url = post.downloaded ? `/api/file/${post.id}` : `/api/proxy?url=${encodeURIComponent(post.file_url || '')}`;
+  // Тяжёлая картинка открывается вьювером как sample (см. renderViewer) —
+  // предзагружаем именно его, иначе прогреваем оригинал.
+
+  const heavy = !post.downloaded && (post.file_size || 0) > 3 * 1024 * 1024 && post.sample_url;
+  const url = post.downloaded
+    ? `/api/file/${post.id}`
+    : `/api/proxy?url=${encodeURIComponent(heavy ? post.sample_url : (post.file_url || ''))}`;
   this._warmImage(url);
 };
 
@@ -1023,7 +1200,7 @@ App.toggleSlideshow = function () {
 App.startSlideshow = function () {
   if (this.state.slideshowActive) return;
   this.state.slideshowActive = true;
-  if (this.els.slideshowBtn) { this.els.slideshowBtn.classList.add('active'); this.els.slideshowBtn.innerHTML = SS_PAUSE_ICO; }
+  if (this.els.slideshowBtn) { this.els.slideshowBtn.classList.add('active'); this.els.slideshowBtn.innerHTML = SS_PAUSE_ICO(); }
   let loadingMore = false;
   const tick = () => {
     if (!this.state.viewerOpen || !this.state.slideshowActive) { this.stopSlideshow(); return; }
@@ -1046,7 +1223,7 @@ App.startSlideshow = function () {
 
 App.stopSlideshow = function () {
   this.state.slideshowActive = false;
-  if (this.els.slideshowBtn) { this.els.slideshowBtn.classList.remove('active'); this.els.slideshowBtn.innerHTML = SS_PLAY_ICO; }
+  if (this.els.slideshowBtn) { this.els.slideshowBtn.classList.remove('active'); this.els.slideshowBtn.innerHTML = SS_PLAY_ICO(); }
   clearInterval(this._slideshowTimer);
   this._slideshowTimer = null;
 };

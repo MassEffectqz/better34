@@ -1,15 +1,18 @@
 package internal
 
 import (
+	"context"
 	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/disintegration/imaging"
 	_ "golang.org/x/image/webp"
@@ -60,7 +63,10 @@ func (tg *ThumbnailGenerator) Generate(sourcePath string, postID int) (string, e
 
 	srcImg, err := imaging.Open(sourcePath, imaging.AutoOrientation(true))
 	if err != nil {
-		return sourcePath, nil
+		// Не возвращаем исходник как «миниатюру»: сетка иначе грузит сотни
+		// мегабайт оригинала вместо 300px JPEG, и это навсегда оседает в
+		// thumb_path. Пустой путь → превью покажет заглушку.
+		return "", fmt.Errorf("failed to open image %s: %w", sourcePath, err)
 	}
 
 	size := GetConfig().GetThumbSize()
@@ -75,12 +81,12 @@ func (tg *ThumbnailGenerator) Generate(sourcePath string, postID int) (string, e
 }
 
 // generateVideoThumbnail — извлекает кадр из видео через ffmpeg.
-// Если ffmpeg недоступен, возвращает исходный файл.
+// При любой неудаче (ffmpeg отсутствует, кадр не извлёкся, таймаут) возвращает
+// ОШИБКУ, а не исходный файл: превью-сетка не должна отдавать видео целиком.
 func (tg *ThumbnailGenerator) generateVideoThumbnail(sourcePath string, postID int) (string, error) {
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
-		// ffmpeg не найден — возвращаем исходный файл
-		return sourcePath, nil
+		return "", fmt.Errorf("ffmpeg not found: %w", err)
 	}
 
 	thumbPath := tg.ThumbPath(postID)
@@ -88,20 +94,32 @@ func (tg *ThumbnailGenerator) generateVideoThumbnail(sourcePath string, postID i
 
 	// Извлекаем кадр на 0.5сек, масштабируем до thumbSize
 	size := GetConfig().GetThumbSize()
-	cmd := exec.Command(ffmpegPath,
-		"-y",                   // перезаписать
-		"-ss", "0.5",           // Seeking к 0.5сек
-		"-i", sourcePath,       // входной файл
-		"-vframes", "1",        // один кадр
-		"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", size, size, size, size),
-		"-q:v", "2",            // качество JPEG
+	args := []string{"-y"}
+	if os.Getenv("BRIEFLY_FFMPEG_HWACCEL") == "1" {
+		args = append(args, "-hwaccel", "auto")
+	}
+	args = append(args,
+		"-ss", "0.5",
+		"-i", sourcePath,
+		"-vframes", "1",
+		// fast_bilinear — в разы быстрее на 4K-видео, разница на 300px незаметна
+		"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", size, size, size, size),
+		"-q:v", "2",
 		thumbPath,
 	)
-	cmd.Stderr = nil // подавляем вывод
+
+	// Зависший ffmpeg (битый файл) не должен навсегда блокировать воркер
+	// скачивания: CommandContext убивает процесс по таймауту. stderr копим
+	// в строку, чтобы при сбое была видна причина.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	stderr := new(strings.Builder)
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
-		// ffmpeg не смог извлечь кадр
-		return sourcePath, nil
+		log.Printf("ffmpeg thumbnail %s failed: %v; stderr=%s", sourcePath, err, stderr.String())
+		return "", err
 	}
 
 	return thumbPath, nil

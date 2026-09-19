@@ -42,7 +42,7 @@ App.renderCollections = function () {
       API.del(`/collection/${col.id}`).then(() => {
         API.invalidate('/profile');
         this.loadProfile();
-        this.showToast(`${col.name}: -1`);
+        this.showToast(`Коллекция «${col.name}» удалена`);
       }).catch(err => this.showToast(`Ошибка: ${err.message}`, 'error'));
     });
     host.appendChild(d);
@@ -61,6 +61,7 @@ App.createCollection = async function () {
     await this.loadProfile();
     this.renderCollections();
     this.showToast(name);
+    input.focus();
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
 };
 
@@ -95,14 +96,14 @@ App.renameCollectionInline = function (d, col) {
     if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
     else if (ev.key === 'Escape') finish(false);
   });
-  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('blur', () => finish(false));
 };
 
 App.openCollectionGrid = function (col) {
   if (!col || !col.id) return;
   API.get(`/collection/${col.id}/posts`, { fresh: true }).then(data => {
     const ids = ((data && data.posts) || []).map(p => p.id);
-    if (!ids.length) { this.showToast(col.name + ': 0', 'error'); return; }
+    if (!ids.length) { this.showToast(`Коллекция «${col.name}» пуста`, 'error'); return; }
     this.showGridMode('collection', ids);
   }).catch(err => this.showToast(`Ошибка: ${err.message}`, 'error'));
 };

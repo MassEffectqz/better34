@@ -15,20 +15,33 @@ App.renderComments = function (postId) {
     '<div class="vc-list" id="vc-list"></div>' +
     '<form class="vc-form" id="vc-form">' +
     '<input type="text" id="vc-input" maxlength="' + MAX_LEN + '" placeholder="Написать комментарий..." autocomplete="off">' +
+    '<span class="vc-counter" id="vc-counter">Осталось: ' + MAX_LEN + '/' + MAX_LEN + '</span>' +
     '<button type="submit" class="btn-ss" title="Отправить">' + icon('arrowUp', 14, true) + '</button>' +
     '</form>';
   const input = host.querySelector('#vc-input');
   const form = host.querySelector('#vc-form');
+  const counter = host.querySelector('#vc-counter');
+  const updateCounter = () => {
+    const remaining = MAX_LEN - input.value.length;
+    if (counter) counter.textContent = 'Осталось: ' + remaining + '/' + MAX_LEN;
+  };
+  input.addEventListener('input', updateCounter);
+  updateCounter();
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = input.value.trim();
     if (!text || !App.state.viewerOpen) return;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.setAttribute('aria-busy', 'true'); }
     try {
       await API.post(`/comments/${postId}`, { text });
       input.value = '';
+      if (counter) counter.textContent = 'Осталось: ' + MAX_LEN + '/' + MAX_LEN;
       App.loadComments(postId);
     } catch (err) {
       App.showToast(String(err && err.message || err).slice(0, 80), 'error');
+    } finally {
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.removeAttribute('aria-busy'); }
     }
   });
   App.loadComments(postId);
@@ -38,6 +51,7 @@ App.loadComments = function (postId) {
   const list = document.getElementById('vc-list');
   if (!list || !this.state.viewerOpen) return;
   const me = this.state.user ? (this.state.user.username || '') : '';
+  list.innerHTML = '<div class="vc-loading"><span class="pf-more-spin"></span> Загрузка комментариев…</div>';
   API.get('/comments/' + postId, { fresh: true }).then((d) => {
     // Пока грузились — пост уже сменился.
     if (this._commentsPostId !== postId || !this.state.viewerOpen) return;
@@ -67,6 +81,13 @@ App.loadComments = function (postId) {
     list.scrollTop = list.scrollHeight;
     list.querySelectorAll('.vc-del').forEach(btn => {
       btn.addEventListener('click', async () => {
+        const ok = await this.confirmDialog({
+          title: 'Удалить комментарий?',
+          message: 'Комментарий будет удалён безвозвратно.',
+          okText: 'Удалить',
+          danger: true,
+        });
+        if (!ok) return;
         try { await API.del(`/comments/${btn.dataset.cid}`); App.loadComments(postId); } catch { /* noop */ }
       });
     });

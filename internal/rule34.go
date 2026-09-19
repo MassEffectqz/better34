@@ -1465,6 +1465,59 @@ func (c *booruClient) parseSuggestions(body []byte) []TagSuggestion {
 	return suggestions
 }
 
+// getTagCountDapiExact — точный счётчик тега через dapi s=tag&q=index&name=<tag>.
+// Параметр name= ищет ТОЧНОЕ совпадение (в отличие от префиксного
+// name_pattern=…%), поэтому работает для составных тегов со скобками и
+// подчёркиваниями, которых нет в prefix-автодополнении autocomplete.php.
+func (c *booruClient) getTagCountDapiExact(tag string, cred APICredential) (int, error) {
+	v := url.Values{}
+	v.Set("page", "dapi")
+	v.Set("s", "tag")
+	v.Set("q", "index")
+	v.Set("json", "1")
+	v.Set("name", tag)
+	if cred.APIKey != "" {
+		v.Set("api_key", cred.APIKey)
+	}
+	if cred.UserID != "" {
+		v.Set("user_id", cred.UserID)
+	}
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s?%s", c.spec.apiURL, v.Encode()), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("Accept", "application/json")
+
+	c.limiter.Wait()
+	resp, err := c.HTTPClient().Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("tag count dapi failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 {
+		return 0, fmt.Errorf("%w: tag count 401", errAPIAuth)
+	}
+	if resp.StatusCode == 403 {
+		return 0, fmt.Errorf("%w: tag count 403", errAPI403)
+	}
+	if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		return 0, fmt.Errorf("%w: tag count %d", errSuggestTransient, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	for _, s := range c.parseSuggestions(body) {
+		if strings.EqualFold(s.Value, tag) {
+			return s.Count, nil
+		}
+	}
+	return 0, nil
+}
+
 func (c *booruClient) GetTagCount(tag string) (int, error) {
 	if tag == "" || len(tag) < 2 {
 		return 0, fmt.Errorf("tag too short")
@@ -1482,7 +1535,28 @@ func (c *booruClient) GetTagCount(tag string) (int, error) {
 			return s.Count, nil
 		}
 	}
-	return 0, nil
+	// Fallback: точный lookup по индексу тегов. Автодополнение ищет только
+	// по префиксу и часто не знает составных тегов (скобки, подчёркивания) —
+	// без fallback такие теги кэшировались как 0 и во вьювере «большинство
+	// тегов показывалось как 0».
+	if !c.suggBreaker.Allow() {
+		return 0, nil
+	}
+	c.keys.syncFromConfig(c.spec.name)
+	cred, ok := c.keys.pickCred()
+	if !ok && c.spec.requireAuth {
+		return 0, fmt.Errorf("нет доступных API ключей — все на карантине")
+	}
+	cnt, err := c.getTagCountDapiExact(tag, cred)
+	if err != nil {
+		if errors.Is(err, errAPIAuth) || errors.Is(err, errAPI403) {
+			c.keys.report(cred.APIKey, false, "auth")
+			log.Printf("API key ...%s rejected in tag count, reported (tag %q)", keyTail(cred.APIKey), tag)
+		}
+		return 0, err
+	}
+	c.keys.report(cred.APIKey, true, "")
+	return cnt, nil
 }
 
 // GetPopularTags возвращает самые частотные теги из свежей выборки постов

@@ -1,16 +1,21 @@
 import { App } from './state.js';
-import { icon, esc, go } from './utils.js';
+import { icon, iconToNode, esc, go } from './utils.js';
 import { API } from './api.js';
 import { t, tf } from './i18n.js';
 
+/** @this {AppType} */
 App.pageSize = function () {
-  const w = window.innerWidth;
-  if (w <= 450) return 20;
-  if (w <= 700) return 30;
-  if (w <= 1100) return 40;
+  // U8: адаптируем pageSize к количеству колонок — на мобильных меньше постов,
+  // на десктопе больше, чтобы заполнить сетку.
+  const cols = this.masonryColumnCount();
+  if (cols <= 1) return 15;
+  if (cols <= 2) return 24;
+  if (cols <= 3) return 36;
+  if (cols <= 4) return 48;
   return 60;
 };
 
+/** @this {AppType} */
 App._hasHiddenTag = function (tags, hiddenTags) {
   if (!tags || !hiddenTags || !hiddenTags.length) return false;
   const tokens = tags.toLowerCase().split(/\s+/);
@@ -20,6 +25,7 @@ App._hasHiddenTag = function (tags, hiddenTags) {
 App.masonryCols = [];
 App.masonryCount = 0;
 
+/** @this {AppType} */
 App.masonryColumnCount = function () {
   const preset = this.state && this.state.gridCols;
   if (preset) return preset;
@@ -31,6 +37,7 @@ App.masonryColumnCount = function () {
   return 5;
 };
 
+/** @this {AppType} */
 App.ensureColumns = function () {
   const n = this.masonryColumnCount();
   if (this.masonryCount === n && this.masonryCols.length) return;
@@ -44,6 +51,7 @@ App.ensureColumns = function () {
   }
 };
 
+/** @this {AppType} */
 App.shortestCol = function () {
   if (!this.masonryCols.length) this.ensureColumns();
   let best = this.masonryCols[0];
@@ -53,12 +61,24 @@ App.shortestCol = function () {
   return best;
 };
 
+/** @this {AppType} */
 App.clearGrid = function () {
+  // Утечка: clearGrid вызывается часто (reset, showGridMode, sortBy) — карточки
+  // удаляются из DOM, но IntersectionObserver держит на них сильные ссылки
+  // (reveal + video pause). Отключаем наблюдение за удаляемыми, иначе утечка
+  // на каждую перезагрузку ленты.
+  if (this._revealObserver) {
+    this.els.grid.querySelectorAll('.post-card').forEach(c => this._revealObserver.unobserve(c));
+  }
+  if (this._videoPauseObserver) {
+    this.els.grid.querySelectorAll('.post-card').forEach(c => this._videoPauseObserver.unobserve(c));
+  }
   this.els.grid.innerHTML = '';
   this.masonryCols = [];
   this.masonryCount = 0;
 };
 
+/** @this {AppType} */
 App.initPullToRefresh = function () {
   const main = document.getElementById('main');
   if (!main || this._ptrInit) return;
@@ -82,7 +102,8 @@ App.initPullToRefresh = function () {
     if (startY == null) return;
     const dy = e.touches[0].clientY - startY;
     if (dy <= 0 || main.scrollTop > 0) { reset(); return; }
-    e.preventDefault();
+    if (main.scrollTop > 0) return;
+    if (dy > 0 && main.scrollTop === 0) e.preventDefault();
     pull = Math.min(dy * 0.45, 100);
     ind.style.setProperty('--pull', `${pull - 22}px`);
     ind.classList.add('active');
@@ -100,22 +121,31 @@ App.initPullToRefresh = function () {
   });
 };
 
+/** @this {AppType} */
 App.rebuildMasonry = function () {
   const cards = [...this.els.grid.querySelectorAll('.post-card')];
-  this.clearGrid();
+  const scrollEl = document.getElementById('main');
+  const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
+  for (const col of this.masonryCols) col.remove();
+  this.masonryCols = [];
+  this.masonryCount = 0;
   this.ensureColumns();
   for (const card of cards) this.shortestCol().appendChild(card);
+  if (scrollEl && scrollTop) requestAnimationFrame(() => { scrollEl.scrollTop = scrollTop; });
 };
 
+/** @this {AppType} */
 App.getCardById = function (id) {
   const el = this.els.grid.querySelector(`.card-checkbox[data-id="${id}"]`);
   return el ? el.closest('.post-card') : null;
 };
 
+/** @this {AppType} */
 App.getCardByIndex = function (idx) {
   return this.els.grid.querySelector(`[data-index="${idx}"]`);
 };
 
+/** @this {AppType} */
 App.renderModeBar = function () {
   const bar = this.els.modeBar;
   if (this.state.recommendActive) {
@@ -139,6 +169,7 @@ App.renderModeBar = function () {
   this.els.sentinel.style.display = mode !== 'search' ? 'none' : '';
 };
 
+/** @this {AppType} */
 App.clearMode = function () {
   this.state.displayMode = 'search';
   this.state.displayIds = [];
@@ -162,12 +193,15 @@ App.clearMode = function () {
   this.pushState(this.state.query, null);
 };
 
+/** @this {AppType} */
 App.showGridMode = async function (type, idsOverride) {
   const ids = idsOverride ||
     (type === 'likes'
       ? (this.state.profile.liked_posts || [])
       : (this.state.profile.hidden_posts || []));
   if (!ids.length) return;
+  // Абортим in-flight /posts: его ответ не нужен и не должен дописываться в новый режим.
+  if (this._feedAbort) this._feedAbort.abort();
   // Инвалидируем in-flight loadPosts: их ответы не должны дописываться в лайки.
   this._feedSeq = (this._feedSeq || 0) + 1;
   this.toggleProfile();
@@ -200,6 +234,7 @@ App.showGridMode = async function (type, idsOverride) {
   this.state.loading = false;
 };
 
+/** @this {AppType} */
 App.showSkeletons = function (count) {
   this.clearGrid();
   this.ensureColumns();
@@ -212,16 +247,19 @@ App.showSkeletons = function (count) {
   }
 };
 
+/** @this {AppType} */
 App.hideSkeletons = function () {
   this.els.grid.querySelectorAll('.skeleton-card').forEach(s => s.remove());
 };
 
+/** @this {AppType} */
 App._feedCacheKey = function () {
   if (this.state.recommendActive) return null;
   if (this.state.query || this.state.isLocal) return null;
   return 'briefly_feed_cache';
 };
 
+/** @this {AppType} */
 App._saveFeedCache = function () {
   const key = this._feedCacheKey();
   if (!key) return;
@@ -230,23 +268,26 @@ App._saveFeedCache = function () {
   } catch {}
 };
 
+/** @this {AppType} */
 App._clearFeedCache = function () {
   try { localStorage.removeItem('briefly_feed_cache'); } catch {}
 };
 
+/** @this {AppType} */
 App._finishFeedLoad = function () {
   clearTimeout(this._dlShowTimer);
   this.els.sentinel.classList.remove('loading');
   this._restorePendingScroll();
 };
 
+/** @this {AppType} */
 App._observeCardReveal = function (card) {
   if (!('IntersectionObserver' in window)) { card.classList.add('fresh'); return; }
   if (!this._revealObserver) {
     this._revealObserver = new IntersectionObserver((entries) => {
       entries.forEach(en => {
         if (!en.isIntersecting) return;
-        const c = en.target;
+        const c = /** @type {HTMLElement} */ (en.target);
         this._revealObserver.unobserve(c);
         c.classList.remove('fresh');
         void c.offsetWidth;
@@ -257,6 +298,7 @@ App._observeCardReveal = function (card) {
   this._revealObserver.observe(card);
 };
 
+/** @this {AppType} */
 App._restorePendingScroll = function () {
   if (this._scrollRestored || this._pendingScrollTop == null) return;
   this._scrollRestored = true;
@@ -275,6 +317,7 @@ App._restorePendingScroll = function () {
   window.addEventListener('load', () => { clearInterval(retry); apply(); }, { once: true });
 };
 
+/** @this {AppType} */
 App.renderEmptyState = function (opts) {
   const div = document.createElement('div');
   div.className = 'empty-state';
@@ -283,7 +326,7 @@ App.renderEmptyState = function (opts) {
     `<div class="empty-actions">${(opts.actions || []).map(a =>
       `<button class="btn-primary btn-sm${a.danger ? ' btn-danger' : ''}" data-action="${esc(a.key)}">${esc(a.label)}</button>`
     ).join('')}</div>`;
-  div.querySelectorAll('[data-action]').forEach(btn => {
+  div.querySelectorAll('[data-action]').forEach(/** @param {HTMLElement} btn */ (btn) => {
     btn.addEventListener('click', () => {
       const act = btn.dataset.action;
       if (act === 'reset') this.resetFilters();
@@ -294,6 +337,7 @@ App.renderEmptyState = function (opts) {
   return div;
 };
 
+/** @this {AppType} */
 App.resetFilters = function () {
   const hadHiddenTags = (this.state.profile && this.state.profile.hidden_tags && this.state.profile.hidden_tags.length) > 0;
   this.state.query = '';
@@ -310,9 +354,14 @@ App.resetFilters = function () {
   this.loadPosts(true);
 };
 
+/** @this {AppType} */
 App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh = false) {
   if (this.state.loading) {
-    if (reset) this._pendingReload = { reset, restorePostId };
+    if (reset) {
+      this._pendingReload = { reset, restorePostId };
+      // Абортим in-flight запрос: его ответ уже не нужен (P1-3 ранний выход).
+      if (this._feedAbort) this._feedAbort.abort();
+    }
     return;
   }
   const feedSeq = (this._feedSeq = (this._feedSeq || 0) + 1);
@@ -320,10 +369,12 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
   const keepTop = forceRefresh && reset && scrollEl ? scrollEl.scrollTop : null;
   const restoreTop = () => { if (keepTop != null && scrollEl) scrollEl.scrollTop = keepTop; };
   this.state.loading = true;
-  if (this._feedAbort) this._feedAbort.abort();
+  const mainEl = document.getElementById('main');
+  if (mainEl) mainEl.setAttribute('aria-busy', 'true');
+  if (this._feedAbort) this._feedAbort?.abort();
   this._feedAbort = new AbortController();
   clearTimeout(this._dlShowTimer);
-  if (!reset) this._dlShowTimer = setTimeout(() => this.els.sentinel.classList.add('loading'), 400);
+  if (!reset) this._dlShowTimer = setTimeout(() => this.els.sentinel.classList.add('loading'), 150);
   if (reset) {
     this.state.posts = []; this.state.page = 1; this.state.hasMore = true;
     this.state.focusedIndex = -1; this.state.selected.clear();
@@ -369,6 +420,7 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
         if (idx >= 0) this.openViewer(idx);
       }
       this.state.loading = false;
+      if (mainEl) mainEl.setAttribute('aria-busy', 'false');
       this._finishFeedLoad();
       this._prefetchNextPage();
       this.scheduleFeedRefresh();
@@ -394,8 +446,8 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
     if (this.state.minId && !this.state.recommendActive) ep += `&min_id=${this.state.minId}`;
     if (forceRefresh) ep += (ep.includes('?') ? '&' : '?') + 'v=' + Date.now();
     const data = await API.get(ep, { signal: this._feedAbort.signal });
-    if (feedSeq !== this._feedSeq) return; // лента заменена (showGridMode/новый load) — ответ устарел
-    if (!data) { this.hideSkeletons(); restoreTop(); this.state.loading = false; this._finishFeedLoad(); this._runPendingReload(); return; }
+    if (feedSeq !== this._feedSeq) return this._staleReturn(restoreTop); // лента заменена — ответ устарел
+    if (!data) return this._staleReturn(restoreTop, () => this.hideSkeletons());
     this._feedFailures = 0;
     const posts = data.posts || [];
     const rawCount = posts.length;
@@ -414,7 +466,9 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
                 : [{ key: 'random', label: t('menu.random') }],
             }));
       }
-      this.state.loading = false; restoreTop(); this._finishFeedLoad(); this.updateStatus(); this._runPendingReload(); return;
+      this.state.loading = false;
+      if (mainEl) mainEl.setAttribute('aria-busy', 'false');
+      restoreTop(); this._finishFeedLoad(); this.updateStatus(); this._runPendingReload(); return;
     }
     const existingIds = new Set(this.state.posts.map(p => p.id));
     const hiddenIds = new Set(this.state.profile.hidden_posts || []);
@@ -479,6 +533,7 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
     if (idx >= 0) this.openViewer(idx);
   }
   this.state.loading = false;
+  if (mainEl) mainEl.setAttribute('aria-busy', 'false');
   restoreTop();
   this._finishFeedLoad();
   this._runPendingReload();
@@ -486,12 +541,29 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
   this.maybeLoadMore();
 };
 
+/** @this {AppType} */
 App._runPendingReload = function () {
   const pending = this._pendingReload;
   this._pendingReload = null;
   if (pending) this.loadPosts(pending.reset, pending.restorePostId);
 };
 
+// Гарантированный сброс состояния при устаревшем/пустом ответе: любой ранний
+// выход из loadPosts проходит через него, иначе loading зависает и ломается
+// pending-reload. Превращает хрупкую связность (зависимость от showGridMode
+// для сброса loading) в единый контролируемый путь.
+App._staleReturn = function (restoreTop, preCb) {
+  if (preCb) preCb();
+  this.hideSkeletons();
+  restoreTop();
+  this.state.loading = false;
+  const mainEl = document.getElementById('main');
+  if (mainEl) mainEl.setAttribute('aria-busy', 'false');
+  this._finishFeedLoad();
+  this._runPendingReload();
+};
+
+/** @this {AppType} */
 App.scheduleFeedRefresh = function () {
   clearTimeout(this._feedRefreshTimer);
   this._feedRefreshTimer = setTimeout(() => {
@@ -501,14 +573,17 @@ App.scheduleFeedRefresh = function () {
   }, 1500);
 };
 
+/** @this {AppType} */
 App.loadMore = async function () { if (this.state.displayMode !== 'search') return; await this.loadPosts(false); };
 
+/** @this {AppType} */
 App._sentinelNearViewport = function (sent) {
   const sr = sent.getBoundingClientRect();
   const zone = Math.max(window.innerHeight * 2, 800);
   return sr.top < zone;
 };
 
+/** @this {AppType} */
 App.maybeLoadMore = function () {
   if (this.state.loading || !this.state.hasMore || this.state.displayMode !== 'search') return;
   if (this._feedFailures >= 3) return;
@@ -537,6 +612,7 @@ App.maybeLoadMore = function () {
   }
 };
 
+/** @this {AppType} */
 App._prefetchNextPage = function () {
   if (this.state.loading || this.state.viewerOpen) return;
   if (this.state.recommendActive || this.state.isLocal || this.state.displayMode !== 'search') return;
@@ -566,11 +642,14 @@ App._prefetchNextPage = function () {
   };
 })();
 
+/** @this {AppType} */
 App.createPostCard = function (post) {
   const card = document.createElement('div');
   const isQueued = this.state.downloading.has(post.id) || this.state.downloadQueue.has(post.id);
   card.className = 'post-card' + (post.downloaded ? ' downloaded' : '') + (isQueued ? ' queued' : '');
   card.dataset.id = post.id;
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('role', 'article');
 
   const proxyUrl = u => `/api/proxy?url=${encodeURIComponent(u)}`;
   // Превью помечаем kind=preview: сервер отвечает immutable Cache-Control,
@@ -628,7 +707,6 @@ App.createPostCard = function (post) {
     video.preload = post.downloaded ? 'metadata' : 'none';
     video.muted = true;
     video.loop = true;
-    video.loading = 'lazy';
     video.className = 'video-source';
     const badge = document.createElement('span');
     badge.className = 'video-badge';
@@ -647,21 +725,47 @@ App.createPostCard = function (post) {
   const isHidden = this.state.profile.hidden_posts && this.state.profile.hidden_posts.includes(post.id);
   const overlay = document.createElement('div');
   overlay.className = 'post-overlay';
-  overlay.innerHTML = `
-    <div class="post-overlay-left">
-      <span class="post-badge ${post.downloaded ? 'dl-badge' : ''}">${post.downloaded ? icon('check', 12) : icon('download', 12)} ${post.file_type || '?'}</span>
-    </div>
-    <div class="post-overlay-right">
-      <button class="card-like-btn ${isLiked ? 'liked' : ''}" data-id="${post.id}" title="Лайк (Q)">${icon('heart', 14)}</button>
-      <button class="card-hide-btn ${isHidden ? 'hidden' : ''}" data-id="${post.id}" title="Скрыть (E)">${icon('heartOff', 14)}</button>
-      <span class="post-score" title="Очки">${icon('star', 11, true)}${post.score || 0}</span>
-    </div>`;
+  // XSS-фикс: поля file_type/score/id приходят из стороннего API (rule34) —
+  // строим overlay DOM-апи вместо innerHTML + интерполяции (ранее вектор XSS).
+  const left = document.createElement('div');
+  left.className = 'post-overlay-left';
+  const badge = document.createElement('span');
+  badge.className = 'post-badge' + (post.downloaded ? ' dl-badge' : '');
+  // DOM-апи вместо outerHTML-конкатенации: иконка + текст как отдельные узлы.
+  badge.append(
+    iconToNode(icon(post.downloaded ? 'check' : 'download', 12)),
+    document.createTextNode(' ' + (post.file_type || '?'))
+  );
+  left.appendChild(badge);
+  overlay.appendChild(left);
+
+  const right = document.createElement('div');
+  right.className = 'post-overlay-right';
+  const likeBtn = document.createElement('button');
+  likeBtn.className = 'card-like-btn' + (isLiked ? ' liked' : '');
+  likeBtn.dataset.id = String(post.id);
+  likeBtn.title = t('card.like', { hotkey: 'Q' });
+  likeBtn.appendChild(iconToNode(icon('heart', 14)));
+  right.appendChild(likeBtn);
+  const hideBtn = document.createElement('button');
+  hideBtn.className = 'card-hide-btn' + (isHidden ? ' hidden' : '');
+  hideBtn.dataset.id = String(post.id);
+  hideBtn.title = t('card.hide', { hotkey: 'E' });
+  hideBtn.appendChild(iconToNode(icon('heartOff', 14)));
+  right.appendChild(hideBtn);
+  const score = document.createElement('span');
+  score.className = 'post-score';
+  score.title = t('card.score');
+  score.appendChild(iconToNode(icon('star', 11, true)));
+  score.appendChild(document.createTextNode(String(post.score || 0)));
+  right.appendChild(score);
+  overlay.appendChild(right);
   card.appendChild(wrap);
   card.appendChild(overlay);
 
   let lastTap = 0, lastTapX = 0, lastTapY = 0, tapTimer = null;
   card.addEventListener('click', (e) => {
-    if (e.target.closest('.card-checkbox')) return;
+    if (/** @type {HTMLElement} */ (e.target).closest('.card-checkbox')) return;
     const now = Date.now();
     if (this._isTouch()) {
       if (now - lastTap < 300 && Math.abs(e.clientX - lastTapX) < 40 && Math.abs(e.clientY - lastTapY) < 40) {
@@ -672,17 +776,17 @@ App.createPostCard = function (post) {
       }
       lastTap = now; lastTapX = e.clientX; lastTapY = e.clientY;
       clearTimeout(tapTimer);
-      tapTimer = setTimeout(() => this.openViewer(parseInt(card.dataset.index)), 250);
+      tapTimer = setTimeout(() => this.openViewer(parseInt(card.dataset.index || '0', 10)), 250);
     } else {
-      this.openViewer(parseInt(card.dataset.index));
+      this.openViewer(parseInt(card.dataset.index || '0', 10));
     }
   });
   let videoHoverTimer;
   card.addEventListener('mouseenter', () => {
-    this.state.hoveredIndex = parseInt(card.dataset.index);
+    this.state.hoveredIndex = parseInt(card.dataset.index || '0', 10);
     if (!isVideo && post.file_url && !post.downloaded) this.prefetchFull(post);
-    const v = wrap.querySelector('.video-source');
-    const p = wrap.querySelector('.video-preview');
+    const v = /** @type {HTMLVideoElement} */ (wrap.querySelector('.video-source'));
+    const p = /** @type {HTMLElement} */ (wrap.querySelector('.video-preview'));
     if (!v) return;
     clearTimeout(videoHoverTimer);
     videoHoverTimer = setTimeout(() => {
@@ -692,15 +796,18 @@ App.createPostCard = function (post) {
     }, 200);
   });
   card.addEventListener('mouseleave', () => {
-    if (this.state.hoveredIndex === parseInt(card.dataset.index)) this.state.hoveredIndex = -1;
+    if (this.state.hoveredIndex === parseInt(card.dataset.index || '0', 10)) this.state.hoveredIndex = -1;
     clearTimeout(videoHoverTimer);
-    const v = wrap.querySelector('.video-source');
-    const p = wrap.querySelector('.video-preview');
+    const v = /** @type {HTMLVideoElement} */ (wrap.querySelector('.video-source'));
+    const p = /** @type {HTMLElement} */ (wrap.querySelector('.video-preview'));
     if (v) { v.pause(); v.currentTime = 0; v.style.display = 'none'; if (p) p.style.display = ''; }
   });
 
-  const likeBtn = overlay.querySelector('.card-like-btn');
-  likeBtn.addEventListener('click', (e) => {
+  // Видео-превью, ушедшее из вьюпорта без mouseleave (тач-скролл,
+  // перестановка карточек), останавливается общим наблюдателем.
+  this.observeCardViewport(card);
+
+  if (likeBtn) likeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const liked = this.optimisticLike(post.id);
     likeBtn.classList.toggle('liked', liked);
@@ -710,12 +817,7 @@ App.createPostCard = function (post) {
     });
   });
 
-  // Видео-превью, ушедшее из вьюпорта без mouseleave (тач-скролл,
-  // перестановка карточек), останавливается общим наблюдателем.
-  this.observeCardViewport(card);
-
-  const hideBtn = overlay.querySelector('.card-hide-btn');
-  hideBtn.addEventListener('click', (e) => {
+  if (hideBtn) hideBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     this._hideWithUndo(post.id);
   });
@@ -723,29 +825,32 @@ App.createPostCard = function (post) {
   return card;
 };
 
-// Общий IO: пауза превью-видео карточек, покинувших вьюпорт.
+/** @this {AppType} */
 App.initVideoPauseObserver = function () {
   if (this._videoPauseObserver || !('IntersectionObserver' in window)) return;
   this._videoPauseObserver = new IntersectionObserver((entries) => {
     entries.forEach((en) => {
       if (en.isIntersecting) return;
-      const v = en.target.querySelector('.video-source');
+      const target = /** @type {HTMLElement} */ (en.target);
+      const v = /** @type {HTMLVideoElement} */ (target.querySelector('.video-source'));
       if (v && !v.paused) {
         v.pause();
         try { v.currentTime = 0; } catch { /* noop */ }
         v.style.display = 'none';
-        const p = en.target.querySelector('.video-preview');
+        const p = /** @type {HTMLElement} */ (target.querySelector('.video-preview'));
         if (p) p.style.display = '';
       }
     });
   }, { rootMargin: '80px' });
 };
 
+/** @this {AppType} */
 App.observeCardViewport = function (card) {
   this.initVideoPauseObserver();
   if (this._videoPauseObserver) this._videoPauseObserver.observe(card);
 };
 
+/** @this {AppType} */
 App._feedDoubleTapLike = function (post, card) {  const liked = this.optimisticLike(post.id);
   const btn = card.querySelector('.card-like-btn');
   if (btn) btn.classList.toggle('liked', liked);
@@ -760,6 +865,7 @@ App._feedDoubleTapLike = function (post, card) {  const liked = this.optimisticL
   });
 };
 
+/** @this {AppType} */
 App.renderPosts = function () {
   if (!this.state.posts.length) return;
   let display = [...this.state.posts];
@@ -776,8 +882,8 @@ App.renderPosts = function () {
   // сохраняет загруженные картинки и листенеры — при активном sortBy каждая
   // подгруженная страница больше не пересоздаёт весь грид.
   const byId = new Map();
-  this.els.grid.querySelectorAll('.post-card').forEach(c => {
-    const id = parseInt(c.dataset.id, 10);
+  this.els.grid.querySelectorAll('.post-card').forEach(/** @param {HTMLElement} c */ (c) => {
+    const id = parseInt(c.dataset.id || '', 10);
     if (id) byId.set(id, c);
   });
   this.clearGrid();
@@ -803,6 +909,7 @@ App.renderPosts = function () {
   this.updateStatus();
 };
 
+/** @this {AppType} */
 App.toggleSelect = function (id) {
   if (this.state.selected.has(id)) this.state.selected.delete(id);
   else this.state.selected.add(id);
@@ -812,12 +919,14 @@ App.toggleSelect = function (id) {
   this.updateBatchBar();
 };
 
+/** @this {AppType} */
 App.clearSelection = function () {
   this.state.selected.clear();
   this.els.grid.querySelectorAll('.card-checkbox').forEach(c => c.classList.remove('checked'));
   this.updateBatchBar();
 };
 
+/** @this {AppType} */
 App.updateBatchBar = function () {
   const n = this.state.selected.size;
   this.els.batchCount.textContent = tf('batch.selected', { n });
@@ -825,8 +934,7 @@ App.updateBatchBar = function () {
   document.body.classList.toggle('batch-active', n > 0);
 };
 
-// batchZipDownload — отдаёт выбранные скачанные посты одним ZIP-архивом
-// (браузерный download, без чтения в память). Нескачанные сервер пропускает.
+/** @this {AppType} */
 App.batchZipDownload = function () {
   const ids = Array.from(this.state.selected);
   if (!ids.length) return;
@@ -838,6 +946,7 @@ App.batchZipDownload = function () {
   a.remove();
 };
 
+/** @this {AppType} */
 App.batchDownload = async function () {
   const ids = Array.from(this.state.selected);
   try {
@@ -847,6 +956,7 @@ App.batchDownload = async function () {
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
 };
 
+/** @this {AppType} */
 App.batchHide = async function () {
   const ids = Array.from(this.state.selected);
   if (!ids.length) return;
@@ -890,9 +1000,7 @@ App.batchHide = async function () {
   await all;
 };
 
-// batchLike — массовый лайк выделенного. Оптимистично обновляем карточки,
-// серверный вызов одним POST /batch/like (в отличие от batchHide не дёргаем
-// API по каждому посту). Тосты с «Отменить» для отката.
+/** @this {AppType} */
 App.batchLike = async function () {
   const ids = Array.from(this.state.selected);
   if (!ids.length) return;
@@ -910,8 +1018,7 @@ App.batchLike = async function () {
   });
 };
 
-// batchCollect — добавить выделенные посты в коллекцию. Открывает меню выбора
-// (список коллекций + создание новой); сервер добавляет всё одной кнопкой.
+/** @this {AppType} */
 App.batchCollect = async function () {
   const ids = Array.from(this.state.selected);
   if (!ids.length) return;
@@ -937,7 +1044,7 @@ App.batchCollect = async function () {
       </div>
       <div class="batch-collect-list">${cols.length ? '' : `<p class="profile-empty">${esc(t('collections.empty'))}</p>`}</div>
     </div>`;
-  const list = overlay.querySelector('.batch-collect-list');
+  const list = /** @type {HTMLElement} */ (overlay.querySelector('.batch-collect-list'));
   cols.forEach(col => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -949,14 +1056,12 @@ App.batchCollect = async function () {
         this.showToast(tf('batch.addedToCol', { n: (r && r.added) || ids.length }));
         API.invalidate('/profile');
         this.clearSelection();
-        overlay.remove();
+        closeOverlay();
       } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
     });
     list.appendChild(b);
   });
-  overlay.querySelector('.bc-close').addEventListener('click', () => overlay.remove());
-  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
-  const newInput = overlay.querySelector('.bc-new-input');
+  const newInput = /** @type {HTMLInputElement} */ (overlay.querySelector('.bc-new-input'));
   const create = async () => {
     const name = newInput.value.trim();
     if (!name) return;
@@ -966,19 +1071,31 @@ App.batchCollect = async function () {
       const r = await API.post(`/collection/${d.collection.id}/posts`, { ids });
       this.showToast(tf('batch.addedToCol', { n: (r && r.added) || ids.length }));
       this.clearSelection();
-      overlay.remove();
+      closeOverlay();
     } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
   };
-  overlay.querySelector('.bc-create-btn').addEventListener('click', create);
-  newInput.addEventListener('keydown', (ev) => {
+  /** @type {HTMLElement} */ (overlay.querySelector('.bc-create-btn')).addEventListener('click', create);
+  newInput.addEventListener('keydown', (/** @type {KeyboardEvent} */ ev) => {
     ev.stopPropagation();
     if (ev.key === 'Enter') { ev.preventDefault(); create(); }
   });
+  let releaseTrap = null;
+  if (typeof this.trapFocus === 'function') {
+    releaseTrap = this.trapFocus(overlay, newInput);
+  }
+  const closeOverlay = () => {
+    if (releaseTrap) { releaseTrap(); releaseTrap = null; }
+    overlay.remove();
+  };
+  /** @type {HTMLElement} */ (overlay.querySelector('.bc-close')).addEventListener('click', closeOverlay);
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) closeOverlay(); });
   document.body.appendChild(overlay);
   setTimeout(() => { try { newInput.focus(); } catch {} }, 50);
 };
 
+/** @this {AppType} */
 App.setStatus = function (msg) { this.els.statusText.textContent = msg; };
+/** @this {AppType} */
 App.updateStatus = function () {
   const mode = this.state.isLocal ? t('status.local') : (this.state.recommendActive ? t('status.recommend') : (this.state.query ? t('status.search') : t('status.latest')));
   this.setStatus(tf('status.posts', { n: this.state.posts.length, mode }));

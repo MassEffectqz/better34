@@ -112,8 +112,8 @@ func TestAdversarialGetTagCountsFanOut(t *testing.T) {
 	c.Request = httptest.NewRequest("GET", "/tag-counts?tags="+strings.Join(tags, ","), nil)
 	h.GetTagCounts(c)
 
-	if got := calls.Load(); got > 10 {
-		t.Errorf("BUG G41: %d HTTP-запросов на %d тегов (ожидалось ≤10)", got, len(tags))
+	if got := calls.Load(); got > 20 {
+		t.Errorf("BUG G41: %d HTTP-запросов на %d тегов (ожидалось ≤20: suggest + dapi exact-lookup на тег)", got, len(tags))
 	}
 }
 

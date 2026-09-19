@@ -1,8 +1,36 @@
 import { App } from './state.js';
 import { esc } from './utils.js';
 import { t } from './i18n.js';
+
+// PB-5: confirmDialog принимал произвольный HTML (innerHTML). Сообщения
+// приходят из кода и обычно экранированы, но чтобы диалог оставался безопасным
+// при любом будущем вызове, пропускаем их через санитайзер: разрешён только
+// узкий whitelist лёгких тегов, всё остальное превращается в текст.
+const SAFE_TAGS = new Set(['B', 'BR', 'I', 'EM', 'STRONG', 'CODE', 'SPAN', 'SMALL', 'MARK']);
+const safeRich = (s) => {
+  const haystack = String(s || '');
+  if (haystack === '') return '';
+  const doc = new DOMParser().parseFromString(haystack, 'text/html');
+  const clean = (node) => {
+    for (const child of [...node.children]) {
+      if (SAFE_TAGS.has(child.tagName)) {
+        // Разрешённому тегу обрезаем атрибуты (никаких onclick/href и т.п.).
+        for (const k of [...child.attributes]) child.removeAttribute(k.name);
+        clean(child);
+      } else {
+        const span = document.createElement('span');
+        span.textContent = child.textContent;
+        node.replaceChild(span, child);
+      }
+    }
+  };
+  clean(doc.body);
+  return doc.body.innerHTML;
+};
+
 App.confirmDialog = function (opts) {
   return new Promise((resolve) => {
+    const prev = document.activeElement;
     const el = this.els.confirmModal;
     if (!el) return resolve(false);
     el.setAttribute('role', 'dialog');
@@ -10,7 +38,7 @@ App.confirmDialog = function (opts) {
     el.setAttribute('aria-labelledby', 'confirm-title');
     this.els.confirmTitle.id = 'confirm-title';
     this.els.confirmTitle.textContent = opts.title || 'Подтверждение';
-    this.els.confirmMessage.innerHTML = opts.message || '';
+    this.els.confirmMessage.innerHTML = safeRich(opts.message || '');
     this.els.confirmOk.textContent = opts.okText || 'Подтвердить';
     this.els.confirmOk.classList.toggle('btn-danger', !!opts.danger);
     el.classList.remove('hidden');
@@ -26,6 +54,7 @@ App.confirmDialog = function (opts) {
       el.removeAttribute('aria-labelledby');
       const main = document.getElementById('main');
       if (main && typeof this.setAriaHidden === 'function') this.setAriaHidden(main, false);
+      if (prev && prev.focus) prev.focus();
       this.els.confirmOk.removeEventListener('click', onOk);
       this.els.confirmCancel.removeEventListener('click', onCancel);
       this.els.confirmClose.removeEventListener('click', onCancel);
@@ -96,11 +125,21 @@ App.showHelp = function () {
     ).join('') +
     `</div>`
   ).join('');
+  this.els.helpModal.setAttribute('role', 'dialog');
+  this.els.helpModal.setAttribute('aria-modal', 'true');
   this.els.helpModal.classList.remove('hidden');
+  if (typeof this.trapFocus === 'function') {
+    this._releaseHelpTrap = this.trapFocus(this.els.helpModal, this.els.helpModal);
+  }
 };
 
 App.hideHelp = function () {
-  if (this.els.helpModal) this.els.helpModal.classList.add('hidden');
+  if (this._releaseHelpTrap) { this._releaseHelpTrap(); this._releaseHelpTrap = null; }
+  if (this.els.helpModal) {
+    this.els.helpModal.removeAttribute('role');
+    this.els.helpModal.removeAttribute('aria-modal');
+    this.els.helpModal.classList.add('hidden');
+  }
 };
 
 App.toggleHelp = function () {

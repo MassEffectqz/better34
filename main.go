@@ -52,6 +52,9 @@ func main() {
 		r.Use(debugMiddleware())
 	}
 	api := r.Group("/api")
+	// S-5: троттлинг API по token-bucket (burst 120, 60 req/s на IP).
+	// /healthz, /ready, /metrics исключены внутри самого middleware.
+	api.Use(apiRateLimitMiddleware())
 	{
 		api.GET("/healthz", handler.Healthz)
 		api.GET("/ready", handler.Readiness)
@@ -193,9 +196,11 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	scheme, rawLn, plainSrv, h3Server := setupTLS(addr)
-	if scheme == "https" && rawLn != nil {
-		cert, _ := loadOrGenerateCert()
+	scheme, tlsLn, plainSrv, h3Server, rawLn, done, cert := setupTLS(addr)
+	if scheme == "https" {
+		// cert генерируется единожды внутри setupTLS (H3 уже использует его
+		// из памяти). Раньше здесь был второй loadOrGenerateCert(): при
+		// неудачной записи на диск HTTPS и H3 получали РАЗНЫЕ ключи (P1-5).
 		srv.TLSConfig = &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS12,
@@ -218,8 +223,9 @@ func main() {
 		var err error
 		switch {
 		case scheme == "https":
+			// tlsLn — выход демукса (только TLS-соединения).
 			// Пустые пути — сертификат берётся из srv.TLSConfig.
-			err = srv.ServeTLS(rawLn, "", "")
+			err = srv.ServeTLS(tlsLn, "", "")
 		default:
 			err = srv.ListenAndServe()
 		}
@@ -229,6 +235,15 @@ func main() {
 	}()
 	<-quit
 	slog.Info("shutting down")
+	// Сигналим demuxAccept остановиться (разблокирует отправку в каналы),
+	// затем явно закрываем rawLn — это гарантирует, что Accept() вернёт
+	// ошибку и горутина demuxAccept завершится без ожидания Shutdown.
+	if done != nil {
+		close(done)
+	}
+	if rawLn != nil {
+		_ = rawLn.Close()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {

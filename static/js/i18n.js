@@ -1,7 +1,4 @@
-// i18n.js — лёгкая локализация интерфейса (RU/EN).
-// Словарь покрывает основной хром UI; строки, которых нет в словаре,
-// остаются как есть. Язык хранится в localStorage('briefly_lang'),
-// по умолчанию — язык браузера.
+
 const RU = {
   'header.home': 'На главную',
   'header.menu': 'Меню',
@@ -11,8 +8,8 @@ const RU = {
   'search.clear': 'Очистить',
   'rating.label': 'Фильтр рейтинга',
   'provider.title': 'Источник постов',
-
   'menu.search': 'Поиск',
+  'menu.filters': 'Фильтры',
   'menu.random': 'Случайный пост',
   'menu.recommend': 'Рекомендации',
   'menu.presets': 'Пресеты',
@@ -27,7 +24,6 @@ const RU = {
   'menu.settings': 'Настройки',
   'menu.help': 'Справка',
   'menu.logout': 'Выйти',
-
   'pf.title': 'Профиль',
   'pf.close': 'Закрыть (Esc)',
   'pf.nickname': 'Ваш ник',
@@ -67,7 +63,6 @@ const RU = {
   'collections.openInGrid': 'Открыть в сетке',
   'collections.rename': 'Переименовать',
   'collections.delete': 'Удалить коллекцию',
-
   'set.title': 'Настройки',
   'stab.appearance': 'Оформление',
   'stab.network': 'Сеть',
@@ -76,6 +71,8 @@ const RU = {
   'set.theme': 'Тема',
   'theme.dark': 'Тёмная',
   'theme.light': 'Светлая',
+  'theme.deep': 'AMOLED (чёрный)',
+  'theme.sepia': 'Сепия (тёплая)',
   'theme.auto': 'Авто (системная)',
   'set.grid': 'Плотность сетки',
   'grid.auto': 'Авто',
@@ -124,21 +121,19 @@ const RU = {
   'set.remoteFollow': 'Открывать посты, отправленные с других устройств («пульт»)',
   'set.dlNotify': 'Уведомлять, когда загрузки завершены',
   'notify.dlDone': 'Загрузки завершены',
-    'notify.errors': 'ошибок',
+  'notify.errors': 'ошибок',
   'btn.similar': 'Похожие (по картинке)',
   'viewer.title': 'Просмотр поста',
   'btn.remotePush': 'Показать на других устройствах',
   'btn.exportProfile': 'Экспорт профиля',
   'btn.importProfile': 'Импорт профиля',
   'btn.saveSettings': 'Сохранить',
-
   'stats.title': 'Статистика',
   'queue.title': 'Очередь загрузок',
   'confirm.title': 'Подтверждение',
   'confirm.cancel': 'Отмена',
   'confirm.ok': 'Подтвердить',
   'help.title': 'Горячие клавиши',
-
   'batch.selected': 'Выбрано: {n}',
   'batch.download': 'Скачать',
   'batch.hide': 'Скрыть',
@@ -159,7 +154,6 @@ const RU = {
   'alias.targetPh': 'канон',
   'alias.empty': 'Алиасов пока нет — добавьте первый',
   'btn.addAlias': 'Добавить',
-
   'status.ready': 'готово',
   'status.posts': '{n} постов · {mode}',
   'status.search': 'поиск',
@@ -168,6 +162,36 @@ const RU = {
   'status.latest': 'последние посты',
   'viewer.downloaded': 'скачано',
   'viewer.pressX': 'нажми X для скачивания',
+  'viewer.slideshow': 'Слайдшоу',
+  'viewer.postOf': 'Пост {i} из {n}',
+  'viewer.relatedTitle': 'Похожие по тегам',
+  'viewer.relatedEmpty': 'Похожих по тегам не нашлось',
+  'viewer.relatedError': 'Не удалось загрузить похожие',
+  'viewer.relParent': 'Родитель',
+  'viewer.relChild': 'Дочь/сын поста',
+  'viewer.relSetHint': 'Связать с родителем',
+  'viewer.relSetBtn': '↑ привязать',
+  'viewer.parentPrompt': 'Родитель (id поста):',
+  'viewer.badId': 'Некорректный id',
+  'viewer.linked': '#{id} → родитель #{pid}',
+  'viewer.loadOriginal': 'Догрузить оригинал (крупнее и тяжелее)',
+  'viewer.liked': 'Лайкнут',
+  'viewer.unliked': 'Лайк убран',
+  'viewer.error': 'Ошибка',
+  'viewer.postHidden': 'Пост скрыт',
+  'viewer.postShown': 'Пост показан',
+  'viewer.noFile': 'Нет файла для скачивания',
+  'viewer.downloading': 'Скачивание #{id} на устройство',
+  'viewer.inverted': 'Инвертировано',
+  'viewer.uninverted': 'Инверсия снята',
+  'viewer.tagHide': 'Скрыть тег',
+  'viewer.tagHidden': 'Скрыт: {tag}',
+  'viewer.tagShown': 'Показан: {tag}',
+  'card.like': 'Лайк ({hotkey})',
+  'card.hide': 'Скрыть ({hotkey})',
+  'card.score': 'Очки',
+  'viewer.rateVideo': 'Скорость видео',
+  'viewer.pip': 'Картинка в картинке',
   'empty.enterTags': 'Введите теги для поиска',
   'empty.startTyping': 'Начните печатать, чтобы найти посты',
   'empty.nothing': 'Ничего не найдено',
@@ -184,13 +208,10 @@ const RU = {
   'mode.collection': 'коллекцию',
   'mode.showing': 'Показываю {what} ({n})',
   'mode.recommend': 'Рекомендации по вашим лайкам ({n})',
-
   'help.feed': 'Лента',
   'help.view': 'Просмотр',
   'help.zoom': 'Масштаб и панорама',
   'help.ui': 'Интерфейс',
-
-  // Server error codes (backend returns {error: "code"}, frontend translates)
   'err.auth_required': 'Требуется вход',
   'err.invalid_request': 'Неверный запрос',
   'err.session_create_failed': 'Не удалось создать сессию',
@@ -209,6 +230,8 @@ const RU = {
   'err.confirm_required': 'Подтверждение обязательно',
   'err.profile_format_error': 'Неверный формат профиля',
   'err.no_accounts': 'Аккаунты ещё не созданы — зарегистрируйте первый через /auth/register',
+  'set.autoRefreshFeed': 'Авто-рефреш ленты после скачивания',
+  'set.autoRefreshFeedHint': 'Лента будет перезагружаться автоматически, когда новый пост окажется в библиотеке.',
 };
 
 const EN = {
@@ -220,7 +243,6 @@ const EN = {
   'search.clear': 'Clear',
   'rating.label': 'Rating filter',
   'provider.title': 'Post source',
-
   'menu.search': 'Search',
   'menu.random': 'Random post',
   'menu.recommend': 'For you',
@@ -236,7 +258,6 @@ const EN = {
   'menu.settings': 'Settings',
   'menu.help': 'Shortcuts',
   'menu.logout': 'Log out',
-
   'pf.title': 'Profile',
   'pf.close': 'Close (Esc)',
   'pf.nickname': 'Your nickname',
@@ -276,7 +297,6 @@ const EN = {
   'collections.openInGrid': 'Open in grid',
   'collections.rename': 'Rename',
   'collections.delete': 'Delete collection',
-
   'set.title': 'Settings',
   'stab.appearance': 'Appearance',
   'stab.network': 'Network',
@@ -285,6 +305,8 @@ const EN = {
   'set.theme': 'Theme',
   'theme.dark': 'Dark',
   'theme.light': 'Light',
+  'theme.deep': 'AMOLED (black)',
+  'theme.sepia': 'Sepia (warm)',
   'theme.auto': 'Auto (system)',
   'set.grid': 'Grid density',
   'grid.auto': 'Auto',
@@ -340,14 +362,12 @@ const EN = {
   'btn.importProfile': 'Import profile',
   'btn.mergeDups': 'Merge duplicates',
   'btn.saveSettings': 'Save',
-
   'stats.title': 'Statistics',
   'queue.title': 'Download queue',
   'confirm.title': 'Confirm',
   'confirm.cancel': 'Cancel',
   'confirm.ok': 'Confirm',
   'help.title': 'Keyboard shortcuts',
-
   'batch.selected': 'Selected: {n}',
   'batch.download': 'Download',
   'batch.hide': 'Hide',
@@ -368,7 +388,6 @@ const EN = {
   'alias.targetPh': 'canonical',
   'alias.empty': 'No aliases yet — add the first one',
   'btn.addAlias': 'Add',
-
   'status.ready': 'idle',
   'status.posts': '{n} posts · {mode}',
   'status.search': 'search',
@@ -377,6 +396,36 @@ const EN = {
   'status.latest': 'latest posts',
   'viewer.downloaded': 'downloaded',
   'viewer.pressX': 'press X to download',
+  'viewer.slideshow': 'Slideshow',
+  'viewer.postOf': 'Post {i} of {n}',
+  'viewer.relatedTitle': 'Similar by tags',
+  'viewer.relatedEmpty': 'No similar posts by tags',
+  'viewer.relatedError': 'Failed to load similar posts',
+  'viewer.relParent': 'Parent',
+  'viewer.relChild': 'Child post',
+  'viewer.relSetHint': 'Link to parent',
+  'viewer.relSetBtn': '↑ link',
+  'viewer.parentPrompt': 'Parent (post id):',
+  'viewer.badId': 'Invalid id',
+  'viewer.linked': '#{id} → parent #{pid}',
+  'viewer.loadOriginal': 'Load original (larger and heavier)',
+  'viewer.liked': 'Liked',
+  'viewer.unliked': 'Like removed',
+  'viewer.error': 'Error',
+  'viewer.postHidden': 'Post hidden',
+  'viewer.postShown': 'Post shown',
+  'viewer.noFile': 'No file to download',
+  'viewer.downloading': 'Downloading #{id} to device',
+  'viewer.inverted': 'Inverted',
+  'viewer.uninverted': 'Inversion removed',
+  'viewer.tagHide': 'Hide tag',
+  'viewer.tagHidden': 'Hidden: {tag}',
+  'viewer.tagShown': 'Shown: {tag}',
+  'card.like': 'Like ({hotkey})',
+  'card.hide': 'Hide ({hotkey})',
+  'card.score': 'Score',
+  'viewer.rateVideo': 'Video speed',
+  'viewer.pip': 'Picture in picture',
   'empty.enterTags': 'Enter tags to search',
   'empty.startTyping': 'Start typing to find posts',
   'empty.nothing': 'Nothing found',
@@ -393,13 +442,10 @@ const EN = {
   'mode.collection': 'collection',
   'mode.showing': 'Showing {what} ({n})',
   'mode.recommend': 'Recommendations from your likes ({n})',
-
   'help.feed': 'Feed',
   'help.view': 'Viewer',
   'help.zoom': 'Zoom & pan',
   'help.ui': 'Interface',
-
-  // Server error codes (backend returns {error: "code"}, frontend translates)
   'err.auth_required': 'Login required',
   'err.invalid_request': 'Invalid request',
   'err.session_create_failed': 'Failed to create session',
@@ -418,6 +464,8 @@ const EN = {
   'err.confirm_required': 'Confirmation required',
   'err.profile_format_error': 'Invalid profile format',
   'err.no_accounts': 'No accounts registered yet — create one at /auth/register',
+  'set.autoRefreshFeed': 'Auto-refresh feed after download',
+  'set.autoRefreshFeedHint': 'The feed will reload automatically when a new post lands in your library.',
 };
 
 const DICTS = { ru: RU, en: EN };
@@ -429,17 +477,24 @@ try {
   else if (!saved && (navigator.language || '').toLowerCase().startsWith('en')) lang = 'en';
 } catch { /* noop */ }
 
-function t(key) {
-  return DICTS[lang][key] ?? DICTS.ru[key] ?? key;
-}
-
-// tf(key, {n: 5}) → подставляет {name} в переводе.
-function tf(key, params) {
-  let s = t(key);
+/**
+ * Перевод ключа с опциональной подстановкой параметров ({hotkey} и т.п.).
+ * Ранее params молча игнорировались — тултипы показывали «Лайк ({hotkey})».
+ * @param {string} key
+ * @param {Object<string, string|number>} [params]
+ * @returns {string}
+ */
+function t(key, params) {
+  let s = DICTS[lang][key] ?? DICTS.ru[key] ?? key;
   if (params) {
     for (const [k, v] of Object.entries(params)) s = s.replaceAll(`{${k}}`, String(v));
   }
   return s;
+}
+
+/** tf — синоним t с явным намерением подстановки. @param {string} key @param {Object<string, string|number>} [params] @returns {string} */
+function tf(key, params) {
+  return t(key, params);
 }
 
 function applyI18n(root) {

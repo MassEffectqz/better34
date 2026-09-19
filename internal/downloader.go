@@ -74,7 +74,7 @@ type Downloader struct {
 	doneIDs       []int
 	workers       int
 	wg            sync.WaitGroup
-	client        *http.Client
+	client        atomic.Pointer[http.Client]
 	thumb         *ThumbnailGenerator
 	onResult      func(DownloadResult)
 
@@ -106,17 +106,18 @@ func NewDownloader(workers int, onResult func(DownloadResult)) *Downloader {
 		cancelled:    make(map[int]bool),
 		activeCancel: make(map[int]context.CancelFunc),
 		stopCh:       make(chan struct{}),
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:       workers * 2,
-				IdleConnTimeout:    0,
-				DisableCompression: true,
-				DialContext:        transport.DialContext,
-			},
-		},
-		thumb: NewThumbnailGenerator(),
+		client:       atomic.Pointer[http.Client]{},
+		thumb:        NewThumbnailGenerator(),
 	}
+	d.client.Store(&http.Client{
+		Timeout: 120 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:       workers * 2,
+			IdleConnTimeout:    0,
+			DisableCompression: true,
+			DialContext:        transport.DialContext,
+		},
+	})
 	d.queueCond = sync.NewCond(&d.queueMu)
 	d.queueFile = filepath.Join("data", "download_queue.json")
 	d.loadQueue()
@@ -148,6 +149,14 @@ func NewDownloader(workers int, onResult func(DownloadResult)) *Downloader {
 				payload["success"] = false
 			}
 			publishSSE(payload)
+			// Событие для ленты: авто-рефреш при включённой опции.
+			if result.Error == nil && result.DuplicateOf == 0 {
+				publishSSE(map[string]any{
+					"type":    "post_saved",
+					"post_id": result.PostID,
+				})
+			}
+
 			d.resultsMu.Lock()
 			d.storedResults = append(d.storedResults, result)
 			if len(d.storedResults) > 64 {
@@ -332,7 +341,9 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", resumeFrom))
 		}
 
-		resp, err := d.client.Do(req)
+		// Загружаем актуальный клиент на каждый запрос: RebuildClient атомарно
+		// подменяет указатель, чтобы смена прокси не гонялась с Do(req).
+		resp, err := d.client.Load().Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("download failed: %w", err)
 			if errors.Is(err, context.Canceled) {
@@ -437,13 +448,17 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 			return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("failed to rename file: %w", err)}
 		}
 
-		thumbPath, err := d.thumb.Generate(filePath, job.PostID)
+		thumbPath, terr := d.thumb.Generate(filePath, job.PostID)
+		if terr != nil {
+			// Миниатюра не удалась — файл всё равно скачан; не храним исходник
+			// в thumb_path (S9). Превью покажет заглушку.
+			log.Printf("thumb for post %d failed: %v", job.PostID, terr)
+		}
 		return DownloadResult{
 			PostID:    job.PostID,
 			FilePath:  filePath,
 			ThumbPath: thumbPath,
 			Source:    job.Source,
-			Error:     err,
 		}
 	}
 
@@ -590,6 +605,8 @@ func (d *Downloader) Cancel(id int) {
 	}
 	cancelCtx := d.activeCancel[id]
 	d.queueMu.Unlock()
+	// Отменяем контекст ПОСЛЕ разблокировки мьютекса: иначе cancelCtx может вызвать
+	// callback, который тоже пытается взять queueMu — deadlock.
 	if cancelCtx != nil {
 		cancelCtx()
 	}
@@ -599,12 +616,25 @@ func (d *Downloader) Cancel(id int) {
 
 func (d *Downloader) RebuildClient() {
 	transport := buildTransport()
-	d.client.Transport = &http.Transport{
-		MaxIdleConns:       d.workers * 2,
-		IdleConnTimeout:    0,
-		DisableCompression: true,
-		DialContext:        transport.DialContext,
+	// Собираем новый клиент целиком и атомарно подменяем указатель: запись
+	// в поле client.Transport на лету была бы гонкой данных с параллельными
+	// d.client.Load().Do(req) в воркерах (P1-2).
+	newClient := &http.Client{
+		Timeout: 120 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:       d.workers * 2,
+			IdleConnTimeout:    0,
+			DisableCompression: true,
+			DialContext:        transport.DialContext,
+		},
 	}
+	// Закрываем старый transport, чтобы не утечь соединениями (S7).
+	if old := d.client.Load(); old != nil {
+		if oldTr, ok := old.Transport.(*http.Transport); ok {
+			oldTr.CloseIdleConnections()
+		}
+	}
+	d.client.Store(newClient)
 }
 
 func (d *Downloader) MoveUp(id int) bool {

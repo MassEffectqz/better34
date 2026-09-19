@@ -100,6 +100,8 @@ Sync 'briefly-flush', и service worker выгружает очередь при
 | `BRIEFLY_H3` | `1` | HTTP/3/QUIC на том же порту (отключается `=0`) |
 | `BRIEFLY_MEDIA_CACHE_GB` | `20` | Бюджет дискового media-cache (общий для LAN) |
 | `BRIEFLY_WARM` | `1` | Прогрев proxy-cache превью после выдачи поиска (`0` — выключить) |
+| `BRIEFLY_DOH_FALLBACK` | встроенный список rule34 | Замена fallback-IP для DoH: `"host=ip,host2=ip2"`; `off` — выключить fallback |
+| `BRIEFLY_FORCE_HTTPS` | — | `1` — ставить HSTS (по TLS); полный принудительный redirect — будущий флаг |
 | `BRIEFLY_SEG` | `1` | Сегментированная параллельная закачка больших видео в media-cache (`0` — выключить) |
 | `BRIEFLY_DEBUG` | — | `1` — unbundled-фронтенд + лог запросов |
 | `BRIEFLY_OLLAMA` | `http://127.0.0.1:11434` | URL локальной Ollama (семантический поиск) |

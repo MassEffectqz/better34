@@ -132,7 +132,20 @@ var (
 	nlCache   = make(map[string]nlCacheEntry)
 )
 
-// ollamaToTags с кэшем: одни и те же фразы не должны гонять модель.
+// nlFlight — singleflight-запись: пока лидер ждёт модель, остальные ждут его.
+type nlFlight struct {
+	done chan struct{}
+	q    string
+	err  error
+}
+
+var (
+	nlFlightMu sync.Mutex
+	nlInflight map[string]*nlFlight
+)
+
+// ollamaToTags с singleflight и кэшем: параллельные одинаковые фразы ждут
+// ОДИН запрос к модели (до записи в кэш), повторные фразы модель не гоняют.
 func ollamaToTags(descr string, provider Provider) (string, error) {
 	key := strings.ToLower(strings.Join(strings.Fields(descr), " "))
 	nlCacheMu.Lock()
@@ -142,6 +155,53 @@ func ollamaToTags(descr string, provider Provider) (string, error) {
 	}
 	nlCacheMu.Unlock()
 
+	// Singleflight: пока первый запрос этой фразы ждёт модель (до 25с),
+	// остальные ждут его результат, а не запускают параллельные вызовы.
+	nlFlightMu.Lock()
+	if fl, ok := nlInflight[key]; ok {
+		nlFlightMu.Unlock()
+		<-fl.done
+		return fl.q, fl.err
+	}
+	fl := &nlFlight{done: make(chan struct{})}
+	if nlInflight == nil {
+		nlInflight = make(map[string]*nlFlight)
+	}
+	nlInflight[key] = fl
+	nlFlightMu.Unlock()
+
+	fl.q, fl.err = ollamaGenerateOnce(descr, provider)
+
+	nlFlightMu.Lock()
+	delete(nlInflight, key)
+	nlFlightMu.Unlock()
+	close(fl.done)
+
+	// Успешные ответы кэшируем; ошибки — нет (повтор остаётся честным).
+	if fl.err == nil && fl.q != "" {
+		nlCacheMu.Lock()
+		if len(nlCache) >= nlCacheCap {
+			// Простой LRU по времени: выметаем самые старые.
+			oldestKey := ""
+			var oldest time.Time
+			for k, e := range nlCache {
+				if oldestKey == "" || e.at.Before(oldest) {
+					oldestKey, oldest = k, e.at
+				}
+			}
+			if oldestKey != "" {
+				delete(nlCache, oldestKey)
+			}
+		}
+		nlCache[key] = nlCacheEntry{query: fl.q, at: time.Now()}
+		nlCacheMu.Unlock()
+	}
+	return fl.q, fl.err
+}
+
+// ollamaGenerateOnce — реальный вызов модели с валидацией тегов (лидер
+// singleflight из ollamaToTags).
+func ollamaGenerateOnce(descr string, provider Provider) (string, error) {
 	prompt := fmt.Sprintf(nlPromptTmpl, descr)
 	payload, _ := json.Marshal(map[string]any{
 		"model":  ollamaModel(),
@@ -198,23 +258,6 @@ func ollamaToTags(descr string, provider Provider) (string, error) {
 			query = strings.Join(valid, " ")
 		}
 	}
-
-	nlCacheMu.Lock()
-	if len(nlCache) >= nlCacheCap {
-		// Простой LRU по времени: выметаем просроченные, иначе самые старые.
-		oldestKey := ""
-		var oldest time.Time
-		for k, e := range nlCache {
-			if oldestKey == "" || e.at.Before(oldest) {
-				oldestKey, oldest = k, e.at
-			}
-		}
-		if oldestKey != "" {
-			delete(nlCache, oldestKey)
-		}
-	}
-	nlCache[key] = nlCacheEntry{query: query, at: time.Now()}
-	nlCacheMu.Unlock()
 	return query, nil
 }
 

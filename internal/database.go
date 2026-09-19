@@ -48,6 +48,8 @@ type PostDB struct {
 	db   *sql.DB    // запись: одно соединение, убирает SQLITE_BUSY между горутинами
 	read *sql.DB    // чтение: пул поверх WAL — читатели не ждут писателя
 	path string
+	// stop сигналит фоновой горутине обслуживания WAL завершиться (Close()).
+	stop chan struct{}
 }
 
 var (
@@ -64,10 +66,13 @@ func GetDB() *PostDB {
 		dbReady.Store(true)
 		// pHash-backfill старых скачанных картинок: без него дедуп пережатых
 		// копий и «похожие» не видят ранние посты. Откладываем 3с, чтобы не
-		// мешать старту; идемпотентно (пропускает уже заполненные).
+		// мешать старту; идемпотентно (пропускает уже заполненные). Захватываем
+		// экземпляр локально: глобальная ссылка тесты подменяют.
+		pdb := postDB
 		go func() {
 			time.Sleep(3 * time.Second)
-			postDB.BackfillPHashes()
+			pdb.BackfillPHashSeeds()
+			pdb.BackfillPHashes()
 		}()
 	})
 	return postDB
@@ -129,6 +134,7 @@ CREATE INDEX IF NOT EXISTS idx_tags_post ON tags(post_id);
 CREATE INDEX IF NOT EXISTS idx_posts_md5 ON posts(md5) WHERE downloaded=1;
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id, id);
 CREATE INDEX IF NOT EXISTS idx_comments_user ON comments(username);
+CREATE INDEX IF NOT EXISTS idx_posts_phash_seed ON posts(phash_seed) WHERE downloaded=1 AND phash<>'';
 `
 
 func NewPostDB(path string) *PostDB {
@@ -138,7 +144,7 @@ func NewPostDB(path string) *PostDB {
 			log.Printf("[db] mkdir %s: %v", dir, err)
 		}
 	}
-	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)&_pragma=cache_size(-64000)&_pragma=temp_store(MEMORY)&_pragma=mmap_size(1073741824)"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		log.Printf("[db] open %s: %v", path, err)
@@ -173,6 +179,10 @@ func NewPostDB(path string) *PostDB {
 	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0`); err == nil {
 		log.Printf("[db] добавлена колонка parent_id")
 	}
+	// phash_seed — корзина для быстрого поиска «похожих»(старшие 16 бит pHash).
+	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN phash_seed INTEGER NOT NULL DEFAULT 0`); err == nil {
+		log.Printf("[db] добавлена колонка phash_seed")
+	}
 	if _, err := sqlDB.Exec(postsIndexes); err != nil {
 		log.Printf("[db] indexes: %v", err)
 		panic(err)
@@ -197,7 +207,27 @@ func NewPostDB(path string) *PostDB {
 	readDB.SetMaxOpenConns(n)
 	readDB.SetMaxIdleConns(n)
 
-	return &PostDB{db: sqlDB, read: readDB, path: path}
+	// Фоновое обслуживание WAL: checkpoint(TRUNCATE) раз в час держит
+	// -wal маленьким, а PRAGMA optimize подкармливает планировщик статистикой.
+	// Останавливается Close() через stop-канал: вечная горутина не должна
+	// Exec'ать по закрытому пулу после db.Close() (P2-9).
+	stop := make(chan struct{})
+	go func() {
+		delay := 30 * time.Second
+		for {
+			timer := time.After(delay)
+			select {
+			case <-stop:
+				return
+			case <-timer:
+			}
+			_, _ = sqlDB.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+			_, _ = sqlDB.Exec(`PRAGMA optimize`)
+			delay = time.Hour
+		}
+	}()
+
+	return &PostDB{db: sqlDB, read: readDB, path: path, stop: stop}
 }
 
 // importLegacyJSON разово переносит старый data/db.json в SQLite и
@@ -273,17 +303,23 @@ func scanPost(scan func(...any) error) (*Post, error) {
 
 // upsertPostTx полностью заменяет запись + теги (семантика старого AddOrUpdate).
 func upsertPostTx(tx *sql.Tx, p *Post) error {
-	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	// phash_seed — корзина старших 16 бит pHash; считается из Phash здесь,
+	// чтобы запись всегда была согласована с phash (включая очистку).
+	seed := 0
+	if h, ok := decodePHash(p.Phash); ok {
+		seed = phashSeed(h)
+	}
+	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`, phash_seed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET tags=excluded.tags, file_url=excluded.file_url,
 		 preview_url=excluded.preview_url, file_type=excluded.file_type, width=excluded.width,
 		 height=excluded.height, file_size=excluded.file_size, score=excluded.score,
 		 rating=excluded.rating, downloaded=excluded.downloaded, file_path=excluded.file_path,
 		 thumb_path=excluded.thumb_path, phash=excluded.phash, blurhash=excluded.blurhash,
-		 parent_id=excluded.parent_id,
+		 phash_seed=excluded.phash_seed, parent_id=excluded.parent_id,
 		 source=CASE WHEN posts.source='' THEN excluded.source ELSE posts.source END`,
 		p.ID, p.Tags, p.FileURL, p.PreviewURL, p.FileType, p.Width, p.Height,
 		p.FileSize, p.Score, p.Rating, boolToInt(p.Downloaded), p.FilePath, p.ThumbPath, p.MD5,
-		p.Phash, p.Blurhash, p.Source, p.ParentID)
+		p.Phash, p.Blurhash, p.Source, p.ParentID, seed)
 	if err != nil {
 		return err
 	}
@@ -313,8 +349,14 @@ func (db *PostDB) Ping() error { return db.read.Ping() }
 
 // Close закрывает соединение (WAL-чейкпоинт выполняется автоматически).
 func (db *PostDB) Close() {
+	// Сначала останавливаем фоновое обслуживание WAL, потом закрываем пул:
+	// иначе горутина продолжит Exec по закрытому соединению (P2-9).
+	if db.stop != nil {
+		close(db.stop)
+	}
 	_ = db.db.Close()
-	if db.read != nil {
+	// db.read может указывать на тот же пул, что и db.db — не закрываем дважды.
+	if db.read != nil && db.read != db.db {
 		_ = db.read.Close()
 	}
 }
@@ -323,7 +365,38 @@ func (db *PostDB) AddOrUpdate(post *Post) {
 	if post == nil {
 		return
 	}
-	_ = db.withTx(func(tx *sql.Tx) error { return upsertPostTx(tx, post) })
+	if err := db.withTx(func(tx *sql.Tx) error { return upsertPostTx(tx, post) }); err != nil {
+		log.Printf("[db] AddOrUpdate post %d: %v", post.ID, err)
+	}
+}
+
+// upsertMetaTx применяет метаданные в рамках открытой транзакции; возвращает
+// true при изменении. Общий код для UpsertMeta и батча UpsertMetaMany.
+func upsertMetaTx(tx *sql.Tx, p *Post) (bool, error) {
+	old, err := getTx(tx, p.ID)
+	if err != nil {
+		return false, err
+	}
+	if old == nil {
+		cp := *p
+		cp.Downloaded = false
+		cp.FilePath = ""
+		cp.ThumbPath = ""
+		return true, upsertPostTx(tx, &cp)
+	}
+	if old.Tags == p.Tags && old.FileURL == p.FileURL && old.PreviewURL == p.PreviewURL &&
+		old.FileType == p.FileType && old.Width == p.Width && old.Height == p.Height &&
+		old.FileSize == p.FileSize && old.Score == p.Score && old.Rating == p.Rating &&
+		old.MD5 == p.MD5 {
+		return false, nil
+	}
+	if _, err := tx.Exec(`UPDATE posts SET tags=?, file_url=?, preview_url=?, file_type=?,
+			width=?, height=?, file_size=?, score=?, rating=?, md5=? WHERE id=?`,
+		p.Tags, p.FileURL, p.PreviewURL, p.FileType, p.Width, p.Height,
+		p.FileSize, p.Score, p.Rating, p.MD5, p.ID); err != nil {
+		return true, err
+	}
+	return true, replaceTagsTx(tx, p.ID, p.Tags)
 }
 
 // UpsertMeta обновляет только метаданные провайдера, не трогая локальное
@@ -334,34 +407,41 @@ func (db *PostDB) UpsertMeta(p *Post) bool {
 	}
 	changed := false
 	_ = db.withTx(func(tx *sql.Tx) error {
-		old, err := getTx(tx, p.ID)
-		if err != nil {
-			return err
-		}
-		if old == nil {
-			cp := *p
-			cp.Downloaded = false
-			cp.FilePath = ""
-			cp.ThumbPath = ""
-			changed = true
-			return upsertPostTx(tx, &cp)
-		}
-		if old.Tags == p.Tags && old.FileURL == p.FileURL && old.PreviewURL == p.PreviewURL &&
-			old.FileType == p.FileType && old.Width == p.Width && old.Height == p.Height &&
-			old.FileSize == p.FileSize && old.Score == p.Score && old.Rating == p.Rating &&
-			old.MD5 == p.MD5 {
-			return nil
-		}
-		changed = true
-		if _, err := tx.Exec(`UPDATE posts SET tags=?, file_url=?, preview_url=?, file_type=?,
-			width=?, height=?, file_size=?, score=?, rating=?, md5=? WHERE id=?`,
-			p.Tags, p.FileURL, p.PreviewURL, p.FileType, p.Width, p.Height,
-			p.FileSize, p.Score, p.Rating, p.MD5, p.ID); err != nil {
-			return err
-		}
-		return replaceTagsTx(tx, p.ID, p.Tags)
+		c, err := upsertMetaTx(tx, p)
+		changed = c
+		return err
 	})
 	return changed
+}
+
+// UpsertMetaMany батчит метаданные в транзакции: поисковая выдача из
+// десятков постов раньше порождала столько же отдельных Begin/Commit через
+// пул с одним писателем — доминирующая нагрузка на запись при автоподгрузке
+// ленты (P1-3). Чанкинг по 200 постов страховывает от превышения
+// SQLITE_LIMIT_VARIABLE_NUMBER при большом числе bind-параметров.
+func (db *PostDB) UpsertMetaMany(posts []*Post) {
+	if len(posts) == 0 {
+		return
+	}
+	const chunk = 200
+	for start := 0; start < len(posts); start += chunk {
+		end := start + chunk
+		if end > len(posts) {
+			end = len(posts)
+		}
+		batch := posts[start:end]
+		if err := db.withTx(func(tx *sql.Tx) error {
+			for _, p := range batch {
+				if _, err := upsertMetaTx(tx, p); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			log.Printf("[db] UpsertMetaMany(%d posts, chunk from %d): %v", len(posts), start, err)
+			return
+		}
+	}
 }
 
 func getTx(tx *sql.Tx, id int) (*Post, error) {
@@ -381,6 +461,44 @@ func (db *PostDB) Get(id int) *Post {
 		return nil
 	}
 	return p
+}
+
+// GetMany возвращает посты по списку id одним запросом: обогащение выдачи
+// поиска одним SELECT ... WHERE id IN (...) вместо N одиночных Get (P1-3).
+// Чанкинг по 500 id страховывает от SQLITE_LIMIT_VARIABLE_NUMBER (999) при
+// большом числе параметров (GetPostsByIDs принимает до 2000).
+func (db *PostDB) GetMany(ids []int) map[int]*Post {
+	out := make(map[int]*Post, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := db.read.Query(`SELECT `+postCols+` FROM posts WHERE id IN (`+ph+`)`, args...)
+		if err != nil {
+			log.Printf("[db] GetMany(%d ids): %v", len(ids), err)
+			return out
+		}
+		for rows.Next() {
+			p, err := scanPost(rows.Scan)
+			if err != nil {
+				continue
+			}
+			out[p.ID] = p
+		}
+		rows.Close()
+	}
+	return out
 }
 
 func (db *PostDB) queryPosts(query string, args ...any) []*Post {
@@ -406,6 +524,43 @@ func (db *PostDB) queryPosts(query string, args ...any) []*Post {
 
 func (db *PostDB) GetDownloaded() []*Post {
 	return db.queryPosts(`SELECT ` + postCols + ` FROM posts WHERE downloaded=1 ORDER BY id DESC`)
+}
+
+// tagFreqFor — число постов по каждому тегу для сортировки «редкий
+// первым» в INTERSECT-поиске: один индексированный запрос на все теги,
+// а не глобальный скан таблицы tags.
+
+func (db *PostDB) tagFreqFor(tags []string) map[string]int {
+	freq := make(map[string]int, len(tags))
+	if len(tags) == 0 {
+		return freq
+	}
+	unique := make([]string, 0, len(tags))
+	seen := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		if !seen[t] {
+			seen[t] = true
+			unique = append(unique, t)
+		}
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(unique)), ",")
+	args := make([]any, len(unique))
+	for i, t := range unique {
+		args[i] = t
+	}
+	rows, err := db.read.Query(`SELECT tag, COUNT(*) FROM tags WHERE tag IN (`+ph+`) GROUP BY tag`, args...)
+	if err != nil {
+		return freq
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tag string
+		var n int
+		if err := rows.Scan(&tag, &n); err == nil {
+			freq[tag] = n
+		}
+	}
+	return freq
 }
 
 // SearchDownloaded: группы через '|', внутри группы — AND по всем тегам,
@@ -435,12 +590,21 @@ func (db *PostDB) SearchDownloaded(tags string) []*Post {
 		}
 		var parts []string
 		if len(pos) > 0 {
-			ph := strings.TrimSuffix(strings.Repeat("?,", len(pos)), ",")
-			parts = append(parts, fmt.Sprintf(
-				"(SELECT COUNT(DISTINCT tag) FROM tags WHERE post_id=p.id AND tag IN (%s)) = %d", ph, len(pos)))
-			for _, t := range pos {
+			// AND = INTERSECT of post_id sets (instead of a correlated COUNT
+			// per post). Rarest tag first cuts candidates early.
+
+			freq := db.tagFreqFor(pos)
+			ordered := make([]string, len(pos))
+			copy(ordered, pos)
+			sort.Slice(ordered, func(i, j int) bool {
+				return freq[ordered[i]] < freq[ordered[j]]
+			})
+			var sub []string
+			for _, t := range ordered {
+				sub = append(sub, "(SELECT post_id FROM tags WHERE tag=?)")
 				args = append(args, t)
 			}
+			parts = append(parts, "p.id IN ("+strings.Join(sub, " INTERSECT ")+")")
 		}
 		if len(neg) > 0 {
 			ph := strings.TrimSuffix(strings.Repeat("?,", len(neg)), ",")
@@ -488,7 +652,9 @@ func (db *PostDB) UnsetDownloadedByPath(path string) {
 	}
 	// Старая реализация сравнивала abs-пути с обеих сторон и чистила только
 	// FilePath — поведение сохранено.
-	_, _ = db.db.Exec(`UPDATE posts SET downloaded=0, file_path='' WHERE downloaded=1 AND (file_path=? OR file_path=?)`, path, abs)
+	if _, err := db.db.Exec(`UPDATE posts SET downloaded=0, file_path='' WHERE downloaded=1 AND (file_path=? OR file_path=?)`, path, abs); err != nil {
+		log.Printf("[db] UnsetDownloadedByPath(%s): %v", path, err)
+	}
 }
 
 func (db *PostDB) CleanNonDownloaded() int {
@@ -509,7 +675,10 @@ func (db *PostDB) Stats() map[string]int {
 
 // SetPostMD5 запоминает хэш содержимого поста (после успешного скачивания).
 func (db *PostDB) SetPostMD5(id int, md5sum string) {
-	_, _ = db.db.Exec(`UPDATE posts SET md5=? WHERE id=?`, md5sum, id)
+	if _, err := db.db.Exec(`UPDATE posts SET md5=? WHERE id=?`, md5sum, id); err != nil {
+		// Молчаливая потеря md5 ломала бы дедуп постов — фиксируем в лог (P2-8).
+		log.Printf("[db] SetPostMD5(%d): %v", id, err)
+	}
 }
 
 // SetPostPHash сохраняет perceptual hash локальной картинки.
@@ -517,7 +686,15 @@ func (db *PostDB) SetPostPHash(id int, phash string) {
 	if phash == "" {
 		return
 	}
-	_, _ = db.db.Exec(`UPDATE posts SET phash=? WHERE id=?`, phash, id)
+	if h, ok := decodePHash(phash); ok {
+		if _, err := db.db.Exec(`UPDATE posts SET phash=?, phash_seed=? WHERE id=?`, phash, phashSeed(h), id); err != nil {
+			log.Printf("[db] SetPostPHash(%d): %v", id, err)
+		}
+	} else {
+		if _, err := db.db.Exec(`UPDATE posts SET phash=? WHERE id=?`, phash, id); err != nil {
+			log.Printf("[db] SetPostPHash(%d): %v", id, err)
+		}
+	}
 }
 
 // SetPostBlurhash сохраняет placeholder-строку для мгновенной отрисовки.
@@ -525,18 +702,23 @@ func (db *PostDB) SetPostBlurhash(id int, bh string) {
 	if bh == "" {
 		return
 	}
-	_, _ = db.db.Exec(`UPDATE posts SET blurhash=? WHERE id=?`, bh, id)
+	if _, err := db.db.Exec(`UPDATE posts SET blurhash=? WHERE id=?`, bh, id); err != nil {
+		log.Printf("[db] SetPostBlurhash(%d): %v", id, err)
+	}
 }
 
 // SimilarPHash возвращает скачанные посты, визуально похожие на данный
-// (расстояние Хэмминга pHash ≤ maxDist). Отдельные записи не индексируются:
-// 49k строк хэшей грузятся в память и кэшируются выше по стеку.
+// (расстояние Хэмминга pHash ≤ maxDist). Кандидаты ищутся через бакеты
+// phash_seed ±1: при расстоянии ≤ 12 старшие 4 бита не могут разойтись
+// больше чем на единицу, остальные бакеты можно не сканировать.
 func (db *PostDB) SimilarPHash(phash string, excludeID, limit, maxDist int) []*Post {
 	target, ok := decodePHash(phash)
 	if !ok {
 		return nil
 	}
-	rows, err := db.read.Query(`SELECT `+postCols+` FROM posts WHERE downloaded=1 AND phash<>'' AND id<>?`, excludeID)
+	seed := phashSeed(target)
+	rows, err := db.read.Query(`SELECT `+postCols+` FROM posts WHERE downloaded=1 AND phash<>'' AND id<>? AND phash_seed IN (?,?,?)`,
+		excludeID, seed-1, seed, seed+1)
 	if err != nil {
 		return nil
 	}
@@ -592,13 +774,15 @@ func (db *PostDB) FindDownloadedByMd5(md5sum string, excludeID int) int {
 // FindDownloadedByPHash ищет уже скачанный пост, визуально похожий на переданный
 // pHash (расстояние Хэмминга ≤ maxDist) — дедуп пережатых/обрезных копий.
 // При нескольких кандидатах выбирается ближайший, при равных — меньший id.
-// 0 — похожих нет. Отдельные записи не индексируются (см. SimilarPHash).
+// 0 — похожих нет. Поиск идёт через бакет phash_seed (±1).
 func (db *PostDB) FindDownloadedByPHash(phash string, excludeID, maxDist int) int {
 	target, ok := decodePHash(phash)
 	if !ok || maxDist < 0 {
 		return 0
 	}
-	rows, err := db.read.Query(`SELECT id, phash FROM posts WHERE downloaded=1 AND phash<>'' AND id<>?`, excludeID)
+	seed := phashSeed(target)
+	rows, err := db.read.Query(`SELECT id, phash FROM posts WHERE downloaded=1 AND phash<>'' AND id<>? AND phash_seed IN (?,?,?)`,
+		excludeID, seed-1, seed, seed+1)
 	if err != nil {
 		return 0
 	}
@@ -632,11 +816,59 @@ func (db *PostDB) SetPostSource(id int, source string) {
 	_, _ = db.db.Exec(`UPDATE posts SET source=? WHERE id=?`, source, id)
 }
 
+// BackfillPHashSeeds — разовый бэкфилл phash_seed для строк, посчитанных
+// до введения бакетов: seed=0 при ненулевом phash «отравил» бы корзину 0
+// и попутно скрыл её содержимое от поиска похожих. Идемпотентно: строки с
+// честным нулевым хэшем остаются в корзине 0.
+func (db *PostDB) BackfillPHashSeeds() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[db] BackfillPHashSeeds panic: %v", r)
+		}
+	}()
+	if db == nil || !DBReady() {
+		return
+	}
+	rows, err := db.read.Query(`SELECT id, phash FROM posts WHERE downloaded=1 AND phash<>'' AND phash_seed=0`)
+	if err != nil {
+		return
+	}
+	type seedRow struct {
+		id   int
+		hash uint64
+	}
+	var pending []seedRow
+	for rows.Next() {
+		var id int
+		var ph string
+		if rows.Scan(&id, &ph) != nil {
+			continue
+		}
+		if h, ok := decodePHash(ph); ok && h != 0 {
+			pending = append(pending, seedRow{id, h})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return
+	}
+	for _, r := range pending {
+		_, _ = db.db.Exec(`UPDATE posts SET phash_seed=? WHERE id=?`, phashSeed(r.hash), r.id)
+	}
+	if len(pending) > 0 {
+		log.Printf("[db] backfill: обновлены phash_seed для %d постов", len(pending))
+	}
+}
+
 // BackfillPHashes считает pHash для старых скачанных картинок, у которых
 // отпечаток ещё не посчитан (дедуп пережатых копий и «похожие» по ним).
 // Best effort в фоне после старта; видео пропускаются по расширению.
 func (db *PostDB) BackfillPHashes() {
-	defer func() { _ = recover() }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[db] BackfillPHashes panic: %v", r)
+		}
+	}()
 	if !DBReady() {
 		return
 	}

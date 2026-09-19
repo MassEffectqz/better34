@@ -8,7 +8,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,6 +19,51 @@ var hardcodedDNS = map[string]string{
 	"rule34.xxx":         "8.6.112.0",
 	"api.rule34.xxx":     "8.6.112.0",
 	"api-cdn.rule34.xxx": "8.6.112.0",
+}
+
+// fallbackDBRLoaded — загружен ли конфиг fallback-IP из окружения (B-1).
+// BRIEFLY_DOH_FALLBACK: "host=ip,host2=ip2" — полностью заменяет жёсткий
+// список; "off" — отключает fallback совсем (при недоступном DoH резолв
+// уходит в системный DNS, см. DialContext).
+var dohFallbackLoaded atomic.Bool
+
+func loadDOHFallback() {
+	if dohFallbackLoaded.Load() {
+		return
+	}
+	dohFallbackLoaded.Store(true)
+	raw := strings.TrimSpace(os.Getenv("BRIEFLY_DOH_FALLBACK"))
+	if raw == "" {
+		return
+	}
+	if strings.ToLower(raw) == "off" {
+		hardcodedDNS = make(map[string]string)
+		slog.Warn("DoH: fallback IP отключён через BRIEFLY_DOH_FALLBACK=off")
+		return
+	}
+	repl := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.Split(pair, "=")
+		if len(parts) != 2 {
+			slog.Warn("DoH: пропущен некорректный fallback (ожидается host=ip)", "entry", pair)
+			continue
+		}
+		host := strings.ToLower(strings.TrimSpace(parts[0]))
+		ipStr := strings.TrimSpace(parts[1])
+		if host == "" || net.ParseIP(ipStr) == nil {
+			slog.Warn("DoH: пропущен некорректный fallback", "host", host, "ip", ipStr)
+			continue
+		}
+		repl[host] = ipStr
+	}
+	if len(repl) > 0 {
+		hardcodedDNS = repl
+		slog.Warn("DoH: custom fallback IP из BRIEFLY_DOH_FALLBACK", "hosts", len(repl))
+	}
 }
 
 // defaultDoHEndpoints — порядок обхода публичных DoH-эндпоинтов (формат
@@ -76,8 +124,12 @@ func NewDoHResolver(dohURLs ...string) *DoHResolver {
 }
 
 func (r *DoHResolver) fallback(host string) (net.IP, error) {
+	loadDOHFallback()
 	if ipStr, ok := hardcodedDNS[host]; ok {
 		if ip := net.ParseIP(ipStr); ip != nil {
+			// Резервный адрес захардкожен и может устареть: без лога смена IP
+			// CDN выглядела бы как «молчаливая» поломка после отказа DoH.
+			slog.Warn("DoH: hardcoded fallback address", "host", host, "ip", ipStr)
 			return ip, nil
 		}
 	}

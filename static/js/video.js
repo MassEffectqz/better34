@@ -158,10 +158,12 @@ App._resumeVideoPosition = function (post) {
   } catch { /* noop */ }
 };
 
-// Вешаем на элемент слушатели, сохраняющие громкость/скорость/позицию.
+// Вешаем на элемент слушатели, сохраняющие громкость/скорость/позиция.
 App._bindVideoEvents = function (v) {
   if (!v || !v.addEventListener || v._brieflyBound) return;
   v._brieflyBound = true;
+  if (!v._videoAbortCtrl) v._videoAbortCtrl = new AbortController();
+  const signal = v._videoAbortCtrl.signal;
   let lastSave = 0;
   v.addEventListener('volumechange', () => {
     const p = App._loadVideoPrefs();
@@ -175,20 +177,29 @@ App._bindVideoEvents = function (v) {
     }
     App._saveVideoPrefs();
     if (!v.muted) App._removeUnmuteHint();
-  });
+  }, { signal });
   v.addEventListener('ratechange', () => {
     const r = v.playbackRate || 1;
     const p = App._loadVideoPrefs();
     if (p.rate !== r) { p.rate = r; App._saveVideoPrefs(); }
     App._syncRateSelect(r);
-  });
+  }, { signal });
   v.addEventListener('timeupdate', () => {
     const now = Date.now();
     if (now - lastSave < 2000 || v.paused) return;
     lastSave = now;
     App._rememberVideoTime(App._currentPostId(), v.currentTime);
-  });
-  v.addEventListener('ended', () => { App._forgetVideoTime(App._currentPostId()); });
+  }, { signal });
+  v.addEventListener('ended', () => { App._forgetVideoTime(App._currentPostId()); }, { signal });
+};
+
+// Очистка слушателей видео при закрытии вьюера или смене элемента.
+App._unbindVideoEvents = function (v) {
+  if (v && v._videoAbortCtrl) {
+    v._videoAbortCtrl.abort();
+    v._videoAbortCtrl = null;
+    v._brieflyBound = false;
+  }
 };
 
 // Autoplay со звуком браузеры блокируют без жеста пользователя:
@@ -268,6 +279,19 @@ App._hideViewerMediaError = function () {
     App._viewerErrorEl = null;
   }
 };
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    const v = /** @type {HTMLVideoElement | null} */ (document.getElementById('viewer-video'));
+    if (v && v.src && v.error) { v.load(); }
+    // P2-6: если вьювер показывал оверлей ошибки загрузки медиа — ретраим
+    // автоматически при возврате сети, не заставляя жать «Повторить».
+    if (App._viewerErrorEl && App.state && App.state.viewerOpen) {
+      App._hideViewerMediaError();
+      App.renderViewer(true);
+    }
+  });
+}
 
 App.togglePictureInPicture = function () {
   const v = App.currentVideo();
