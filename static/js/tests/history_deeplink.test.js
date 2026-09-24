@@ -274,6 +274,48 @@ await (async () => {
   check('isOpenInNewTabClick: без модификаторов — false',
     !a.isOpenInNewTabClick({}) && !a.isOpenInNewTabClick(null));
 
+  // ── 7. Ряд «Похожие по тегам»: Ctrl/Cmd+ЛКМ → новая вкладка ──────────
+  a = makeApp();
+  a.state.query = 'solo';
+  a.openInNewTab = (url) => a.opened.push(url);
+  a.chain = [];
+  a.openRelatedChain = (p, list) => a.chain.push([p.id, (list || []).length]);
+  a._relPosts = [{ id: 11 }, { id: 22 }];
+  const relEv = (extra) => Object.assign({
+    target: { closest: (sel) => (sel === '.rel-item' ? { dataset: { idx: '1' } } : null) },
+    preventDefault() {},
+  }, extra);
+
+  a.onRelatedClick(relEv({ ctrlKey: true }));
+  check('Ctrl+ЛКМ по «Похожие по тегам»: пост открывается в новой вкладке',
+    a.opened.length === 1 && a.opened[0] === '/search/solo/post/22' && a.chain.length === 0,
+    JSON.stringify({ opened: a.opened, chain: a.chain }));
+
+  a.onRelatedAuxClick(relEv({ button: 1 }));
+  check('средняя кнопка по «Похожие по тегам»: тоже новая вкладка',
+    a.opened.length === 2 && a.opened[1] === '/search/solo/post/22', JSON.stringify(a.opened));
+
+  a.onRelatedKeydown(relEv({ key: 'Enter', ctrlKey: true }));
+  check('Ctrl+Enter по «Похожие по тегам»: новая вкладка', a.opened.length === 3, JSON.stringify(a.opened));
+
+  a.onRelatedClick(relEv({}));
+  check('обычный клик по «Похожие по тегам»: открывается цепочка похожих',
+    a.chain.length === 1 && a.chain[0][0] === 22 && a.chain[0][1] === 2, JSON.stringify(a.chain));
+
+  a.onRelatedKeydown(relEv({ key: 'Enter' }));
+  check('Enter по «Похожие по тегам»: цепочка без новой вкладки',
+    a.chain.length === 2 && a.opened.length === 3, JSON.stringify({ chain: a.chain, opened: a.opened }));
+
+  a.onRelatedKeydown(relEv({ key: ' ' }));
+  check('Space не активирует миниатюру (во вьювере это слайдшоу)',
+    a.chain.length === 2 && a.opened.length === 3, JSON.stringify(a.chain));
+
+  a.onRelatedAuxClick(relEv({ button: 0 }));
+  check('ЛКМ через auxclick игнорируется', a.opened.length === 3);
+
+  a.onRelatedClick(relEv({ ctrlKey: true, target: { closest: () => null } }));
+  check('Ctrl+ЛКМ мимо миниатюры: ничего не открывается', a.opened.length === 3);
+
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed) throw new Error(`${failed} checks failed`);
 })();

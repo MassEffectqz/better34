@@ -265,12 +265,9 @@ export const App = {
         else if (action === 'help') this.toggleHelp();
       });
     });
-    e.viewerRelated.addEventListener('click', (ev) => {
-      const it = ev.target.closest('.rel-item');
-      if (!it) return;
-      const p = this._relPosts && this._relPosts[parseInt(it.dataset.idx, 10)];
-      if (p) this.openRelatedChain(p, this._relPosts);
-    });
+    e.viewerRelated.addEventListener('click', (ev) => this.onRelatedClick(ev));
+    e.viewerRelated.addEventListener('auxclick', (ev) => this.onRelatedAuxClick(ev));
+    e.viewerRelated.addEventListener('keydown', (ev) => this.onRelatedKeydown(ev));
     e.btnLikesDownload.addEventListener('click', () => go(this.downloadAllLikes()));
     document.addEventListener('click', (ev) => {
       if (!e.headerMenu.classList.contains('hidden') && !e.btnHeaderMenu.contains(ev.target) && !e.headerMenu.contains(ev.target)) { e.headerMenu.classList.add('hidden'); }
@@ -1189,6 +1186,55 @@ export const App = {
       this.state.posts = posts.concat(saved.filter(p => p.id !== id));
       this.openViewer(0);
     } catch (e) { /* сеть моргнула — не критично */ }
+  },
+
+  // ── Ряд «Похожие по тегам» во вьювере ───────────────────────────────────
+  /** Пост из ряда «Похожие по тегам» по элементу, на котором произошло событие. */
+  _relPostFromEvent(ev) {
+    const it = ev && ev.target && ev.target.closest ? ev.target.closest('.rel-item') : null;
+    if (!it || it.dataset.idx == null) return null;
+    return (this._relPosts || [])[parseInt(it.dataset.idx, 10)] || null;
+  },
+
+  /**
+   * Клик по миниатюре «Похожие по тегам». Ctrl/Cmd+ЛКМ работает как у ссылки
+   * (пост открывается в новой вкладке), обычный клик — листание по цепочке.
+   */
+  onRelatedClick(ev) {
+    const p = this._relPostFromEvent(ev);
+    if (!p) return;
+    if (this.isOpenInNewTabClick(ev)) {
+      ev.preventDefault();
+      this.openInNewTab(this.postUrl(this.state.query, p.id));
+      return;
+    }
+    this.openRelatedChain(p, this._relPosts);
+  },
+
+  /** Средняя кнопка мыши по миниатюре «Похожие по тегам» — тоже новая вкладка. */
+  onRelatedAuxClick(ev) {
+    if (ev.button !== 1) return;
+    const p = this._relPostFromEvent(ev);
+    if (!p) return;
+    ev.preventDefault();
+    this.openInNewTab(this.postUrl(this.state.query, p.id));
+  },
+
+  /**
+   * Enter по миниатюре «Похожие по тегам» (role=button) — как клик;
+   * Ctrl/Cmd+Enter — пост в новой вкладке. Space не перехватываем: он
+   * во вьювере управляет слайдшоу.
+   */
+  onRelatedKeydown(ev) {
+    if (ev.key !== 'Enter') return;
+    const p = this._relPostFromEvent(ev);
+    if (!p) return;
+    ev.preventDefault();
+    if (this.isOpenInNewTabClick(ev)) {
+      this.openInNewTab(this.postUrl(this.state.query, p.id));
+      return;
+    }
+    this.openRelatedChain(p, this._relPosts);
   },
 
   // showSimilar — визуально похожие скачанные посты (pHash).
