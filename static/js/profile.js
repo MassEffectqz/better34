@@ -364,7 +364,15 @@ App._buildThumbTile = function (post, i) {
     }, { once: false });
     tryNext();
   }
-  tile.addEventListener('click', () => this.openPostFromProfile(post));
+  tile.addEventListener('click', (e) => {
+    // Ctrl/Cmd+ЛКМ — как у ссылки: пост открывается в новой вкладке.
+    if (this.isOpenInNewTabClick(e)) {
+      e.preventDefault();
+      this.openInNewTab(this.postUrl(this.state.query, post.id));
+      return;
+    }
+    this.openPostFromProfile(post);
+  });
   return tile;
 };
 

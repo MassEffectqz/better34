@@ -123,18 +123,24 @@ export const App = {
     await this.loadProfile();
     this.loadProfileMeta();
     this._loadTagCounts();
-    const path = location.pathname + location.search;
-    let m = path.match(/^\/search\/(.+?)(?:\/post\/(\d+))?$/);
-    let restorePostId = null;
-    if (m) {
-      this.state.query = decodeURIComponent(m[1]);
-      this.els.searchInput.value = this.state.query;
-      restorePostId = m[2] ? parseInt(m[2]) : null;
-    } else {
-      m = path.match(/^\/post\/(\d+)$/);
-      if (m) restorePostId = parseInt(m[1]);
+    // URL — источник истины: /search/<теги>[/post/<id>] и /post/<id>.
+    // _lastURL заполняем сразу: иначе первый pushState (открытие вьювера или
+    // поиск) добавит дублирующую запись истории и «назад» перестанет
+    // закрывать модалку-вьювер (нужно нажимать его несколько раз).
+    this._lastURL = location.pathname + location.search;
+    const target = this.parseLocation(this._lastURL);
+    if (target.matched) {
+      this.state.query = target.query;
+      this.els.searchInput.value = target.query;
     }
-    this.loadPosts(true, restorePostId);
+    // Глубокая ссылка: запрошенный пост может не попасть в первую страницу
+    // выдачи (старый пост, лимит источника) — openViewerByPostId достроит его
+    // точечным запросом и откроет вьювер.
+    this.loadPosts(true).then(() => {
+      if (target.matched && target.postId != null && !this.state.viewerOpen) {
+        go(this.openViewerByPostId(target.postId));
+      }
+    }).catch(() => {});
     window.addEventListener('unhandledrejection', (e) => {
       console.error('Unhandled rejection:', e.reason);
       if (typeof App !== 'undefined' && App.showToast) {
@@ -143,47 +149,46 @@ export const App = {
     });
   },
 
-  onPopState(ev) {
+  onPopState() {
+    go(this._applyLocationState());
+  },
+
+  /**
+   * Приводит ленту и модалку-вьювер в соответствие с текущим URL.
+   * Общий путь для «назад/вперёд» (popstate), возврата из bfcache (pageshow)
+   * и ручного вызова: URL со /post/<id> открывает пост, URL без него —
+   * закрывает вьювер, смена <теги> — перезагружает ленту.
+   */
+  async _applyLocationState() {
     const path = location.pathname + location.search;
     this._lastURL = path;
-    if (path === '/' || path === '') {
-      if (this.state.viewerOpen) { this.closeViewer(); return; }
-      if (this.state.query) {
-        this.state.query = '';
-        this.els.searchInput.value = '';
-        this.loadPosts(true);
-        return;
-      }
+    const target = this.parseLocation(path);
+    if (!target.matched) return;
+    if (target.query !== this.state.query || this.state.posts.length === 0) {
+      this.state.query = target.query;
+      if (this.els.searchInput) this.els.searchInput.value = target.query;
+      await this.loadPosts(true);
+      if (target.postId != null) await this.openViewerByPostId(target.postId);
+      else if (this.state.viewerOpen) this.closeViewer();
       return;
     }
-    let m = path.match(/^\/search\/(.+?)(?:\/post\/(\d+))?$/);
-    let q = '', postId = null, matched = false;
+    if (target.postId != null) await this.openViewerByPostId(target.postId);
+    else if (this.state.viewerOpen) this.closeViewer();
+  },
+
+  /** Разбор пути приложения: /search/<query>[/post/<id>], /post/<id>, /. */
+  parseLocation(path) {
+    const p = path || '';
+    if (p === '/' || p === '') return { query: '', postId: null, matched: true };
+    let m = p.match(/^\/search\/(.+?)(?:\/post\/(\d+))?$/);
     if (m) {
-      q = decodeURIComponent(m[1]);
-      if (m[2]) postId = parseInt(m[2]);
-      matched = true;
-    } else {
-      m = path.match(/^\/post\/(\d+)$/);
-      if (m) { postId = parseInt(m[1]); matched = true; }
+      let query = m[1];
+      try { query = decodeURIComponent(query); } catch { /* битый %-эскейп — оставляем как есть */ }
+      return { query, postId: m[2] ? parseInt(m[2], 10) : null, matched: true };
     }
-    if (matched) {
-      if (q !== this.state.query || this.state.posts.length === 0) {
-        this.state.query = q;
-        this.els.searchInput.value = q;
-        this.loadPosts(true).then(() => {
-          if (postId != null) {
-            const idx = this.state.posts.findIndex(p => p.id === postId);
-            if (idx >= 0) this.openViewer(idx);
-          }
-        }).catch(() => {});
-      } else if (postId != null) {
-        const idx = this.state.posts.findIndex(p => p.id === postId);
-        if (idx >= 0) this.openViewer(idx);
-        else if (this.state.viewerOpen) this.closeViewer();
-      } else if (this.state.viewerOpen) {
-        this.closeViewer();
-      }
-    }
+    m = p.match(/^\/post\/(\d+)$/);
+    if (m) return { query: '', postId: parseInt(m[1], 10), matched: true };
+    return { query: '', postId: null, matched: false };
   },
 
   bindEvents() {
@@ -478,7 +483,11 @@ export const App = {
     e.profileNickname.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); this.saveProfileMeta(); e.profileNickname.blur(); } });
     document.addEventListener('keydown', (ev) => this.onKeydown(ev));
     document.addEventListener('keyup', (ev) => this.onKeyup(ev));
-    window.addEventListener('popstate', (ev) => this.onPopState(ev));
+    window.addEventListener('popstate', () => this.onPopState());
+    // bfcache: возврат «назад» на страницу из кэша не вызывает popstate —
+    // синхронизируем ленту/вьювер с URL сами, иначе открытая модалка не
+    // восстановится, а закрытая будет висеть поверх «назад»-навигации.
+    window.addEventListener('pageshow', (ev) => { if (ev.persisted) this.onPopState(); });
     // Оффлайн-очередь (задача 1): когда сеть вернулась — доставляем отложенные мутации.
     const updateOfflineIndicator = () => {
       const header = document.getElementById('header');
@@ -768,12 +777,86 @@ export const App = {
     }
   },
 
-  pushState(query, postId) {
+  /** Канонический URL поста (совместим с parseLocation). */
+  postUrl(query, postId) {
     let url = query ? `/search/${encodeURIComponent(query)}` : '/';
     if (postId != null) url = url === '/' ? `/post/${postId}` : `${url}/post/${postId}`;
+    return url;
+  },
+
+  pushState(query, postId) {
+    const url = this.postUrl(query, postId);
     if (url === this._lastURL) return;
     this._lastURL = url;
-    history.pushState({ query, postId }, '', url);
+    history.pushState({ query, postId: postId == null ? null : postId }, '', url);
+  },
+
+  /** Обновляет URL без новой записи истории (листание постов во вьювере). */
+  replaceState(query, postId) {
+    const url = this.postUrl(query, postId);
+    this._lastURL = url;
+    history.replaceState({ query, postId: postId == null ? null : postId }, '', url);
+  },
+
+  /**
+   * Закрытие модалки-вьювера. Если текущая запись истории создана нами для
+   * открытого поста — уходим назад (как «назад» в браузере), иначе дописываем
+   * URL запроса. Так «назад» и «вперёд» симметрично закрывают/открывают
+   * модалку, а дублирующих записей одного URL в истории не появляется.
+   */
+  _closeModalHistory() {
+    const st = history.state;
+    if (st && st.postId != null) { history.back(); return; }
+    this.pushState(this.state.query, null);
+  },
+
+  /** Ctrl/Cmd+ЛКМ — «открыть в новой вкладке», как у обычной ссылки. */
+  isOpenInNewTabClick(e) {
+    return !!(e && (e.ctrlKey || e.metaKey));
+  },
+
+  /** Открыть URL в новой вкладке (через временную <a target="_blank">). */
+  openInNewTab(url) {
+    if (!url) return;
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch {
+      try { window.open(url, '_blank', 'noopener'); } catch { /* popup заблокирован */ }
+    }
+  },
+
+  /** Посты по id: из локальной БД, а недостающие — точечно с источника. */
+  async _fetchPostsByIds(ids) {
+    if (!ids || !ids.length) return [];
+    try {
+      const d = await API.get(`/posts-by-ids?ids=${ids.join(',')}`);
+      return (d && d.posts) || [];
+    } catch { return []; }
+  },
+
+  /**
+   * Открывает пост по id во вьювере. Если поста нет в текущей выдаче (глубокая
+   * ссылка, «назад» на пост, выпавший из ленты, пост из чужого списка) — он
+   * достраивается запросом /posts-by-ids и добавляется в конец списка.
+   */
+  async openViewerByPostId(postId) {
+    if (postId == null) return false;
+    let idx = this.state.posts.findIndex(p => p.id === postId);
+    if (idx < 0) {
+      const posts = await this._fetchPostsByIds([postId]);
+      const post = posts.find(p => p && p.id === postId);
+      if (!post) { this.showToast(`Пост #${postId} недоступен`, 'error'); return false; }
+      idx = this.state.posts.push({ ...post, _index: this.state.posts.length }) - 1;
+    }
+    this.openViewer(idx);
+    return true;
   },
 
   async loadProfile() {

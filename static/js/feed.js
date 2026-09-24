@@ -764,8 +764,20 @@ App.createPostCard = function (post) {
   card.appendChild(overlay);
 
   let lastTap = 0, lastTapX = 0, lastTapY = 0, tapTimer = null;
+  // Ctrl/Cmd+ЛКМ (и средняя кнопка мыши) работают как у обычной ссылки: пост
+  // открывается в новой вкладке — там его подхватит вьювер по /post/<id>.
+  const openInNewTab = (e) => {
+    if (/** @type {HTMLElement} */ (e.target).closest('.card-checkbox')) return;
+    e.preventDefault();
+    this.openInNewTab(this.postUrl(this.state.query, post.id));
+  };
+  card.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    openInNewTab(e);
+  });
   card.addEventListener('click', (e) => {
     if (/** @type {HTMLElement} */ (e.target).closest('.card-checkbox')) return;
+    if (this.isOpenInNewTabClick(e)) { openInNewTab(e); return; }
     const now = Date.now();
     if (this._isTouch()) {
       if (now - lastTap < 300 && Math.abs(e.clientX - lastTapX) < 40 && Math.abs(e.clientY - lastTapY) < 40) {

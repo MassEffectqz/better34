@@ -39,6 +39,7 @@ App.openViewer = function (index) {
   document.body.style.overflow = 'hidden';
   this.renderViewer();
   if (!this._zoomControlsBound) { this._zoomControlsBound = true; this._bindZoomControls(); }
+  if (!this._viewerNewTabBound) { this._viewerNewTabBound = true; this._bindViewerNewTab(); }
   const post = this.state.posts[index];
   // Видео всегда открываем в полноэкранном режиме просмотра.
   if (post && post.file_type === 'video' && !this._viewerIsFullscreen()) {
@@ -55,7 +56,7 @@ App.openViewer = function (index) {
   this.initViewerTouch();
 };
 
-App.closeViewer = function () {
+App.closeViewer = function (opts) {
   this.stopSlideshow();
   this._resetFullscreen();
   // Отменяем в-полёте запросы похожих/счётчиков тегов — вьюер закрыт.
@@ -121,7 +122,9 @@ App.closeViewer = function () {
     this.scrollToFocused();
   }
   this.state._savedScrollTop = null;
-  this.pushState(this.state.query, null);
+  // keepUrl: вызывающий сразу сам заменит URL (переход по тегу, на главную) —
+  // историю не трогаем, иначе отложенный history.back() отменит новый pushState.
+  if (!(opts && opts.keepUrl)) this._closeModalHistory();
   if (this._viewerTagChanged) {
     this._viewerTagChanged = false;
     this.loadPosts(true, null, true);
@@ -249,7 +252,7 @@ App._bindViewerTagDelegation = function () {
     const tag = tagOf(span);
     const current = this.state.query;
     const newQ = current ? `${current} +${tag}` : `+${tag}`;
-    this.closeViewer();
+    this.closeViewer({ keepUrl: true });
     this.els.searchInput.value = newQ;
     this.search(newQ);
   };
@@ -428,7 +431,7 @@ App._openPostById = function (id) {
   const idx = this.state.posts.findIndex(p => p.id === id);
   if (idx >= 0) { this._gotoViewerIndex(idx, 0); return; }
   const q = `id:${id}`;
-  this.closeViewer();
+  this.closeViewer({ keepUrl: true });
   this.els.searchInput.value = q;
   this.search(q);
 };
@@ -732,7 +735,11 @@ App.navigateViewer = function (dir) {
 App._gotoViewerIndex = function (ni, dir) {
   this._stashCurrentVideoTime();
   this.state.viewerIndex = ni;
-  this._markViewed(this.state.posts[ni] ? this.state.posts[ni].id : null);
+  const post = this.state.posts[ni] || null;
+  this._markViewed(post ? post.id : null);
+  // URL следует за листанием: перезагрузка страницы или «поделиться ссылкой»
+  // откроют именно текущий пост (без новой записи в истории).
+  this.replaceState(this.state.query, post ? post.id : null);
   this.renderViewer();
   this.scheduleRelated(this.state.posts[ni]);
   if (dir > 0 && ni + 1 < this.state.posts.length) this.preloadNeighbor(this.state.posts[ni + 1]);
@@ -1041,6 +1048,9 @@ App.initViewerTouch = function () {
 
   const onDown = (e) => {
     if (isControl(e.target)) return;
+    // Ctrl/Cmd+ЛКМ — «открыть файл в новой вкладке»: жесты не запускаем,
+    // иначе клик превратится в тап (скрытие HUD) или в панорамирование.
+    if (this.isOpenInNewTabClick(e)) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     clearTimeout(tapTimer);
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1679,4 +1689,25 @@ App._bindZoomControls = function () {
   bind('zoomIn', () => { this._ensureZoomState(); if (!this._zoomActive) { this._zoomActive = true; } this.zoomBy(1.25); });
   bind('zoomOut', () => { if (this._zoomActive) this.zoomBy(1 / 1.25); });
   bind('zoomFit', () => { if (this._zoomActive) this.toggleViewerZoom(); else this.applyZoomTransform(); });
+};
+
+// Ctrl/Cmd+ЛКМ (и средняя кнопка) по медиа во вьювере — открыть файл в новой
+// вкладке, как обычную ссылку. Обычный клик не перехватываем: он управляет
+// HUD/зумом, а Ctrl+ЛКМ в браузере всегда означает «открыть в новой вкладке».
+App._bindViewerNewTab = function () {
+  const mediaOf = (e) => (e.target && e.target.closest ? e.target.closest('img, video') : null);
+  const openFile = (e) => {
+    const post = this.state.posts[this.state.viewerIndex];
+    if (!post) return;
+    e.preventDefault();
+    this.openInNewTab(this._viewerMediaPlan(post).url);
+  };
+  this.els.viewerContent.addEventListener('click', (e) => {
+    if (!this.isOpenInNewTabClick(e) || !mediaOf(e)) return;
+    openFile(e);
+  });
+  this.els.viewerContent.addEventListener('auxclick', (e) => {
+    if (e.button !== 1 || !mediaOf(e)) return;
+    openFile(e);
+  });
 };

@@ -441,7 +441,7 @@ App.goHome = function () {
   this.state.isLocal = false;
   this.state.focusedIndex = -1; // U6: сброс выделения карточки
   if (this.els.btnLocal) this.els.btnLocal.innerHTML = icon('house', 18);
-  if (this.state.viewerOpen) { this.closeViewer(); }
+  if (this.state.viewerOpen) { this.closeViewer({ keepUrl: true }); }
   if (this.els.searchInput.value) {
     this.els.searchInput.value = '';
     this.state.query = '';
