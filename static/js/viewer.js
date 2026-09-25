@@ -337,8 +337,28 @@ App._renderViewerTags = function () {
   }
 };
 
+// _bindRelChipOpen — обработчики chip «родитель/дети»: Ctrl/Cmd+ЛКМ и средняя
+// кнопка мыши работают как у обычной ссылки — пост открывается в новой вкладке
+// (там его подхватит вьювер по /post/<id>); обычный клик — прежний переход.
+App._bindRelChipOpen = function (chip, id) {
+  const openNewTab = (ev) => {
+    ev.preventDefault();
+    this.openInNewTab(this.postUrl(this.state.query, id));
+  };
+  chip.addEventListener('click', (ev) => {
+    if (this.isOpenInNewTabClick(ev)) { openNewTab(ev); return; }
+    this._openPostById(id);
+  });
+  // auxclick: средняя кнопка мыши (button === 1); ЛКМ (button === 0) игнорируем.
+  chip.addEventListener('auxclick', (ev) => {
+    if (ev.button !== 1) return;
+    openNewTab(ev);
+  });
+};
+
 // _renderViewerRelations — chip-ряд «родитель/дети» для скачанных постов.
-// Клик по chip открывает пост (в ленте, если он там есть, иначе поиском id:N).
+// Клик по chip открывает пост (в ленте, если он там есть, иначе поиском id:N),
+// Ctrl/Cmd+ЛКМ или средняя кнопка — в новой вкладке (_bindRelChipOpen).
 // Кнопка «↑ привязать» задаёт родителя текущему посту (danbooru-style связки).
 App._renderViewerRelations = function (post) {
   const host = this.els.relations;
@@ -377,7 +397,7 @@ App._renderViewerRelations = function (post) {
       chip.className = 'rel-chip rel-parent';
       chip.title = t('viewer.relParent');
       chip.textContent = `↑ #${parent.id}${parent.file_type ? ' · ' + parent.file_type : ''}`;
-      chip.addEventListener('click', () => this._openPostById(parent.id));
+      this._bindRelChipOpen(chip, parent.id);
       host.appendChild(chip);
     }
     children.forEach(ch => {
@@ -386,7 +406,7 @@ App._renderViewerRelations = function (post) {
       chip.className = 'rel-chip rel-child';
       chip.title = t('viewer.relChild');
       chip.textContent = `↓ #${ch.id}${ch.file_type ? ' · ' + ch.file_type : ''}`;
-      chip.addEventListener('click', () => this._openPostById(ch.id));
+      this._bindRelChipOpen(chip, ch.id);
       host.appendChild(chip);
     });
     if (!parent && !children.length) {
