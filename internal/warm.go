@@ -33,6 +33,11 @@ var (
 	// mediaWarmInFlight — отдельный лимит на долгие видео-прогревы (оба
 	// ограничителя вместе не дают одному видео занять все слоты навсегда).
 	mediaWarmInFlight atomic.Int32
+	// mediaWarmSpawned — живые горутины `go warmMediaCacheFile`. Увеличивается
+	// ДО запуска (в месте спавна), чтобы тесты могли дождаться их полного
+	// завершения и только потом подменять каталоги кэшей (иначе — data race
+	// с чтением mediaCacheDir/mediaDiskOnce в фоновой горутине).
+	mediaWarmSpawned atomic.Int32
 )
 
 const (

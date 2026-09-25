@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,6 +31,9 @@ func withTempMediaCache(t *testing.T) {
 	mediaCacheEvictInterval = 0 // в тестах эвиция без троттлинга
 	lastMediaCacheEvict.Store(0)
 	t.Cleanup(func() {
+		if !waitWarmIdle(30 * time.Second) {
+			t.Logf("waitWarmIdle: фоновые прогревы не завершились за отведённое время")
+		}
 		mediaCacheDir = oldDir
 		mediaDiskOnce = sync.Once{}
 		mediaCacheEvictInterval = oldInterval

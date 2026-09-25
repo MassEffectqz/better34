@@ -17,6 +17,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// waitWarmIdle ждёт (с таймаутом) завершения всех фоновых горутин прогрева.
+// Они читают proxyCacheDir/mediaCacheDir и их sync.Once, поэтому очистка
+// тестовых каталогов может выполняться только после них. false — таймаут.
+func waitWarmIdle(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for warmPending.Load() != 0 || mediaWarmSpawned.Load() != 0 {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return true
+}
+
 // warmTestSetup — httptest-CDN + Handler со стаб-провайдером и временными
 // каталогами кэшей (как в обычных тестах прокси).
 func warmTestSetup(t *testing.T, handler http.HandlerFunc) (*Handler, *httptest.Server, *atomic.Int64) {
@@ -28,6 +42,9 @@ func warmTestSetup(t *testing.T, handler http.HandlerFunc) (*Handler, *httptest.
 	proxyCacheDir = filepath.Join(t.TempDir(), "proxy-cache")
 	proxyDiskOnce = sync.Once{}
 	t.Cleanup(func() {
+		if !waitWarmIdle(30 * time.Second) {
+			t.Logf("waitWarmIdle: фоновые прогревы не завершились за отведённое время")
+		}
 		proxyCacheDir = oldProxyDir
 		proxyDiskOnce = sync.Once{}
 	})

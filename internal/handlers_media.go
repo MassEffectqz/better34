@@ -308,7 +308,11 @@ func (h *Handler) ProxyRemote(c *gin.Context) {
 	// фоном, не завися от текущего ответа клиенту, — к следующему
 	// просмотру/перемотке он уже лежит на диске.
 	if !noRange && isVideoURL(u) && mediaCacheGet(u.String()) == "" {
-		go warmMediaCacheFile(h, u)
+		mediaWarmSpawned.Add(1)
+		go func() {
+			defer mediaWarmSpawned.Add(-1)
+			warmMediaCacheFile(h, u)
+		}()
 	}
 
 	// Большие видео без Range качаем сегментами: CDN семейства часто

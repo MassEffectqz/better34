@@ -9,9 +9,10 @@ import (
 	"time"
 )
 
-// G3: staticVersion() пишет indexHTML/indexError под versionMu, а loadIndex()
-// читает их БЕЗ блокировки. При изменении статики (этап разработки, деплой
-// на лету) — гонка между пересчётом версии и отдачей страницы.
+// G3: staticVersion() возвращал versionVal уже ПОСЛЕ versionMu.Unlock(), а
+// walkStaticVersion и сам тест пишут его под блокировкой. При изменении
+// статики (этап разработки, деплой на лету) — гонка между пересчётом версии
+// и отдачей страницы. (indexHTML/indexError читаются/пишутся под versionMu.)
 // Воспроизведение: go test -race . -run TestAdversarialIndexHTMLRace -v
 func TestAdversarialIndexHTMLRace(t *testing.T) {
 	versionMu.Lock()
@@ -49,7 +50,7 @@ func TestAdversarialIndexHTMLRace(t *testing.T) {
 				return
 			default:
 			}
-			_, _ = loadIndex() // читает indexHTML без versionMu
+			_, _ = loadIndex() // снимок indexHTML под versionMu
 		}
 	}()
 	time.Sleep(500 * time.Millisecond)

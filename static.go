@@ -86,8 +86,9 @@ func staticVersion() string {
 	}
 	versionMu.Lock()
 	if versionVal != "" && time.Since(lastWalk) < staticVersionTTL() {
+		v := versionVal
 		versionMu.Unlock()
-		return versionVal
+		return v
 	}
 	if versionVal != "" {
 		// Stale-while-revalidate: сразу отдаём прошлую версию, пересчёт — в фон.
@@ -95,8 +96,9 @@ func staticVersion() string {
 			refreshing = true
 			go walkStaticVersion(false)
 		}
+		v := versionVal
 		versionMu.Unlock()
-		return versionVal
+		return v
 	}
 	versionMu.Unlock()
 	// Первый запрос после старта: считаем синхронно.
@@ -120,17 +122,21 @@ func loadIndex() ([]byte, error) {
 }
 
 func serveIndex(c *gin.Context) {
-	html, err := loadIndex()
+	staticVersion() // первый вызов/запуск фонового пересчёта до снимка
+	// Единый снимок под одной блокировкой: иначе versionVal/distBundleOK
+	// читались бы параллельно с записями в walkStaticVersion (data race).
+	versionMu.Lock()
+	v, html, bundleOK, err := versionVal, indexHTML, distBundleOK, indexError
+	versionMu.Unlock()
 	if err != nil {
 		c.String(http.StatusInternalServerError, "index.html missing")
 		return
 	}
-	v := staticVersion()
 	out := string(html)
 	// Без BRIEFLY_DEBUG отдаём собранный esbuild-бандл вместо графа из
 	// ~16 ES-модулей: один запрос вместо каскада 304-ревалидаций (на
 	// мобильном интернете/слабом Wi-Fi это секунды до старта приложения).
-	if distBundleOK && !debugEnabled() {
+	if bundleOK && !debugEnabled() {
 		out = strings.Replace(out,
 			`<script type="module" src="/static/js/app.js?v=__VERSION__"></script>`,
 			`<script type="module" src="/static/js/dist/app.js?v=__VERSION__"></script>`, 1)
