@@ -2,18 +2,20 @@
   "name": "better34-frontend",
   "private": true,
   "type": "module",
-  "description": "Инструменты фронтенда better34: линтер, типо-проверка, тесты, опциональный бандл",
+  "description": "Инструменты фронтенда better34: lint, типо-проверка, тесты, бандл и единый quality gate",
   "scripts": {
     "lint": "eslint static/js",
-    "typecheck": "tsc -p .",
+    "typecheck": "tsc -p . && tsc -p tsconfig.tests.json && tsc -p tsconfig.typed-tests.json",
     "test": "node --test \"static/js/tests/*.test.js\"",
     "build": "esbuild static/js/app.js --bundle --minify --outfile=static/js/dist/app.js --format=esm && node scripts/precompress.mjs",
-    "check": "npm run lint && npm run typecheck && npm test",
-    "check:go": "go build ./... && go vet ./... && go test ./...",
-    "check:all": "npm run check && npm run check:go"
+    "check:go": "node scripts/quality-gate.mjs",
+    "check:race": "go test -race . ./internal/...",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run check:go",
+    "check:ci": "npm run check && npm run check:race"
   },
   "devDependencies": {
     "@eslint/js": "^9",
+    "@types/node": "^26.6.2",
     "esbuild": "^0.25",
     "eslint": "^9",
     "typescript": "^5"

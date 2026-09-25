@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
@@ -560,6 +561,9 @@ func (db *PostDB) tagFreqFor(tags []string) map[string]int {
 			freq[tag] = n
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return freq
+	}
 	return freq
 }
 
@@ -634,6 +638,16 @@ func (db *PostDB) SetDownloaded(id int, filePath, thumbPath string) {
 	_ = db.withTx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`UPDATE posts SET downloaded=1, file_path=?, thumb_path=? WHERE id=?`,
 			filePath, thumbPath, id)
+		return err
+	})
+}
+
+// SetThumbPathOnly запоминает путь к миниатюре, не трогая downloaded/file_path.
+// Нужно для дозагрузки превью по требованию: пост не скачан, но миниатюра
+// теперь лежит локально и повторно качать её не нужно.
+func (db *PostDB) SetThumbPathOnly(id int, thumbPath string) {
+	_ = db.withTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE posts SET thumb_path=? WHERE id=?`, thumbPath, id)
 		return err
 	})
 }
@@ -1078,25 +1092,114 @@ func (db *PostDB) ResolveTag(alias string) string {
 
 // TagSuggestion объявлена в rule34.go.
 
+// likePattern — LIKE-шаблон «тег начинается с префикса» (tier 0–1).
 func likePattern(prefix string) string {
-	p := strings.ToLower(prefix)
-	p = strings.ReplaceAll(p, `\`, `\\`)
-	p = strings.ReplaceAll(p, `%`, `\%`)
-	p = strings.ReplaceAll(p, `_`, `\_`)
+	p := escapeLikePrefix(prefix)
+	if p == "" {
+		return "%"
+	}
 	return p + "%"
 }
 
+// localBoundaryMinPrefix — с какого префикса разрешено искать по границе
+// слова. Короткие префиксы дают тонну мусора (всё подряд на «_uma»), а
+// реальные совпадения и так находятся обычным префиксным поиском.
+const localBoundaryMinPrefix = 4
+
+// likePatternBoundary — LIKE-шаблон «префикс стоит сразу после границы
+// слова _» (tier 2): solo_breasts по «breast». Нужен отдельно от
+// likePattern, потому что один LIKE не может выразить «начало ИЛИ после _».
+func likePatternBoundary(prefix string) string {
+	p := escapeLikePrefix(prefix)
+	if p == "" {
+		return "%"
+	}
+	return "%\\_" + p + "%"
+}
+
+// escapeLikePrefix приводит префикс к виду для LIKE: нижний регистр и
+// экранирование спецсимволов. Пустая строка — совпадение со всем.
+func escapeLikePrefix(prefix string) string {
+	p := strings.ToLower(strings.TrimSpace(prefix))
+	p = strings.ReplaceAll(p, `\`, `\\`)
+	p = strings.ReplaceAll(p, `%`, `\%`)
+	return strings.ReplaceAll(p, `_`, `\_`)
+}
+
 func (db *PostDB) SuggestTagsLocal(prefix string, limit int) []TagSuggestion {
+	return db.SuggestTagsLocalFor(prefix, limit, "")
+}
+
+// SuggestTagsLocalFor — префиксные подсказки по локальной базе, ограниченные
+// источником (пустая строка = по всем). Теги разных боеру не взаимозаменяемы,
+// поэтому подсказка, скачанная с чужого сайта, в выдаче активного источника —
+// как раз «неточная» подсказка.
+//
+// Сначала выполняется быстрый запрос по префиксу (LIKE 'x%' берёт индекс по
+// tags(tag)). Запрос на границу слова (LIKE '%\_x%') индекс использовать не
+// может и сканирует таблицу целиком, поэтому он выполняется только если
+// префиксных тегов не хватило — на каждый ввод символа полный скан лишний.
+//
+// Граница слова подключается только для префиксов от localBoundaryMinPrefix
+// символов. На коротких («uma») она давала мусор: doma_umaru и
+// himouto!_umaru-chan не начинаются с «uma», но содержат «_uma», и
+// пользователь получал в подсказках то, что не набирал.
+func (db *PostDB) SuggestTagsLocalFor(prefix string, limit int, source string) []TagSuggestion {
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := db.read.Query(`
+	pl := strings.ToLower(strings.TrimSpace(prefix))
+
+	out := db.suggestLocalQuery(likePattern(prefix), limit, source)
+	if len(out) < limit && utf8.RuneCountInString(pl) >= localBoundaryMinPrefix {
+		seen := make(map[string]bool, len(out))
+		for _, s := range out {
+			seen[strings.ToLower(s.Value)] = true
+		}
+		for _, s := range db.suggestLocalQuery(likePatternBoundary(prefix), limit, source) {
+			if !seen[strings.ToLower(s.Value)] {
+				out = append(out, s)
+			}
+		}
+	}
+
+	// Ранжирование по релевантности делается в Go уже после выборки: сначала
+	// префикс, потом граница слова, внутри — по частоте. Иначе SQL отсортирует
+	// строго по частоте и точный префиксный тег уедет вниз.
+	sortSuggestionsByRelevance(out, pl)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// suggestLocalQuery — один проход по tags с заданным LIKE-шаблоном.
+func (db *PostDB) suggestLocalQuery(pattern string, limit int, source string) []TagSuggestion {
+	query := `
 		SELECT t.tag, COUNT(*) AS c
 		FROM tags t JOIN posts p ON p.id = t.post_id AND p.downloaded = 1
-		WHERE t.tag LIKE ? ESCAPE '\'
+		WHERE t.tag LIKE ? ESCAPE '\'`
+	args := []any{pattern}
+	if source != "" {
+		// Посты, скачанные до появления колонки source, пустой источник не
+		// имеют — прячем их только вместе с чужими, иначе старые теги просто
+		// исчезли бы из подсказок.
+		query += ` AND (p.source = ? OR p.source = '')`
+		args = append(args, source)
+	}
+	// Запас сверх limit: ранжирование по релевантности идёт после выборки,
+	// иначе LIMIT срезал бы точные префиксные теги в пользу частых прочих.
+	fetchLimit := limit * 3
+	if fetchLimit < 30 {
+		fetchLimit = 30
+	}
+	query += `
 		GROUP BY t.tag
 		ORDER BY c DESC, t.tag
-		LIMIT ?`, likePattern(prefix), limit)
+		LIMIT ?`
+	args = append(args, fetchLimit)
+
+	rows, err := db.read.Query(query, args...)
 	if err != nil {
 		log.Printf("[db] suggest: %v", err)
 		return nil

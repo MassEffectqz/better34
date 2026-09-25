@@ -4,6 +4,32 @@ import { API } from './api.js';
 App._suggestSeq = 0;
 App._profileSuggestSeq = 0;
 App._nlSearching = false;
+App._suggTailStart = -1;
+App._suggTailEnd = -1;
+App._suggPrefix = '';
+
+// Разделители тегов в строке поиска: пробел и «|» (ленты-чередования).
+const SUGG_BREAK = ch => ch === ' ' || ch === '\t' || ch === '\n' || ch === '|';
+// Служебные префиксы booru-синтаксиса: -tag (исключить), +tag (обязательно),
+// ~tag (или). Это часть ввода, а не имени тега, — в запрос автодополнения
+// такие символы попадать не должны, иначе подсказки по -tag пусты.
+const SUGG_OP_RE = /^[-+~^]+/;
+
+// Активное слово считаем ПО КАРЕТКЕ, а не по последнему слову строки.
+// Иначе при правке тега в середине запроса подсказки приходят для чужого
+// слова, а подстановка съедает весь хвост после каретки.
+App.suggestWord = function (inp) {
+  const v = inp.value;
+  const pos = typeof inp.selectionStart === 'number' ? inp.selectionStart : v.length;
+  let start = Math.max(0, Math.min(pos, v.length));
+  let end = start;
+  while (start > 0 && !SUGG_BREAK(v[start - 1])) start--;
+  while (end < v.length && !SUGG_BREAK(v[end])) end++;
+  const raw = v.slice(start, end);
+  const m = raw.match(SUGG_OP_RE);
+  const prefix = m ? m[0] : '';
+  return { start, end, raw, prefix, word: raw.slice(prefix.length) };
+};
 
 App.onSearchInput = function () {
   const q = this.els.searchInput.value;
@@ -13,13 +39,17 @@ App.onSearchInput = function () {
   }
   this.state.query = q;
   this.els.searchClear.classList.toggle('visible', q.length > 0);
-  // Подсказки — по последнему слову сегмента (после пробела или |).
-  const seg = q.split('|').pop();
-  const tailMatch = seg.match(/(\S+)$/);
-  const tail = tailMatch ? tailMatch[1] : '';
-  this._suggTailStart = tail ? q.length - tail.length : -1;
+  // Подсказки — по слову под кареткой (границы запоминаем для подстановки).
+  const w = this.suggestWord(this.els.searchInput);
+  this._suggTailStart = w.start;
+  this._suggTailEnd = w.end;
+  this._suggPrefix = w.prefix;
+  const tail = w.word;
+  // NL-запрос («?котики в шляпах») — фраза для модели, а не тег: теги по ней
+  // предлагать бессмысленно, поэтому автодополнение не включаем.
+  const isNL = q.trimStart().startsWith('?');
   clearTimeout(this._suggestTimer);
-  if (tail.length >= 2) {
+  if (tail.length >= 2 && !isNL) {
     this.hideHistory();
     this._suggestTimer = setTimeout(() => this.fetchSuggestions(tail), 200);
   } else {
@@ -30,7 +60,6 @@ App.onSearchInput = function () {
   clearTimeout(this._searchTimer);
   const nextQuery = q.trim();
   // AI-запросы (?...) ждут 1.2с, обычные — 300мс.
-  const isNL = nextQuery.startsWith('?');
   const delay = isNL ? 1200 : 300;
   // Повторный поиск того же запроса не запускаем (набрали и стёрли символ).
   this._searchTimer = setTimeout(() => { if (nextQuery !== this._lastSearchQuery) this.search(nextQuery); }, delay);
@@ -38,38 +67,69 @@ App.onSearchInput = function () {
   this.renderQueryChips(q);
 };
 
-// Подстановка выбранного тега на место подсказанного хвоста слова.
+// Подстановка выбранного тега вместо слова под кареткой. Заменяем ровно
+// диапазон [start,end), а не «до конца строки»: иначе выбор подсказки в
+// середине запроса стирал последующие теги. Префикс (-, ~, …) сохраняем.
 App.applySuggestion = function (value) {
   const inp = this.els.searchInput;
-  const pos = this._suggTailStart >= 0 ? this._suggTailStart : inp.value.length;
-  inp.value = (inp.value.slice(0, pos) + value + ' ').replace(/\s{2,}/g, ' ');
+  const v = inp.value;
+  let start = this._suggTailStart;
+  let end = this._suggTailEnd;
+  if (!(start >= 0 && end > start)) { start = v.length; end = v.length; }
+  const raw = v.slice(start, end);
+  const prefix = (raw.match(SUGG_OP_RE) || [''])[0];
+  const after = v.slice(end);
+  const next = (v.slice(0, start) + prefix + value + (after ? ' ' + after : ' '))
+    .replace(/\s{2,}/g, ' ');
+  inp.value = next;
+  // Каретка — за подставленным тегом, чтобы продолжить ввод с него.
+  if (typeof inp.setSelectionRange === 'function') {
+    const pos = (inp.value.indexOf(value, start) + value.length) || next.length;
+    try { inp.setSelectionRange(pos, pos); } catch { /* некоторые типы input не поддерживают */ }
+  }
   this.onSearchInput();
 };
 
+// suggestRenderDelayMs — сколько ждём удалённый источник, прежде чем
+// показать локальные подсказки. Локальная база (SQLite) отвечает почти
+// мгновенно, поэтому пауза нужна только чтобы дать догнать /suggest.
+const SUGGEST_RENDER_DELAY_MS = 120;
+
 App.fetchSuggestions = function (tail) {
   const seq = ++this._suggestSeq;
-  // Локальная база и сайт запрашиваются параллельно: локальные подсказки
-  // рендерятся сразу, удалённые подливаются по приходе (раньше запрос к
-  // сайту ждал ответа /suggest-local — двойная задержка автодополнения).
+  // Раньше список рендерился дважды: сначала по локальным счётчикам, затем
+  // по удалённым. Из-за этого подсказки на глазах переставлялись, а числа
+  // менялись (2 → 90000) — выглядело как конфликт двух разных подсказок.
   const localP = API.get(`/suggest-local?q=${encodeURIComponent(tail)}`)
     .then(d => d.tags || [])
     .catch(() => []);
-  localP.then(local => {
-    if (this._suggestSeq !== seq || !local.length) return;
-    this.renderSuggestions(local);
-  });
-  API.get(`/suggest?q=${encodeURIComponent(tail)}`).then(r => {
-    if (this._suggestSeq !== seq) return;
-    return localP.then(local => {
-      if (this._suggestSeq !== seq) return;
-      this.renderSuggestions(this.mergeSuggestions(local, r.tags || []));
-    });
-  }).catch(() => {
+  const remoteP = API.get(`/suggest?q=${encodeURIComponent(tail)}`)
+    .then(r => r.tags || [])
+    .catch(() => null); // null = удалённый источник недоступен
+
+  // Гонка: обычно выигрывают оба источника — тогда список рендерится один
+  // раз. Если /suggest не ответил за SUGGEST_RENDER_DELAY_MS, показываем
+  // локальные подсказки, НЕ закрывая гонку: когда удалённый ответ всё же
+  // придёт, он дорисуется поверх.
+  //
+  // Раньше таймер ставил settled = true, и удалённый ответ отбрасывался
+  // навсегда. На практике популярнейший тег (umamusume по «umamu») не
+  // показывался, пока пользователь не вводил его целиком: в списке
+  // оставались только теги из локальной базы, где umamusume не значился.
+  const timer = setTimeout(() => {
     if (this._suggestSeq !== seq) return;
     localP.then(local => {
       if (this._suggestSeq !== seq || !local.length) return;
-      this.renderSuggestions(local);
+      this.renderSuggestions(this.mergeSuggestions(local, [], tail));
     });
+  }, SUGGEST_RENDER_DELAY_MS);
+
+  Promise.all([localP, remoteP]).then(([local, remote]) => {
+    if (this._suggestSeq !== seq) return;
+    clearTimeout(timer);
+    // Удалённый — источник правды по счётчикам, даже если список уже был
+    // показан по таймеру.
+    this.renderSuggestions(this.mergeSuggestions(local, remote || [], tail));
   });
 };
 
@@ -113,25 +173,89 @@ App.updateQueryMeta = function (q) {
   el.classList.add('visible');
 };
 
-App.mergeSuggestions = function (local, remote) {
-  const byValue = new Map();
-  for (const t of remote) byValue.set(t.value || t, t);
+// suggTier — релевантность тега к набранному префиксу; чем меньше, тем выше
+// в списке. Держим в паре с suggestionTier (internal/rule34.go): сервер
+// ранжирует удалённые подсказки, клиент сводит их с локальными — правила
+// должны совпадать, иначе порядок «прыгает» при подливании локальных.
+//
+// 0 — точное совпадение, 1 — префикс, 2 — совпадение на границе слова
+// после «_», 3 — вхождение в середине имени, -1 — не подходит вовсе.
+const suggTier = (value, prefix) => {
+  if (!prefix) return 0;
+  const v = String(value || '').toLowerCase();
+  if (v === prefix) return 0;
+  if (v.startsWith(prefix)) return 1;
+  const i = v.indexOf(prefix);
+  if (i > 0) return v[i - 1] === '_' ? 2 : 3;
+  return -1;
+};
+
+// Слияние локальных и удалённых подсказок + ранжирование.
+//
+// Счётчики несопоставимы: локальный — посты в твоей базе (единицы), удалённый
+// — посты на всём сайте (тысячи). Поэтому сортируем по удалённому счётчику,
+// а локальный берём только там, где удалённого нет.
+//
+// Порядок: релевантность (suggTier) → популярность → короче имя → алфавит.
+// SUGGEST_MAX — сколько подсказок показываем. Раньше список не ограничивался
+// вообще: на короткий префикс («uma») приходило 92 тега, и нужный «umamusume»
+// уезжал за пределы видимой части выпадающего списка. Плюс в списке оказывались
+// локальные совпадения по границе слова (doma_umaru, himouto!_umaru-chan), хотя
+// пользователь набирал префикс с начала.
+const SUGGEST_MAX = 12;
+
+App.mergeSuggestions = function (local, remote, prefix) {
+  const pref = (prefix || '').toLowerCase();
+  const norm = t => (t && t.value ? t.value : t || '').toString().trim();
   const out = [];
   const seen = new Set();
-  for (const t of local) {
-    const key = t.value || t;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const rem = byValue.get(key);
-    out.push(rem && rem.count ? rem : t);
-  }
-  for (const t of remote) {
-    const key = t.value || t;
-    if (seen.has(key)) continue;
-    seen.add(key);
+  const add = t => {
+    const k = norm(t).toLowerCase();
+    if (!k || seen.has(k)) return;
+    if (suggTier(k, pref) < 0) return;
+    seen.add(k);
     out.push(t);
+  };
+  // Удалённые идут первыми: по ним счётчики популярности, по локальным — нет.
+  for (const t of remote) add(t);
+  for (const t of local) add(t);
+
+  // Удалённый счётчик побеждает локальный: он отражает популярность на
+  // сайте, локальный же — сколько постов скачал лично ты. Он же используется
+  // для показа в подсказке, иначе у общего тега висел бы счётчик «1».
+  const remoteCount = new Map();
+  for (const t of remote) {
+    const k = norm(t).toLowerCase();
+    if (k && !remoteCount.has(k)) remoteCount.set(k, Number(t.count) || 0);
   }
-  return out;
+  const knownToSite = t => remoteCount.has(norm(t).toLowerCase());
+  const countOf = t => {
+    const k = norm(t).toLowerCase();
+    return remoteCount.has(k) ? remoteCount.get(k) : (Number(t.count) || 0);
+  };
+  for (const t of out) {
+    const k = norm(t).toLowerCase();
+    const rc = remoteCount.get(k);
+    if (rc) t.count = rc;
+    // Помечаем источник счётчика: локальный «4» и удалённый «4» — разные вещи.
+    t.local = rc === undefined;
+  }
+
+  // Шкалы несопоставимы: локальный счётчик — это посты в твоей базе, удалённый
+  // — посты на всём сайте. Раньше они сравнивались напрямую, и тег, который
+  // сайт не отдал (gelbooru режет выдачу до 100 записей), оказывался в списке
+  // с счётчиком «4» — 4 скачанных поста — рядом с «364» постов на сайте.
+  // Поэтому теги, известные сайту, всегда идут выше локальных-only, а внутри
+  // каждой группы сортируем по своему счётчику.
+  return out
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => suggTier(norm(a.t), pref) - suggTier(norm(b.t), pref)
+      || (knownToSite(b.t) ? 1 : 0) - (knownToSite(a.t) ? 1 : 0)
+      || countOf(b.t) - countOf(a.t)
+      || norm(a.t).length - norm(b.t).length
+      || norm(a.t).toLowerCase().localeCompare(norm(b.t).toLowerCase())
+      || a.i - b.i)
+    .map(x => x.t);
 };
 
 App.onSearchKeydown = function (e) {
@@ -200,6 +324,9 @@ App.renderSuggestions = function (tags) {
     this.els.searchInput.removeAttribute('aria-activedescendant');
     return;
   }
+  // Обрезаем до SUGGEST_MAX: на коротком префиксе сайт отдаёт десятки тегов,
+  // и список без ограничения просто не помещался в выпадающее окно.
+  tags = tags.slice(0, SUGGEST_MAX);
   el.classList.add('active');
   el.setAttribute('role', 'listbox');
   el.setAttribute('id', 'suggestions-listbox');
@@ -219,7 +346,14 @@ App.renderSuggestions = function (tags) {
     div.appendChild(span);
     if (tag.count) {
       const cnt = document.createElement('span');
-      cnt.className = 'suggestion-count'; cnt.textContent = tag.count.toLocaleString('ru-RU');
+      // local=true — счётчик из скачанной базы, а не с сайта. Подписываем
+      // явно: «4» без пояснения читалось как «4 поста на сайте», хотя это
+      // 4 скачанных поста (у umamusume на gelbooru их 213 596).
+      cnt.className = 'suggestion-count' + (tag.local ? ' local' : '');
+      cnt.textContent = tag.local
+        ? `${tag.count.toLocaleString('ru-RU')} лок.`
+        : tag.count.toLocaleString('ru-RU');
+      if (tag.local) cnt.title = `Скачано постов: ${tag.count}. На сайте тег может быть заметно популярнее.`;
       div.appendChild(cnt);
     }
     div.addEventListener('click', () => {
@@ -365,7 +499,9 @@ App.suggestProfileTag = function (type) {
     el.innerHTML = '';
     if (!d.tags || !d.tags.length) { el.classList.remove('active'); return; }
     el.classList.add('active');
-    d.tags.forEach(tag => {
+    // Тот же порядок, что и в строке поиска: по популярности, точное
+    // совпадение первым (это те же теги, что и /suggest отдаёт).
+    this.mergeSuggestions([], d.tags, q).forEach(tag => {
       const label = tag.label || tag.value || tag;
       const value = tag.value || tag;
       const div = document.createElement('div');

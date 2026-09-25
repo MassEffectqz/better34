@@ -2,8 +2,11 @@ package main
 
 import (
 	"briefly/internal"
+	"bytes"
 	"compress/gzip"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -79,6 +82,18 @@ func gzipMiddleware() gin.HandlerFunc {
 			}
 		}
 		ace := c.Request.Header.Get("Accept-Encoding")
+		// Предсжатый bundle отдаёт staticCacheMiddleware. Сначала он
+		// устанавливает Content-Encoding, затем цепочка middleware продолжается;
+		// здесь пропускаем gzip/brotli, иначе клиент получает double encoding.
+		if strings.HasPrefix(lower, "/static/js/dist/") {
+			// Пропускаем сжатие только если предсжатый файл действительно
+			// валиден: битый .br/.gz приводит к ERR_CONTENT_DECODING_FAILED.
+			if (strings.Contains(ace, "br") && precompressedUsable(c, ".br")) ||
+				(strings.Contains(ace, "gzip") && precompressedUsable(c, ".gz")) {
+				c.Next()
+				return
+			}
+		}
 		isAPI := strings.HasPrefix(lower, "/api/")
 		switch {
 		case !isAPI && strings.Contains(ace, "br"):
@@ -87,8 +102,8 @@ func gzipMiddleware() gin.HandlerFunc {
 			c.Header("Vary", "Accept-Encoding")
 			c.Writer = &compressedWriter{
 				ResponseWriter: c.Writer,
-				write: func(p []byte) (int, error) { return bw.Write(p) },
-				flush: func() error { return bw.Flush() },
+				write:          func(p []byte) (int, error) { return bw.Write(p) },
+				flush:          func() error { return bw.Flush() },
 			}
 			c.Next()
 			_ = bw.Close()
@@ -106,8 +121,8 @@ func gzipMiddleware() gin.HandlerFunc {
 			c.Header("Vary", "Accept-Encoding")
 			c.Writer = &compressedWriter{
 				ResponseWriter: c.Writer,
-				write: func(p []byte) (int, error) { return gz.Write(p) },
-				flush: func() error { return gz.Flush() },
+				write:          func(p []byte) (int, error) { return gz.Write(p) },
+				flush:          func() error { return gz.Flush() },
 			}
 			c.Next()
 			_ = gz.Close()
@@ -144,11 +159,11 @@ func staticCacheMiddleware() func(c *gin.Context) {
 
 		if strings.HasPrefix(lower, "/static/js/dist/") {
 			ace := c.Request.Header.Get("Accept-Encoding")
-			if strings.Contains(ace, "br") && staticPrecompressedReady(c, ".br") {
+			if strings.Contains(ace, "br") && precompressedUsable(c, ".br") {
 				servePrecompressed(c, lower, ".br", "br")
 				return
 			}
-			if strings.Contains(ace, "gzip") && staticPrecompressedReady(c, ".gz") {
+			if strings.Contains(ace, "gzip") && precompressedUsable(c, ".gz") {
 				servePrecompressed(c, lower, ".gz", "gzip")
 				return
 			}
@@ -194,13 +209,51 @@ func bodyLimitMiddleware() gin.HandlerFunc {
 // staticPrecompressedReady — существует ли предсжатая версия файла.
 
 func staticPrecompressedReady(c *gin.Context, suffix string) bool {
-	_, err := os.Stat("static" + c.Request.URL.Path + suffix)
-	return err == nil
+	name := strings.TrimPrefix(c.Request.URL.Path, "/static/") + suffix
+	return staticFileExists(name)
+}
+
+// precompressedUsable дополнительно проверяет, что файл реально
+// декодируется: битый .br/.gz ломает загрузку страницы с
+// ERR_CONTENT_DECODING_FAILED, поэтому такие файлы игнорируются и
+// отдаётся несжатая версия.
+func precompressedUsable(c *gin.Context, suffix string) bool {
+	if !staticPrecompressedReady(c, suffix) {
+		return false
+	}
+	name := strings.TrimPrefix(c.Request.URL.Path, "/static/") + suffix
+	data, err := readStaticFile(name)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	switch suffix {
+	case ".br":
+		_, err = brotli.NewReader(bytes.NewReader(data)).Read(make([]byte, 1))
+	case ".gz":
+		zr, zerr := gzip.NewReader(bytes.NewReader(data))
+		if zerr != nil {
+			return false
+		}
+		_, err = zr.Read(make([]byte, 1))
+		_ = zr.Close()
+	default:
+		return false
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	return true
 }
 
 // servePrecompressed отдаёт предсжатый файл с нужными заголовками.
 
 func servePrecompressed(c *gin.Context, lower, suffix, enc string) {
+	name := strings.TrimPrefix(c.Request.URL.Path, "/static/") + suffix
+	data, err := readStaticFile(name)
+	if err != nil {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
 	c.Header("Content-Encoding", enc)
 	c.Header("Vary", "Accept-Encoding")
 	if strings.HasSuffix(lower, ".css") {
@@ -208,7 +261,7 @@ func servePrecompressed(c *gin.Context, lower, suffix, enc string) {
 	} else {
 		c.Header("Content-Type", "application/javascript; charset=utf-8")
 	}
-	c.File("static" + c.Request.URL.Path + suffix)
+	c.Data(http.StatusOK, c.GetHeader("Content-Type"), data)
 	c.Abort()
 }
 
@@ -257,9 +310,9 @@ func webSecurityMiddleware() gin.HandlerFunc {
 		// и в сетевом трафике — так собираем whitelist перед ужесточением.
 		if debugEnabled() {
 			c.Header("Content-Security-Policy-Report-Only",
-				"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-				"img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; " +
-				"font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'")
+				"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+					"img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "+
+					"font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'")
 		}
 		// S-4: при BRIEFLY_FORCE_HTTPS=1 — HSTS для отвеченных по TLS запросов.
 		if forceHTTPSEnabled() && c.Request.TLS != nil {

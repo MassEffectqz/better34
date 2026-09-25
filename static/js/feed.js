@@ -227,7 +227,7 @@ App.showGridMode = async function (type, idsOverride) {
       this.showToast(`${this.state.posts.length} / ${ids.length}${failed > 0 ? `, -${failed}` : ''}`, 'warning');
     }
     this.setStatus(String(this.state.posts.length));
-    this.pushState(this.state.query, null);
+    this.pushGridRoute(type);
   } catch (err) {
     this.hideSkeletons();
     this.state.posts = [];

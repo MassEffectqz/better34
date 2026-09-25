@@ -53,20 +53,30 @@ func suggestCachePut(q string, tags []TagSuggestion) {
 }
 
 func (h *Handler) SuggestLocal(c *gin.Context) {
-	q := strings.TrimSpace(c.Query("q"))
-	if len(q) < 1 {
+	q := suggestQueryPrefix(c.Query("q"))
+	if q == "" {
 		c.JSON(http.StatusOK, gin.H{"tags": []interface{}{}})
 		return
 	}
 	db := GetDB()
-	tags := db.SuggestTagsLocal(q, 8)
-	c.JSON(http.StatusOK, gin.H{"tags": tags})
+	c.JSON(http.StatusOK, gin.H{"tags": db.SuggestTagsLocalFor(q, 8, suggestSourceFilter(h))})
+}
+
+// suggestSourceFilter — метка источника для фильтрации локальных
+// подсказок. В режиме «все сайты» (и если провайдер неизвестен) фильтр
+// пустой: показываем теги всей базы.
+func suggestSourceFilter(h *Handler) string {
+	p := h.provider()
+	if p == nil || p.Name() == allProvidersName {
+		return ""
+	}
+	return p.Name()
 }
 
 func (h *Handler) SuggestTags(c *gin.Context) {
-	q := strings.TrimSpace(c.Query("q"))
+	q := suggestQueryPrefix(c.Query("q"))
 	// Считаем по рунам, а не байтам: один кириллический символ — 2 байта.
-	if q == "" || utf8.RuneCountInString(q) < 2 {
+	if utf8.RuneCountInString(q) < 2 {
 		c.JSON(http.StatusOK, gin.H{"tags": []interface{}{}})
 		return
 	}

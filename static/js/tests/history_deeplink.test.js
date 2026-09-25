@@ -117,6 +117,88 @@ console.log('URL ↔ модалка-вьювер (глубокие ссылки,
 
   const unknown = a.parseLocation('/qr');
   check('parseLocation: неизвестный маршрут не матчится', !unknown.matched);
+
+  const gl = a.parseLocation('/grid/likes');
+  check('parseLocation: /grid/likes — режим сетки',
+    gl.matched && gl.gridMode === 'likes', JSON.stringify(gl));
+
+  const gh = a.parseLocation('/grid/hides');
+  check('parseLocation: /grid/hides — режим сетки',
+    gh.matched && gh.gridMode === 'hides', JSON.stringify(gh));
+
+  const gbad = a.parseLocation('/grid/unknown');
+  check('parseLocation: неизвестный режим сетки не матчится', !gbad.matched);
+}
+
+// ── 1b. Режим сетки из профиля не теряет URL ──────────────────────────────
+{
+  const a = makeApp();
+  a.state.query = '';
+  a.state.profile = { liked_posts: [1, 2], hidden_posts: [] };
+  a.state.displayMode = 'search';
+  a._lastURL = '/profile/likes';
+
+  reset();
+  a.pushGridRoute('likes');
+  check('pushGridRoute: лайки дают /grid/likes, а не корень',
+    hist.calls.length === 1 && hist.calls[0][1] === '/grid/likes', JSON.stringify(hist.calls));
+
+  // Тот же URL повторно не пишется.
+  a.pushGridRoute('likes');
+  check('pushGridRoute: повторный вызов не дублирует запись',
+    hist.calls.length === 1, JSON.stringify(hist.calls));
+
+  // У режима «похожие» свой маршрут, его выставляет openSimilarById.
+  reset();
+  a._lastURL = '/search/solo';
+  a.pushGridRoute('similar');
+  check('pushGridRoute: режим «похожие» не перебивает свой маршрут',
+    hist.calls.length === 0, JSON.stringify(hist.calls));
+}
+
+// ── 1c. Прямая ссылка /grid/<режим> открывает сетку, а не ленту ───────────
+{
+  const make = (liked, hidden) => {
+    const a = makeApp();
+    a.state.profile = { liked_posts: liked, hidden_posts: hidden };
+    a.calls = [];
+    a.loadPosts = function () { a.calls.push('loadPosts'); return Promise.resolve(); };
+    a.showGridMode = function (type) { a.calls.push('grid:' + type); return Promise.resolve(); };
+    a.toasts = [];
+    a.showToast = function (msg) { a.toasts.push(msg); };
+    return a;
+  };
+
+  const a = make([1, 2, 3], []);
+  a.applyInitialRoute(a.parseLocation('/grid/likes'));
+  check('applyInitialRoute: /grid/likes открывает сетку, а не ленту',
+    a.calls.join(',') === 'grid:likes', JSON.stringify(a.calls));
+
+  const b = make([], [7, 8]);
+  b.applyInitialRoute(b.parseLocation('/grid/hides'));
+  check('applyInitialRoute: /grid/hides открывает сетку',
+    b.calls.join(',') === 'grid:hides', JSON.stringify(b.calls));
+
+  const c = make([1], []);
+  c.applyInitialRoute(c.parseLocation('/'));
+  check('applyInitialRoute: корень по-прежнему грузит ленту',
+    c.calls.join(',') === 'loadPosts', JSON.stringify(c.calls));
+
+  const d = make([1], []);
+  d.applyInitialRoute(d.parseLocation('/search/solo'));
+  check('applyInitialRoute: /search/<q> грузит ленту',
+    d.calls.join(',') === 'loadPosts', JSON.stringify(d.calls));
+
+  // Пустой список лайков: не молча пустая страница, а сообщение + лента.
+  const e = make([], []);
+  e.applyInitialRoute(e.parseLocation('/grid/likes'));
+  check('applyInitialRoute: пустые лайки — тост и обычная лента',
+    e.calls.join(',') === 'loadPosts' && e.toasts.length === 1, JSON.stringify({ calls: e.calls, toasts: e.toasts }));
+
+  const f = make([], []);
+  f.applyInitialRoute({ matched: false });
+  check('applyInitialRoute: неизвестный маршрут грузит ленту',
+    f.calls.join(',') === 'loadPosts', JSON.stringify(f.calls));
 }
 
 // ── 2. Согласованность URL и pushState/replaceState ──────────────────────

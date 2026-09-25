@@ -103,6 +103,7 @@ func main() {
 		api.GET("/suggest-local", handler.SuggestLocal)
 		api.GET("/nl-search", handler.NlSearch)
 		api.GET("/tag-aliases", handler.ListTagAliases)
+		api.GET("/odd-tags", handler.OddTags)
 		api.POST("/tag-alias", handler.AddTagAlias)
 		api.DELETE("/tag-alias/:alias", handler.DeleteTagAlias)
 		api.GET("/tag-counts", handler.GetTagCounts)
@@ -158,9 +159,7 @@ func main() {
 		api.GET("/booru/tags", handler.BooruTags)
 	}
 
-	r.Static("/static", "static")
-	// Service worker обязан отдаваться с корня (scope /), иначе PWA не работает.
-	r.StaticFile("/sw.js", "static/sw.js")
+	mountFrontend(r)
 	r.GET("/qr", handler.QRPage)
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {

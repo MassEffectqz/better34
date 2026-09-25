@@ -303,12 +303,22 @@ App._renderViewerTags = function () {
   const needCount = [];
   allTags.forEach(tag => {
     const span = document.createElement('span');
-    span.className = 'viewer-tag' + (isFav(tag) ? ' tag-fav' : '') + (isHid(tag) ? ' tag-hidden' : '') + (isQ(tag) ? ' tag-query' : '');
+    const lvl = this.OddTags && this.OddTags.levelOf ? this.OddTags.levelOf(tag) : null;
+    // Цвет только у yellow/red. Уровень note — это «просто объяснение»:
+    // тег выглядит как обычный, но с подсказкой.
+    span.className = 'viewer-tag' + (isFav(tag) ? ' tag-fav' : '') + (isHid(tag) ? ' tag-hidden' : '') + (isQ(tag) ? ' tag-query' : '') + (lvl === 'yellow' || lvl === 'red' ? ' tag-odd-' + lvl : '');
     span._brieflyTag = tag;
     // A11y (#15): тег — интерактивный элемент: роль + фокус с клавиатуры.
     span.tabIndex = 0;
     try { span.setAttribute('role', 'button'); } catch { /* тестовый DOM без setAttribute */ }
     try { span.setAttribute('aria-label', tag); } catch { /* noop */ }
+    // Подсказка при наведении: только текст описания, без префикса
+    // «Странный —» или «Метка —». Пользователь просил именно объяснение.
+    const oddDesc = this.OddTags && this.OddTags.descOf ? this.OddTags.descOf(tag) : null;
+    if (oddDesc) {
+      span.title = oddDesc;
+      try { span.setAttribute('data-odd', lvl); } catch { /* тестовый DOM */ }
+    }
     const text = document.createElement('span');
     text.textContent = tag;
     span.appendChild(text);

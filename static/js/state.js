@@ -134,23 +134,53 @@ export const App = {
       this.state.query = target.query;
       this.els.searchInput.value = target.query;
     }
-    // Глубокая ссылка: запрошенный пост может не попасть в первую страницу
-    // выдачи (старый пост, лимит источника) — openViewerByPostId достроит его
-    // точечным запросом и откроет вьювер.
-    this.loadPosts(true).then(() => {
-      if (!target.matched) return;
-      // Глубокая ссылка /similar/<id> — режим «похожие по картинке».
-      if (target.similarId != null) { go(this.openSimilarById(target.similarId)); return; }
-      if (target.postId != null && !this.state.viewerOpen) {
-        go(this.openViewerByPostId(target.postId));
-      }
-    }).catch(() => {});
+    if (target.profileTab) {
+      if (!this.state.profileOpen) this.toggleProfile();
+      this._profileTabs?.selectKey(target.profileTab);
+    }
+    this.applyInitialRoute(target);
     window.addEventListener('unhandledrejection', (e) => {
       console.error('Unhandled rejection:', e.reason);
       if (typeof App !== 'undefined' && App.showToast) {
         App.showToast('Произошла непредвиденная ошибка', 'error');
       }
     });
+  },
+
+  /**
+   * Стартовое состояние по разобранному URL. Режим сетки из профиля
+   * (/grid/likes, /grid/hides) открывается вместо ленты, иначе прямая
+   * ссылка показывала обычную выдачу.
+   */
+  applyInitialRoute(target) {
+    if (!target || !target.matched) {
+      this.loadPosts(true).catch(() => {});
+      return;
+    }
+    if (target.gridMode) {
+      // Пустой список (нет лайков/скрытого) — не молча пустая страница.
+      const emptyKey = target.gridMode === 'likes' ? 'likes.empty' : 'hides.empty';
+      const ids = target.gridMode === 'likes'
+        ? (this.state.profile.liked_posts || [])
+        : (this.state.profile.hidden_posts || []);
+      if (!ids.length) {
+        this.showToast(t(emptyKey), 'info');
+        this.loadPosts(true).catch(() => {});
+        return;
+      }
+      go(this.showGridMode(target.gridMode));
+      return;
+    }
+    // Глубокая ссылка: запрошенный пост может не попасть в первую страницу
+    // выдачи (старый пост, лимит источника) — openViewerByPostId достроит его
+    // точечным запросом и откроет вьювер.
+    this.loadPosts(true).then(() => {
+      // Глубокая ссылка /similar/<id> — режим «похожие по картинке».
+      if (target.similarId != null) { go(this.openSimilarById(target.similarId)); return; }
+      if (target.postId != null && !this.state.viewerOpen) {
+        go(this.openViewerByPostId(target.postId));
+      }
+    }).catch(() => {});
   },
 
   onPopState() {
@@ -168,6 +198,27 @@ export const App = {
     this._lastURL = path;
     const target = this.parseLocation(path);
     if (!target.matched) return;
+    if (target.profileTab) {
+      if (!this.state.profileOpen) this.toggleProfile();
+      this._profileTabs?.selectKey(target.profileTab);
+      return;
+    }
+    // /grid/likes и /grid/hides: режим сетки из профиля. Идемпотентно —
+    // повторное попадание на тот же URL не перезапрашивает посты.
+    if (target.gridMode) {
+      if (this.state.displayMode !== target.gridMode) {
+        await this.showGridMode(target.gridMode);
+      }
+      return;
+    }
+    // Назад/вперёд из режима сетки профиля на обычный URL ленты — выходим
+    // из режима и подхватываем запрос из URL.
+    if ((this.state.displayMode === 'likes' || this.state.displayMode === 'hides') && target.query !== this.state.query) {
+      this.state.query = target.query;
+      if (this.els.searchInput) this.els.searchInput.value = target.query;
+      this.clearMode();
+      return;
+    }
     // /similar/<id>: режим «похожие по картинке». Идемпотентно — повторное
     // попадание на уже открытый URL не перезапрашивает список.
     if (target.similarId != null) {
@@ -196,21 +247,103 @@ export const App = {
     else if (this.state.viewerOpen) this.closeViewer();
   },
 
-  /** Разбор пути приложения: /search/<query>[/post/<id>], /post/<id>, /similar/<id>, /. */
+  /** Разбор пути приложения: /search/<query>[/post/<id>], /post/<id>, /similar/<id>, /grid/<mode>, /profile[/tab], /. */
   parseLocation(path) {
     const p = path || '';
-    if (p === '/' || p === '') return { query: '', postId: null, similarId: null, matched: true };
-    let m = p.match(/^\/search\/(.+?)(?:\/post\/(\d+))?$/);
+    if (p === '/' || p === '') return { query: '', postId: null, similarId: null, gridMode: null, profileTab: null, matched: true };
+    let m = p.match(/^\/profile(?:\/([a-z-]+))?$/);
+    if (m) return { query: '', postId: null, similarId: null, gridMode: null, profileTab: m[1] || 'presets', matched: true };
+    // /grid/likes и /grid/hides — режим сетки из профиля.
+    m = p.match(/^\/grid\/(likes|hides)$/);
+    if (m) return { query: '', postId: null, similarId: null, gridMode: m[1], profileTab: null, matched: true };
+    m = p.match(/^\/search\/(.+?)(?:\/post\/(\d+))?$/);
     if (m) {
       let query = m[1];
       try { query = decodeURIComponent(query); } catch { /* битый %-эскейп — оставляем как есть */ }
-      return { query, postId: m[2] ? parseInt(m[2], 10) : null, similarId: null, matched: true };
+      return { query, postId: m[2] ? parseInt(m[2], 10) : null, similarId: null, gridMode: null, profileTab: null, matched: true };
     }
     m = p.match(/^\/post\/(\d+)$/);
-    if (m) return { query: '', postId: parseInt(m[1], 10), similarId: null, matched: true };
+    if (m) return { query: '', postId: parseInt(m[1], 10), similarId: null, gridMode: null, profileTab: null, matched: true };
     m = p.match(/^\/similar\/(\d+)$/);
-    if (m) return { query: '', postId: null, similarId: parseInt(m[1], 10), matched: true };
-    return { query: '', postId: null, similarId: null, matched: false };
+    if (m) return { query: '', postId: null, similarId: parseInt(m[1], 10), gridMode: null, profileTab: null, matched: true };
+    return { query: '', postId: null, similarId: null, gridMode: null, profileTab: null, matched: false };
+  },
+
+  /**
+   * Binds an HTML-declared vertical tablist. Adding a section only requires a
+   * `.panel-nav-item[data-tab]` button and its `aria-controls` tabpanel.
+   */
+  bindPanelTabs(panelKey, contentPrefix, onChange) {
+    const panel = this.els[panelKey];
+    const nav = panel && panel.querySelector('.panel-nav, [data-panel-tablist]');
+    if (!panel || !nav) return null;
+
+    const candidates = Array.from(nav.querySelectorAll('.panel-nav-item[data-tab], [data-panel-tab]'));
+    const items = candidates.flatMap((/** @type {HTMLElement} */ tab) => {
+      const key = tab.dataset.tab || tab.dataset.panelTab || '';
+      const content = document.getElementById(tab.getAttribute('aria-controls') || `${contentPrefix}${key}`);
+      return content ? [{ tab, content, key }] : [];
+    });
+    if (!items.length) return null;
+
+    nav.setAttribute('role', 'tablist');
+    const storageKey = `briefly_${panelKey.replace(/Panel$/, '').toLowerCase()}_tab`;
+    for (const { tab, content, key } of items) {
+      /** @type {HTMLButtonElement} */ (tab).type = 'button';
+      tab.setAttribute('role', 'tab');
+      if (!tab.id) tab.id = `${panel.id || panelKey}-tab-${key}`;
+      content.setAttribute('role', 'tabpanel');
+      content.setAttribute('aria-labelledby', tab.id);
+    }
+
+    const select = (target, { focus = false, persist = true, initial = false } = {}) => {
+      for (const item of items) {
+        const selected = item === target;
+        item.tab.classList.toggle('active', selected);
+        item.tab.setAttribute('aria-selected', String(selected));
+        item.tab.tabIndex = selected ? 0 : -1;
+        item.content.classList.toggle('active', selected);
+        item.content.hidden = !selected;
+      }
+      target.tab.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+      if (focus) target.tab.focus();
+      if (persist) {
+        try { localStorage.setItem(storageKey, target.key); } catch { /* private mode */ }
+      }
+      onChange?.(target.key, { initial });
+    };
+
+    for (const item of items) {
+      item.tab.addEventListener('click', () => select(item));
+      item.tab.addEventListener('keydown', (ev) => {
+        const current = items.findIndex(candidate => candidate.tab === item.tab);
+        let next = current;
+        if (ev.key === 'ArrowRight') next = (current + 1) % items.length;
+        else if (ev.key === 'ArrowLeft') next = (current - 1 + items.length) % items.length;
+        else if (ev.key === 'Home') next = 0;
+        else if (ev.key === 'End') next = items.length - 1;
+        else if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          select(item);
+          return;
+        } else return;
+        ev.preventDefault();
+        select(items[next], { focus: true });
+      });
+    }
+
+    let saved = '';
+    try { saved = localStorage.getItem(storageKey) || ''; } catch { /* private mode */ }
+    const initial = items.find(item => item.key === saved) || items[0];
+    select(initial, { initial: true });
+    return {
+      select,
+      selectKey: (key) => {
+        const target = items.find(item => item.key === key);
+        if (target) select(target);
+      },
+      storageKey,
+    };
   },
 
   bindEvents() {
@@ -474,27 +607,16 @@ export const App = {
     });
     e.favTagInput.addEventListener('input', () => this.suggestProfileTag('fav'));
     e.hiddenTagInput.addEventListener('input', () => this.suggestProfileTag('hidden'));
-    document.querySelectorAll('#profile-panel .profile-tab').forEach((/** @type {HTMLElement} */ tab) => {
-      tab.addEventListener('click', () => {
-        document.querySelectorAll('#profile-panel .profile-tab').forEach((/** @type {HTMLElement} */ t) => t.classList.remove('active'));
-        document.querySelectorAll('#profile-panel .profile-tab-content').forEach((/** @type {HTMLElement} */ c) => c.classList.remove('active'));
-        tab.classList.add('active');
-        _(`tab-${tab.dataset.tab}`).classList.add('active');
-        if (tab.dataset.tab === 'likes' || tab.dataset.tab === 'hides') {
-          this.renderThumbs(tab.dataset.tab, this.state.profile[tab.dataset.tab === 'likes' ? 'liked_posts' : 'hidden_posts']);
-        } else if (tab.dataset.tab === 'collections' && typeof this.renderCollections === 'function') {
-          this.renderCollections();
-        }
+    this._profileTabs = this.bindPanelTabs('profilePanel', 'tab-', (tab, { initial = false } = {}) => {
+      document.querySelectorAll('[data-profile-actions]').forEach((/** @type {HTMLElement} */ group) => {
+        group.hidden = group.dataset.profileActions !== tab;
       });
+      if (tab === 'likes' || tab === 'hides') {
+        this.renderThumbs(tab, this.state.profile[tab === 'likes' ? 'liked_posts' : 'hidden_posts']);
+      }
+      if (!initial && this.state.profileOpen) this.pushProfileRoute(tab);
     });
-    document.querySelectorAll('#settings-panel .profile-tab').forEach((/** @type {HTMLElement} */ tab) => {
-      tab.addEventListener('click', () => {
-        document.querySelectorAll('#settings-panel .profile-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('#settings-panel .profile-tab-content').forEach(c => c.classList.remove('active'));
-        tab.classList.add('active');
-        _(`stab-${tab.dataset.tab}`).classList.add('active');
-      });
-    });
+    this.bindPanelTabs('settingsPanel', 'stab-');
     e.modeBarClose.addEventListener('click', () => { if (this.state.recommendActive) this.exitRecommend(); else this.clearMode(); });
     e.modeBarRefresh.addEventListener('click', () => this.refreshRecommend());
     e.btnLikesGrid.addEventListener('click', () => this.showGridMode('likes'));
@@ -504,7 +626,6 @@ export const App = {
     e.tagFilter.addEventListener('input', () => this.onTagFilter());
     e.btnClearFavTags.addEventListener('click', () => this.clearTagList('fav'));
     e.btnClearHiddenTags.addEventListener('click', () => this.clearTagList('hidden'));
-    this.bindProfileStats();
     e.profileAvatar.addEventListener('click', () => e.profileAvatarFile.click());
     e.profileAvatarFile.addEventListener('change', (ev) => this.onAvatarChange(ev));
     e.profileNickname.addEventListener('blur', () => this.saveProfileMeta());
@@ -543,8 +664,10 @@ export const App = {
         if (n > 0) this.showToast(`Доставлено оффлайн-изменений: ${n}`, 'success');
       });
     }
-    const savedW = parseFloat(localStorage.getItem('briefly_panel_width') || '');
-    this._panelWidth = isFinite(savedW) ? savedW : null;
+    const savedProfileW = parseFloat(localStorage.getItem('briefly_profile_panel_width') || localStorage.getItem('briefly_panel_width') || '');
+    const savedSettingsW = parseFloat(localStorage.getItem('briefly_settings_panel_width') || localStorage.getItem('briefly_panel_width') || '');
+    this._profileWidth = isFinite(savedProfileW) ? savedProfileW : null;
+    this._settingsWidth = isFinite(savedSettingsW) ? savedSettingsW : null;
     this.applyPanelWidth();
     this.bindPanelResize();
     this.bindPanelSwipe();
@@ -815,6 +938,17 @@ export const App = {
     }
   },
 
+  profileUrl(tab) {
+    return `/profile/${encodeURIComponent(tab)}`;
+  },
+
+  pushProfileRoute(tab) {
+    const url = this.profileUrl(tab);
+    if (url === this._lastURL) return;
+    this._lastURL = url;
+    history.pushState({ profileTab: tab }, '', url);
+  },
+
   /** Канонический URL поста (совместим с parseLocation). */
   postUrl(query, postId) {
     let url = query ? `/search/${encodeURIComponent(query)}` : '/';
@@ -1035,6 +1169,22 @@ export const App = {
     });
   },
 
+  /** @param {HTMLElement | null} returnFocus */
+  setPanelOpen(panel, open, returnFocus = null) {
+    if (!panel) return;
+    panel.classList.toggle('hidden', !open);
+    panel.setAttribute('aria-hidden', String(!open));
+    panel.inert = !open;
+    if (open) {
+      requestAnimationFrame(() => {
+        const active = panel.querySelector('.panel-nav-item[aria-selected="true"]') || panel.querySelector('button, input, select');
+        active?.focus();
+      });
+    } else if (returnFocus?.isConnected) {
+      returnFocus.focus();
+    }
+  },
+
   hasRecentInput() {
     return Date.now() - this._lastUserInput < 4000;
   },
@@ -1046,28 +1196,38 @@ export const App = {
     return Math.max(0, window.innerWidth - cr);
   },
 
-  defaultPanelWidth() {
-    // Панель — комфортная боковая колонка: на десктопе не меньше 420px,
-    // стремится к ~55% свободного места справа от ленты (но не уже минимума).
+  profilePanelMaxWidth() {
+    const viewport = window.innerWidth || document.documentElement.clientWidth || 1440;
+    return Math.max(560, Math.round(viewport * 0.94));
+  },
+
+  defaultPanelWidth(panelKey = 'settingsPanel') {
+    if (panelKey === 'profilePanel') {
+      const viewport = window.innerWidth || document.documentElement.clientWidth || 1440;
+      return Math.min(this.profilePanelMaxWidth(), Math.max(560, Math.round(viewport * 0.35)));
+    }
+    // Панель настроек сохраняет прежнюю более компактную ширину.
     const side = this.panelSide();
     const lo = 420;
     const v = Math.round(side * 0.55);
     return Math.min(Math.max(v, lo), Math.max(lo, Math.round(side * 0.92)));
   },
 
-  clampPanelWidth(w) {
-    // Пользовательский resize — как и дефолт, но с запасом на десктопе.
+  clampPanelWidth(w, panelKey = 'settingsPanel') {
+    if (panelKey === 'profilePanel') {
+      return Math.min(Math.max(w, 420), this.profilePanelMaxWidth());
+    }
     const side = this.panelSide();
     const lo = 340, hi = Math.max(360, Math.round(side * 0.94));
     return Math.min(Math.max(w, lo), hi);
   },
 
   applyPanelWidth() {
-    const w = this.clampPanelWidth(this._panelWidth || this.defaultPanelWidth());
-    this.els.profilePanel.style.width = w + 'px';
-    this.els.settingsPanel.style.width = w + 'px';
-    // Колонки превью профиля адаптируются под реальную ширину панели.
-    const cols = w >= 560 ? 5 : w >= 470 ? 4 : w >= 380 ? 3 : 2;
+    const profileW = this.clampPanelWidth(this._profileWidth || this.defaultPanelWidth('profilePanel'), 'profilePanel');
+    const settingsW = this.clampPanelWidth(this._settingsWidth || this.defaultPanelWidth('settingsPanel'), 'settingsPanel');
+    this.els.profilePanel.style.width = profileW + 'px';
+    this.els.settingsPanel.style.width = settingsW + 'px';
+    const cols = profileW >= 560 ? 5 : profileW >= 470 ? 4 : profileW >= 380 ? 3 : 2;
     this.els.profilePanel.style.setProperty('--pf-cols', String(cols));
     this.els.settingsPanel.style.setProperty('--pf-cols', String(cols));
   },
@@ -1080,9 +1240,11 @@ export const App = {
     if (appEl) appEl.classList.toggle('panel-open', anyOpen);
   },
 
-  savePanelWidth(w) {
-    this._panelWidth = w;
-    try { localStorage.setItem('briefly_panel_width', String(w)); } catch {}
+  savePanelWidth(w, panelKey = 'settingsPanel') {
+    if (panelKey === 'profilePanel') this._profileWidth = w;
+    else this._settingsWidth = w;
+    const storageKey = panelKey === 'profilePanel' ? 'briefly_profile_panel_width' : 'briefly_settings_panel_width';
+    try { localStorage.setItem(storageKey, String(w)); } catch {}
   },
 
   bindPanelResize() {
@@ -1097,11 +1259,11 @@ export const App = {
         const startW = panel.getBoundingClientRect().width;
         panel.classList.add('resizing');
         const move = (ev) => {
-          panel.style.width = this.clampPanelWidth(startW + (startX - ev.clientX)) + 'px';
+          panel.style.width = this.clampPanelWidth(startW + (startX - ev.clientX), k) + 'px';
         };
         const up = () => {
           panel.classList.remove('resizing');
-          this.savePanelWidth(parseFloat(panel.style.width) || startW);
+          this.savePanelWidth(parseFloat(panel.style.width) || startW, k);
           this.applyPanelWidth();
           document.removeEventListener('pointermove', move);
           document.removeEventListener('pointerup', up);
@@ -1307,6 +1469,26 @@ export const App = {
   /** URL режима «похожие по картинке» (глубокая ссылка / новая вкладка). */
   similarUrl(id) {
     return `/similar/${id}`;
+  },
+
+  /**
+   * URL режима сетки из профиля (лайки/скрытое/коллекция).
+   * Раньше здесь вызывался pushState(query), и при пустом запросе адрес
+   * становился «/» — режим пропадал из истории и кнопка «назад» вела
+   * в корень ленты вместо возврата в профиль.
+   */
+  gridUrl(type) {
+    return `/grid/${type}`;
+  },
+
+  /** Запись истории для режима сетки (если это не текущий URL). */
+  pushGridRoute(type) {
+    // У режима «похожие» свой маршрут /similar/<id>, его выставляет вызывающий.
+    if (type !== 'likes' && type !== 'hides') return;
+    const url = this.gridUrl(type);
+    if (url === this._lastURL) return;
+    this._lastURL = url;
+    history.pushState({ query: this.state.query, postId: null, gridMode: type }, '', url);
   },
 
   /**

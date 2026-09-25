@@ -159,16 +159,16 @@
 
   <div id="panel-backdrop" class="panel-backdrop"></div>
 
-  <aside id="profile-panel" class="profile-panel hidden" aria-label="Профиль">
+  <aside id="profile-panel" class="panel-layout profile-panel hidden" aria-label="Профиль" aria-hidden="true">
     <div class="panel-resize" aria-hidden="true"></div>
-    <div class="profile-hero">
+    <div class="panel-header profile-hero">
       <div class="profile-hero-glow" aria-hidden="true"></div>
       <div class="profile-hero-top">
         <span class="profile-panel-title" data-i18n="pf.title">Профиль</span>
         <div class="profile-hero-actions">
-          <button class="btn-icon" id="profile-quick-stats" data-quick="stats" title="Статистика"><i data-lucide="chart" data-size="16"></i></button>
-          <button class="btn-icon" id="profile-quick-settings" data-quick="settings" title="Настройки"><i data-lucide="settings" data-size="16"></i></button>
-          <button class="btn-icon" id="profile-close" title="Закрыть (Esc)"><i data-lucide="x" data-size="18"></i></button>
+          <button class="btn-icon" id="profile-quick-stats" data-quick="stats" title="Статистика" aria-label="Открыть статистику"><i data-lucide="chart" data-size="16"></i></button>
+          <button class="btn-icon" id="profile-quick-settings" data-quick="settings" title="Настройки" aria-label="Открыть настройки"><i data-lucide="settings" data-size="16"></i></button>
+          <button class="btn-icon" id="profile-close" title="Закрыть (Esc)" aria-label="Закрыть профиль (Esc)"><i data-lucide="x" data-size="18"></i></button>
         </div>
       </div>
       <div class="profile-identity">
@@ -179,22 +179,17 @@
         </div>
         <input type="text" id="profile-nickname" placeholder="Ваш ник" maxlength="30" spellcheck="false">
       </div>
-      <div class="profile-stats">
-        <button class="stat" data-goto="presets"><span class="stat-icon"><i data-lucide="bookmark"></i></span><span class="stat-num" id="st-presets">0</span><span class="stat-label" data-i18n="stat.presets">Пресеты</span></button>
-        <button class="stat" data-goto="likes"><span class="stat-icon"><i data-lucide="heart"></i></span><span class="stat-num" id="st-likes">0</span><span class="stat-label" data-i18n="stat.likes">Лайки</span></button>
-        <button class="stat" data-goto="hides"><span class="stat-icon"><i data-lucide="eyeOff"></i></span><span class="stat-num" id="st-hides">0</span><span class="stat-label" data-i18n="stat.hides">Скрыто</span></button>
-        <button class="stat" data-goto="tags"><span class="stat-icon"><i data-lucide="hash"></i></span><span class="stat-num" id="st-tags">0</span><span class="stat-label" data-i18n="stat.tags">Теги</span></button>
+      <div class="profile-stats" data-panel-tablist aria-label="Разделы профиля">
+        <button class="stat" type="button" data-panel-tab="presets" aria-controls="tab-presets" aria-selected="true"><span class="stat-icon"><i data-lucide="bookmark"></i></span><span class="stat-num" id="st-presets">0</span><span class="stat-label" data-i18n="stat.presets">Пресеты</span></button>
+        <button class="stat" type="button" data-panel-tab="likes" aria-controls="tab-likes" aria-selected="false"><span class="stat-icon"><i data-lucide="heart"></i></span><span class="stat-num" id="st-likes">0</span><span class="stat-label" data-i18n="stat.likes">Лайки</span></button>
+        <button class="stat" type="button" data-panel-tab="hides" aria-controls="tab-hides" aria-selected="false"><span class="stat-icon"><i data-lucide="eyeOff"></i></span><span class="stat-num" id="st-hides">0</span><span class="stat-label" data-i18n="stat.hides">Скрыто</span></button>
+        <button class="stat" type="button" data-panel-tab="collections" aria-controls="tab-collections" aria-selected="false"><span class="stat-icon"><i data-lucide="folder"></i></span><span class="stat-num" id="st-collections">0</span><span class="stat-label" data-i18n="tab.collections">Коллекции</span></button>
+        <button class="stat" type="button" data-panel-tab="tags" aria-controls="tab-tags" aria-selected="false"><span class="stat-icon"><i data-lucide="hash"></i></span><span class="stat-num" id="st-tags">0</span><span class="stat-label" data-i18n="stat.tags">Теги</span></button>
       </div>
     </div>
-    <div class="profile-tabs">
-      <button class="profile-tab active" data-tab="presets"><span data-i18n="tab.presets">Пресеты</span> <span class="tab-badge" id="tb-presets">0</span></button>
-      <button class="profile-tab" data-tab="likes"><span data-i18n="tab.likes">Лайки</span> <span class="tab-badge" id="tb-likes">0</span></button>
-      <button class="profile-tab" data-tab="hides"><span data-i18n="tab.hides">Скрытые</span> <span class="tab-badge" id="tb-hides">0</span></button>
-      <button class="profile-tab" data-tab="collections"><span data-i18n="tab.collections">Коллекции</span> <span class="tab-badge" id="tb-collections">0</span></button>
-      <button class="profile-tab" data-tab="tags"><span data-i18n="tab.tags">Теги</span> <span class="tab-badge" id="tb-tags">0</span></button>
-    </div>
-    <div class="profile-body">
-      <div class="profile-tab-content active" id="tab-presets">
+    <div class="panel-layout-body">
+      <div class="panel-content profile-body">
+      <div class="panel-tab-content profile-tab-content active" role="tabpanel" id="tab-presets">
         <div class="preset-form">
           <input type="text" id="preset-name" placeholder="Название пресета" maxlength="60">
           <button id="btn-save-preset" class="btn-primary btn-sm"><i data-lucide="save" data-size="14"></i> <span data-i18n="btn.save">Сохранить</span></button>
@@ -211,27 +206,22 @@
           <input type="file" id="preset-import-file" accept=".json" hidden>
         </div>
       </div>
-      <div class="profile-tab-content" id="tab-likes">
+      <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-likes">
         <p class="profile-empty" id="likes-empty"><span class="empty-icon"><i data-lucide="heart" data-size="26"></i></span><br><span data-i18n="likes.empty">Нет лайков</span></p>
         <div id="likes-list" class="profile-thumbs"></div>
-        <button id="btn-likes-grid" class="btn-primary btn-sm pf-grid-btn" style="display:none"><span data-i18n="btn.showGrid">Показать всё в сетке</span></button>
-        <button id="btn-likes-download" class="btn-primary btn-sm pf-grid-btn" style="display:none"><span data-i18n="btn.downloadLikes">Скачать все лайки</span></button>
-        <button id="btn-likes-more" class="btn-primary btn-sm pf-more" style="display:none"><span data-i18n="btn.more">Показать ещё</span></button>
       </div>
-      <div class="profile-tab-content" id="tab-hides">
+      <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-hides">
         <p class="profile-empty" id="hides-empty"><span class="empty-icon"><i data-lucide="eyeOff" data-size="26"></i></span><br><span data-i18n="hides.empty">Нет скрытых</span></p>
         <div id="hides-list" class="profile-thumbs"></div>
-        <button id="btn-hides-grid" class="btn-primary btn-sm pf-grid-btn" style="display:none"><span data-i18n="btn.showGrid">Показать всё в сетке</span></button>
-        <button id="btn-hides-more" class="btn-primary btn-sm pf-more" style="display:none"><span data-i18n="btn.more">Показать ещё</span></button>
       </div>
-      <div class="profile-tab-content" id="tab-collections">
+      <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-collections">
         <div class="collection-form">
           <input type="text" id="collection-name" placeholder="Новая коллекция…" maxlength="60">
           <button id="btn-create-collection" class="btn-primary btn-sm"><i data-lucide="plus" data-size="14"></i> <span data-i18n="btn.create">Создать</span></button>
         </div>
         <div id="collections-list" class="collections-list"></div>
       </div>
-      <div class="profile-tab-content" id="tab-tags">
+      <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-tags">
         <div class="tag-filter-row">
           <input type="text" id="tag-filter" placeholder="Поиск по тегам..." spellcheck="false">
           <span id="tag-filter-count" class="tag-filter-count"></span>
@@ -269,26 +259,41 @@
           <div id="hidden-tags-list" class="profile-tag-list"></div>
         </div>
       </div>
+      </div>
+    </div>
+    <div class="panel-footer profile-foot">
+      <div class="profile-fixed-actions">
+        <div class="profile-action-group" data-profile-actions="likes" hidden>
+          <button id="btn-likes-grid" class="btn-primary btn-sm" style="display:none"><span data-i18n="btn.showGrid">Показать всё в сетке</span></button>
+          <button id="btn-likes-more" class="btn-primary btn-sm" style="display:none"><span data-i18n="btn.more">Показать ещё</span></button>
+        </div>
+        <div class="profile-action-group" data-profile-actions="hides" hidden>
+          <button id="btn-hides-grid" class="btn-primary btn-sm" style="display:none"><span data-i18n="btn.showGrid">Показать всё в сетке</span></button>
+          <button id="btn-hides-more" class="btn-primary btn-sm" style="display:none"><span data-i18n="btn.more">Показать ещё</span></button>
+        </div>
+      </div>
+      <button id="btn-likes-download" class="btn-primary"><span data-i18n="btn.downloadLikes">Скачать все лайки</span></button>
     </div>
   </aside>
 
-  <aside id="settings-panel" class="settings-panel hidden" aria-label="Настройки">
+  <aside id="settings-panel" class="panel-layout settings-panel hidden" aria-label="Настройки" aria-hidden="true">
     <div class="panel-resize" aria-hidden="true"></div>
-    <div class="profile-hero">
+    <div class="panel-header profile-hero">
       <div class="profile-hero-glow" aria-hidden="true"></div>
       <div class="profile-hero-top">
         <span class="profile-panel-title" data-i18n="set.title">Настройки</span>
-        <button class="btn-icon" id="settings-close"><i data-lucide="x" data-size="18"></i></button>
+        <button class="btn-icon" id="settings-close" title="Закрыть (Esc)" aria-label="Закрыть настройки (Esc)"><i data-lucide="x" data-size="18"></i></button>
       </div>
     </div>
-    <div class="profile-tabs">
-      <button class="profile-tab active" data-tab="appearance"><span data-i18n="stab.appearance">Оформление</span></button>
-      <button class="profile-tab" data-tab="network"><span data-i18n="stab.network">Сеть</span></button>
-      <button class="profile-tab" data-tab="download"><span data-i18n="stab.download">Скачивание</span></button>
-      <button class="profile-tab" data-tab="maintenance"><span data-i18n="stab.maintenance">Обслуживание</span></button>
-    </div>
-    <div class="profile-body">
-      <div class="profile-tab-content active" id="stab-appearance">
+    <div class="panel-layout-body">
+      <nav class="panel-nav profile-tabs" aria-label="Разделы настроек">
+        <button class="panel-nav-item profile-tab active" id="settings-tab-appearance" type="button" data-tab="appearance" aria-controls="stab-appearance" aria-selected="true"><span data-i18n="stab.appearance">Оформление</span></button>
+        <button class="panel-nav-item profile-tab" id="settings-tab-network" type="button" data-tab="network" aria-controls="stab-network" aria-selected="false"><span data-i18n="stab.network">Сеть</span></button>
+        <button class="panel-nav-item profile-tab" id="settings-tab-download" type="button" data-tab="download" aria-controls="stab-download" aria-selected="false"><span data-i18n="stab.download">Скачивание</span></button>
+        <button class="panel-nav-item profile-tab" id="settings-tab-maintenance" type="button" data-tab="maintenance" aria-controls="stab-maintenance" aria-selected="false"><span data-i18n="stab.maintenance">Обслуживание</span></button>
+      </nav>
+      <div class="panel-content profile-body">
+      <div class="panel-tab-content profile-tab-content active" role="tabpanel" id="stab-appearance">
         <label class="setting-group">
           <span class="setting-label" data-i18n="set.lang">Язык интерфейса</span>
           <select id="setting-lang" class="tag-preset-select">
@@ -345,7 +350,7 @@
           <span class="setting-hint" data-i18n="set.autoRefreshFeedHint">Лента будет перезагружаться автоматически, когда новый пост окажется в библиотеке.</span>
         </label>
       </div>
-      <div class="profile-tab-content" id="stab-network">
+      <div class="panel-tab-content profile-tab-content" role="tabpanel" id="stab-network">
         <label class="setting-group">
           <span class="setting-label" data-i18n="set.provider">Источник постов</span>
           <select id="setting-provider" class="tag-preset-select"></select>
@@ -362,7 +367,7 @@
           <span class="setting-hint" data-i18n="set.proxyHint">SOCKS5 прокси для обхода блокировок</span>
         </label>
       </div>
-      <div class="profile-tab-content" id="stab-download">
+      <div class="panel-tab-content profile-tab-content" role="tabpanel" id="stab-download">
         <label class="setting-group">
           <span class="setting-label" data-i18n="set.savepath">Путь сохранения</span>
           <input type="text" id="setting-savepath" placeholder="data/posts">
@@ -372,7 +377,7 @@
           <input type="number" id="setting-concurrent" min="1" max="10">
         </label>
       </div>
-      <div class="profile-tab-content" id="stab-maintenance">
+      <div class="panel-tab-content profile-tab-content" role="tabpanel" id="stab-maintenance">
         <label class="setting-group">
           <span class="setting-label" data-i18n="maint.db">База данных</span>
           <button id="btn-clean-db" class="btn-primary btn-sm"><span data-i18n="btn.cleanDb">Очистить нескачанные</span></button>
@@ -400,7 +405,7 @@
           <span class="setting-hint" data-i18n="alias.hint">Синонимы вроде «catgirl» → «neko»: поиск и провайдеры используют канонический тег</span>
           <div class="alias-add-row">
             <input type="text" id="alias-input" class="preset-rename" placeholder="алиас" spellcheck="false" maxlength="60">
-            <span class="alias-arrow">→</span>
+            <span class="alias-arrow">в†'</span>
             <input type="text" id="alias-target" class="preset-rename" placeholder="канон" spellcheck="false" maxlength="60">
             <button type="button" class="btn-primary btn-sm" id="btn-add-alias"><i data-lucide="plus" data-size="13"></i> <span data-i18n="btn.addAlias">Добавить</span></button>
           </div>
@@ -429,8 +434,9 @@
           <span class="setting-label" style="margin:0" data-i18n="set.dlNotify">Уведомлять, когда загрузки завершены</span>
         </label>
       </div>
+      </div>
     </div>
-    <div class="settings-foot">
+    <div class="panel-footer settings-foot">
       <button id="btn-save-settings" class="btn-primary" data-i18n="btn.saveSettings">Сохранить</button>
     </div>
   </aside>

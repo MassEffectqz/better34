@@ -10,17 +10,16 @@
     "strict": false,
     "noImplicitThis": false,
     "strictNullChecks": true,
-    "types": []
+    "types": ["node"]
   },
-  // Инкрементальная типизация: ядро проверяется целиком, остальные модули
-  // добавляются сюда по мере касания (полный прогон на нетипизированном
-  // App-коде даёт сотни шума от this-инференса).
   "include": [
     "types/**/*.d.ts",
     "static/js/utils.js",
     "static/js/api.js",
     "static/js/video.js",
     "static/js/auth.js",
-    "static/js/feed.js"
-  ]
+    "static/js/feed.js",
+    "static/js/state.js"
+  ],
+  "exclude": ["node_modules", "static/js/dist", "static/js/tests"]
 }

@@ -122,7 +122,7 @@ func newBenchmarkDB(t *testing.B, n int) (*PostDB, []string) {
 func BenchmarkSimilarPHash_Buckets_1K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 1000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.SimilarPHash(hashes[0], -1, 10, 12)
 	}
 }
@@ -130,7 +130,7 @@ func BenchmarkSimilarPHash_Buckets_1K(b *testing.B) {
 func BenchmarkSimilarPHash_FullScan_1K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 1000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.similarPHashFullScan(hashes[0], -1, 10, 12)
 	}
 }
@@ -138,7 +138,7 @@ func BenchmarkSimilarPHash_FullScan_1K(b *testing.B) {
 func BenchmarkSimilarPHash_Buckets_10K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 10000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.SimilarPHash(hashes[0], -1, 10, 12)
 	}
 }
@@ -146,7 +146,7 @@ func BenchmarkSimilarPHash_Buckets_10K(b *testing.B) {
 func BenchmarkSimilarPHash_FullScan_10K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 10000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.similarPHashFullScan(hashes[0], -1, 10, 12)
 	}
 }
@@ -154,7 +154,7 @@ func BenchmarkSimilarPHash_FullScan_10K(b *testing.B) {
 func BenchmarkSimilarPHash_Buckets_50K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 50000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.SimilarPHash(hashes[0], -1, 10, 12)
 	}
 }
@@ -162,7 +162,7 @@ func BenchmarkSimilarPHash_Buckets_50K(b *testing.B) {
 func BenchmarkSimilarPHash_FullScan_50K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 50000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.similarPHashFullScan(hashes[0], -1, 10, 12)
 	}
 }
@@ -172,7 +172,7 @@ func BenchmarkSimilarPHash_FullScan_50K(b *testing.B) {
 func BenchmarkFindDownloadedByPHash_Buckets_10K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 10000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.FindDownloadedByPHash(hashes[0], -1, 5)
 	}
 }
@@ -180,7 +180,7 @@ func BenchmarkFindDownloadedByPHash_Buckets_10K(b *testing.B) {
 func BenchmarkFindDownloadedByPHash_FullScan_10K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 10000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.findDownloadedByPHashFullScan(hashes[0], -1, 5)
 	}
 }
@@ -188,7 +188,7 @@ func BenchmarkFindDownloadedByPHash_FullScan_10K(b *testing.B) {
 func BenchmarkFindDownloadedByPHash_Buckets_50K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 50000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.FindDownloadedByPHash(hashes[0], -1, 5)
 	}
 }
@@ -196,7 +196,7 @@ func BenchmarkFindDownloadedByPHash_Buckets_50K(b *testing.B) {
 func BenchmarkFindDownloadedByPHash_FullScan_50K(b *testing.B) {
 	db, hashes := newBenchmarkDB(b, 50000)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		db.findDownloadedByPHashFullScan(hashes[0], -1, 5)
 	}
 }
@@ -214,7 +214,7 @@ func BenchmarkSSECoalesce(b *testing.B) {
 	}()
 
 	b.Run("old_per_event", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			select {
 			case ch <- `{"type":"status","queued":1}`:
 			default:
@@ -243,7 +243,7 @@ func BenchmarkETagGeneration(b *testing.B) {
 		b.Skip("static/js/feed.js not found")
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = fmt.Sprintf(`W/"%x-%x"`, info.ModTime().UnixNano(), info.Size())
 	}
 }

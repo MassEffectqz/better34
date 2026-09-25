@@ -97,6 +97,8 @@ function makeApp() {
   a.toggleProfile = function () {};
   a.showToast = function () {};
   a.pushState = function () {};
+  // showGridMode вызывает pushGridRoute (свой маршрут /grid/<режим>).
+  a.pushGridRoute = function () {};
   a._finishFeedLoad = function () {};
   a._runPendingReload = function () {};
   a._observeCardReveal = function () {};

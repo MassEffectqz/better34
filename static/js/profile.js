@@ -14,10 +14,10 @@ const pfCandidatesFor = post => {
   const out = [];
   const push = u => { if (u && !out.includes(u)) out.push(u); };
   if (post.preview_url) push(pfProxy(post.preview_url));
-  if (post.downloaded || post.thumb_path) push(`/api/thumb/${post.id}`);
+  if (post.downloaded && post.thumb_path) push(`/api/thumb/${post.id}`);
   if (post.sample_url) push(pfProxy(post.sample_url));
   if (post.file_url) push(pfProxy(post.file_url));
-  if (!out.length) push(`/api/thumb/${post.id}`);
+  if (!out.length && post.downloaded) push(`/api/thumb/${post.id}`);
   return out;
 };
 
@@ -113,6 +113,7 @@ App.updateStats = function (p) {
   setNum('st-likes', likeN); setNum('tb-likes', likeN);
   setNum('st-hides', hideN); setNum('tb-hides', hideN);
   setNum('st-tags', tagN); setNum('tb-tags', tagN);
+  setNum('st-collections', colN);
   const tbCol = document.getElementById('tb-collections');
   if (tbCol) tbCol.textContent = colN;
 };
@@ -223,10 +224,8 @@ App.renderThumbs = function (type, ids) {
   const el = this.els[type === 'likes' ? 'likesList' : 'hidesList'];
   const empty = this.els[type === 'likes' ? 'likesEmpty' : 'hidesEmpty'];
   const gridBtn = type === 'likes' ? this.els.btnLikesGrid : this.els.btnHidesGrid;
-  const dlBtn = type === 'likes' ? this.els.btnLikesDownload : null;
   const list = ids || [];
 
-  if (dlBtn) dlBtn.style.display = list.length ? '' : 'none';
 
   if (!list.length) {
     el.innerHTML = '';
@@ -241,7 +240,7 @@ App.renderThumbs = function (type, ids) {
 
   const key = list.join(',');
   const tabEl = document.getElementById(type === 'likes' ? 'tab-likes' : 'tab-hides');
-  const tabActive = !tabEl || tabEl.classList.contains('active');
+  const tabActive = !tabEl || !tabEl.closest('.panel-nav') || tabEl.classList.contains('active');
   const ex = this._thumbs[type];
 
   if (ex && ex.key === key) {
@@ -611,24 +610,18 @@ App.importPresets = async function (ev) {
   ev.target.value = '';
 };
 
-App.bindProfileStats = function () {
-  document.querySelectorAll('.stat[data-goto]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tab = document.querySelector(`.profile-tab[data-tab="${btn.dataset.goto}"]`);
-      if (tab) tab.click();
-    });
-  });
-};
-
 App.toggleProfile = function () {
-  this.state.profileOpen = !this.state.profileOpen;
-  if (this.state.profileOpen && this.state.settingsOpen) {
+  const opening = !this.state.profileOpen;
+  if (opening && !this.state.settingsOpen) this._panelReturnFocus = document.activeElement;
+  const returnFocus = this._panelReturnFocus;
+  this.state.profileOpen = opening;
+  if (opening && this.state.settingsOpen) {
     this.state.settingsOpen = false;
-    this.els.settingsPanel.classList.add('hidden');
+    this.setPanelOpen(this.els.settingsPanel, false);
   }
-  this.els.profilePanel.classList.toggle('hidden', !this.state.profileOpen);
+  this.setPanelOpen(this.els.profilePanel, opening, opening ? null : returnFocus);
   this._syncPanels();
-  if (this.state.profileOpen) {
+  if (opening) {
     this.applyPanelWidth();
     this.loadProfile();
   }

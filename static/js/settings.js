@@ -3,14 +3,17 @@ import { _, icon, esc } from './utils.js';
 import { API } from './api.js';
 import { t } from './i18n.js';
 App.toggleSettings = function () {
-  this.state.settingsOpen = !this.state.settingsOpen;
-  if (this.state.settingsOpen && this.state.profileOpen) {
+  const opening = !this.state.settingsOpen;
+  if (opening && !this.state.profileOpen) this._panelReturnFocus = document.activeElement;
+  const returnFocus = this._panelReturnFocus;
+  this.state.settingsOpen = opening;
+  if (opening && this.state.profileOpen) {
     this.state.profileOpen = false;
-    this.els.profilePanel.classList.add('hidden');
+    this.setPanelOpen(this.els.profilePanel, false);
   }
-  this.els.settingsPanel.classList.toggle('hidden', !this.state.settingsOpen);
+  this.setPanelOpen(this.els.settingsPanel, opening, opening ? null : returnFocus);
   this._syncPanels();
-  if (this.state.settingsOpen) { this.applyPanelWidth(); this.syncCustomControls(); this.loadAliases(); }
+  if (opening) { this.applyPanelWidth(); this.syncCustomControls(); this.loadAliases(); }
 };
 
 App.syncCustomControls = function () {

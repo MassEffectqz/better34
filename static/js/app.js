@@ -16,6 +16,7 @@ import './social.js';
 import './auth.js';
 import './notify.js';
 import './a11y.js';
+import { OddTags } from './odd_tags.js';
 import { renderLucideIcons } from './utils.js';
 import { applyI18n, t, getLang } from './i18n.js';
 
@@ -30,5 +31,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (sel) sel.value = getLang();
   });
   renderLucideIcons();
+  // Список странных тегов нужен до первой отрисовки тегов, но ждать его не
+  // блокируем: подсветка появится, как только список придёт.
+  App.OddTags = OddTags;
+  OddTags.load().then(() => {
+    // Открытый пост мог быть отрисован до загрузки списка — обновляем теги.
+    if (typeof App._renderViewerTags === 'function') App._renderViewerTags();
+  });
   App.init();
 });

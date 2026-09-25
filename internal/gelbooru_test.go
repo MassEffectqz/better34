@@ -145,7 +145,12 @@ func TestGelbooruSuggestTagIndex(t *testing.T) {
 		if q.Get("s") != "tag" {
 			t.Errorf("expected s=tag, got %q", q.Get("s"))
 		}
-		gotPattern = q.Get("name_pattern")
+		// SuggestTags делает два запроса: префиксный (name_pattern=cat%)
+		// и, если базового тега нет, точный (name=cat). Пишем параметры
+		// ПРЕФИКСНОГО запроса — иначе их перетрёт точный.
+		if q.Get("name") == "" {
+			gotPattern = q.Get("name_pattern")
+		}
 		gotKey = q.Get("api_key")
 		w.Write([]byte(`{"@attributes":{},"tag":[{"name":"cat_ears","count":42000,"type":0},{"name":"cat_girl","count":99000,"type":0},{"name":"zero_count","count":0,"type":0}]}`))
 	}))

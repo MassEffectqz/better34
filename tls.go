@@ -245,8 +245,8 @@ func setupTLS(addr string) (scheme string, tlsLn net.Listener, plainSrv *http.Se
 	// использовали один и тот же сертификат.
 	if strings.ToLower(strings.TrimSpace(os.Getenv("BRIEFLY_H3"))) != "0" {
 		h3TLSConfig := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			NextProtos: []string{"h3"},
+			MinVersion:   tls.VersionTLS12,
+			NextProtos:   []string{"h3"},
 			Certificates: []tls.Certificate{cert},
 		}
 		h3Server = &http3.Server{

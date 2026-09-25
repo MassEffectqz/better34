@@ -259,18 +259,27 @@ func (h *Handler) GetThumb(c *gin.Context) {
 		return
 	}
 
-	path := filepath.Join("data", "thumbs", fmt.Sprintf("%d.jpg", id))
-
-	db := GetDB()
-	if post := db.Get(id); post != nil && post.Downloaded && post.ThumbPath != "" {
-		path = post.ThumbPath
+	// Локальной миниатюры нет — докачиваем превью с CDN и отдаём результат.
+	// Раньше здесь был безусловный 404, и сетка лайков/скрытого сыпала
+	// сотни 404 на посты, у которых preview_url ещё жив.
+	path, err := h.ensureThumb(id)
+	if path != "" {
+		// Миниатюра по id неизменяема по построению: живёт в браузерном
+		// HTTP-кэше максимально долго (service worker кэширует её
+		// cache-first, но до его активации и вне его работают заголовки).
+		c.Header("Cache-Control", "private, max-age=31536000, immutable")
+		serveLocalFile(c, path)
+		return
 	}
-
-	// Миниатюра по id неизменяема по построению: живёт в браузерном
-	// HTTP-кэше максимально долго (service worker кэширует её cache-first,
-	// но до его активации и вне его работают заголовки).
-	c.Header("Cache-Control", "private, max-age=31536000, immutable")
-	serveLocalFile(c, path)
+	// Ошибку НЕ кэшируем: превью могло не загрузиться из-за сети или
+	// занятого CDN, и браузер обязан иметь право повторить позже.
+	c.Header("Cache-Control", "no-store")
+	status := http.StatusNotFound
+	if err != nil && !thumbIsPermanentGone(err) {
+		// Временный сбой (сеть/таймаут/5xx) — не «нет такого поста».
+		status = http.StatusServiceUnavailable
+	}
+	c.JSON(status, gin.H{"error": "thumb not available"})
 }
 
 func (h *Handler) ProxyRemote(c *gin.Context) {

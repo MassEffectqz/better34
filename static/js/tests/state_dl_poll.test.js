@@ -54,7 +54,7 @@ defG('fetch', async () => ({ ok: true, status: 200, headers: { get: () => 'appli
 defG('requestAnimationFrame', (f) => setTimeout(f, 0));
 
 // методы-зависимости startDlPoll
-let notifyCalls = [];
+const notifyCalls = [];
 App.notifyDownloadsDone = (done, failedN) => { notifyCalls.push([done, failedN]); return true; };
 App.getCardByIndex = () => null;
 App.showToast = () => {};

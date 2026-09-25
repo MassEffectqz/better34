@@ -1234,8 +1234,10 @@ func (c *booruClient) suggestionCachePut(key string, items []TagSuggestion) {
 }
 
 func (c *booruClient) SuggestTags(query string) ([]TagSuggestion, error) {
+	// Служебные префиксы (-, ~, …) убираем: для апстрима нужен сам тег.
+	query = suggestQueryPrefix(query)
 	// По рунам, а не байтам: один кириллический символ — 2 байта.
-	if utf8.RuneCountInString(strings.TrimSpace(query)) < 2 {
+	if utf8.RuneCountInString(query) < 2 {
 		return []TagSuggestion{}, nil
 	}
 
@@ -1283,7 +1285,12 @@ func (c *booruClient) SuggestTags(query string) ([]TagSuggestion, error) {
 				v.Set("q", "index")
 				v.Set("json", "1")
 				v.Set("name_pattern", query+"%")
-				v.Set("limit", "20")
+				// limit=20 НЕ ХВАТАЛО. Индекс сортирует по частоте, поэтому на
+				// коротком префиксе двадцатка самых популярных ПРОИЗВОДНЫХ тегов
+				// вытесняла базовый: по «umamu» отдавало umamusume:_cinderella_gray
+				// и т.п., а сам umamusume не попадал в выдачу.
+				// Берём 100, отсекаем лишнее уже у себя после ранжирования.
+				v.Set("limit", "100")
 			default:
 				apiBase := strings.TrimSuffix(strings.Replace(c.spec.apiURL, "/index.php", "", 1), "/")
 				v = url.Values{"q": {query}}
@@ -1324,6 +1331,11 @@ func (c *booruClient) SuggestTags(query string) ([]TagSuggestion, error) {
 				continue
 			}
 			c.keys.report(cred.APIKey, true, "")
+			// Базовый тег самого префикса в выдаче может отсутствовать целиком:
+			// индекс gelbooru по «furry» не отдаёт «furry» (200 376 постов) — его
+			// вытесняют производные furry_*, и по «uma» нет «umamusume»
+			// (213 597). Точный запрос name=<tag> отдаёт его сразу.
+			sugg = c.ensureExactTag(sugg, query, cred)
 			c.suggestionCachePut(ckey, sugg)
 			return sugg, nil
 		}
@@ -1333,6 +1345,36 @@ func (c *booruClient) SuggestTags(query string) ([]TagSuggestion, error) {
 
 // errSuggestTransient — 429/5xx: стоит повторить с другим ключом.
 var errSuggestTransient = errors.New("tag suggest transient")
+
+// ensureExactTag добавляет базовый тег префикса, если его нет в выдаче.
+//
+// Зачем: индекс тегов gelbooru с name_pattern=<prefix>% режет выдачу и не
+// возвращает сам базовый тег — по «furry» приходит furry_breasts (4 698 918),
+// furry_ears (1 260 528) и прочие производные, но не «furry» (200 376 постов),
+// и по «uma» нет «umamusume» (213 597). Пользователь набирал префикс, который
+// сам является тегом, и не получал его в подсказках.
+//
+// Точный запрос name=<tag> (без %) отдаёт его сразу — он идёт через общий
+// кэш счётчиков, поэтому повторные обращения не бьют по сети. Если точного
+// тега на сайте нет, name_pattern даёт пустой ответ и список не меняется.
+func (c *booruClient) ensureExactTag(sugg []TagSuggestion, query string, cred APICredential) []TagSuggestion {
+	tag := strings.TrimSpace(query)
+	if tag == "" {
+		return sugg
+	}
+	for _, s := range sugg {
+		if strings.EqualFold(strings.TrimSpace(s.Value), tag) {
+			return sugg // уже есть, второй запрос не нужен
+		}
+	}
+	count, err := c.getTagCountDapiExact(tag, cred)
+	if err != nil || count <= 0 {
+		return sugg // тега нет — нечего показывать
+	}
+	exact := TagSuggestion{Label: tag, Value: tag, Count: count}
+	// Точное совпадение идёт первым: его набрали буквально.
+	return append([]TagSuggestion{exact}, sugg...)
+}
 
 func (c *booruClient) fetchSuggest(reqURL string, _ APICredential, query string) ([]TagSuggestion, error) {
 	req, err := http.NewRequest("GET", reqURL, nil)
@@ -1374,24 +1416,94 @@ func (c *booruClient) fetchSuggest(reqURL string, _ APICredential, query string)
 
 	sugg := c.parseSuggestions(body)
 
-	// Страховка от «творческих» апстримов (fuzzy-автодополнение r34,
-	// мусорные теги AI-заливок): оставляем только теги, реально
-	// начинающиеся с введённого префикса; без пустых значений и дублей.
-	if ql := strings.ToLower(strings.TrimSpace(query)); ql != "" {
-		filtered := make([]TagSuggestion, 0, len(sugg))
-		seen := make(map[string]bool, len(sugg))
-		for _, s := range sugg {
-			v := strings.ToLower(strings.TrimSpace(s.Value))
-			if v == "" || seen[v] || !strings.HasPrefix(v, ql) {
-				continue
-			}
-			seen[v] = true
-			filtered = append(filtered, s)
-		}
-		sugg = filtered
-	}
+	return filterSuggestionsByPrefix(sugg, query), nil
+}
 
-	return sugg, nil
+// suggestQueryPrefix нормализует ввод автодополнения: обрезает пробелы и
+// служебные префиксы booru-синтаксиса (-tag, +tag, ~tag, ^tag). Без этого
+// подсказки по «-brea» не находятся: ни один тег не начинается с минуса.
+func suggestQueryPrefix(query string) string {
+	q := strings.TrimSpace(query)
+	for len(q) > 0 && strings.IndexByte("-+~^", q[0]) >= 0 {
+		q = strings.TrimSpace(q[1:])
+	}
+	return q
+}
+
+// filterSuggestionsByPrefix оставляет теги, содержащие префикс, и
+// ранжирует их по релевантности: точное совпадение, префиксное, граница
+// слова, прочее вхождение (см. suggestionTier); внутри ступени — по
+// убыванию счётчика, затем короче имя и алфавит для стабильного порядка.
+//
+// Раньше отсечение шло строго по HasPrefix, из-за чего теги вроде
+// solo_breasts выпадали из выдачи целиком: набрав «breast», пользователь не
+// видел ничего, кроме breast*. Теперь такие теги не теряются, а просто идут
+// ниже. Обратная сторона fuzzy-апстрима (r34) и мусорных тегов AI-заливок
+// по-прежнему отсекается: в tier попадает только то, где префикс реально
+// встречается в имени.
+func filterSuggestionsByPrefix(sugg []TagSuggestion, query string) []TagSuggestion {
+	ql := strings.ToLower(suggestQueryPrefix(query))
+	filtered := make([]TagSuggestion, 0, len(sugg))
+	seen := make(map[string]bool, len(sugg))
+	for _, s := range sugg {
+		v := strings.ToLower(strings.TrimSpace(s.Value))
+		if v == "" || seen[v] {
+			continue
+		}
+		if suggestionTier(v, ql) < 0 {
+			continue
+		}
+		seen[v] = true
+		filtered = append(filtered, s)
+	}
+	sortSuggestionsByRelevance(filtered, ql)
+	return filtered
+}
+
+// suggestionTier — «релевантность» тега к набранному префиксу. Чем меньше,
+// тем лучше. Именно tier, а не длина имени, должен решать порядок выдачи:
+// 0 — точное совпадение, 1 — префиксное (cat_girl по «cat»), 2 — совпадение
+// на границе слова после «_» (solo_breasts по «breast»), 3 — прочее вхождение
+// внутрь имени (huge_breasts по «breast»). Пустой префикс: все равны (tier 0).
+func suggestionTier(value, prefix string) int {
+	if prefix == "" {
+		return 0
+	}
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v == prefix {
+		return 0
+	}
+	if strings.HasPrefix(v, prefix) {
+		return 1
+	}
+	// Совпадение не в начале: ищем его и смотрим, начинает ли оно слово.
+	if i := strings.Index(v, prefix); i > 0 {
+		if v[i-1] == '_' {
+			return 2
+		}
+		return 3
+	}
+	return -1 // префикса в теге нет вовсе, такой тег отбрасываем
+}
+
+// sortSuggestionsByPopularity сортирует подсказки: точное совпадение с
+// префиксом, затем по убыванию счётчика, затем короче/алфавит.
+func sortSuggestionsByRelevance(sugg []TagSuggestion, prefix string) {
+	ql := strings.ToLower(prefix)
+	sort.SliceStable(sugg, func(i, j int) bool {
+		a, b := sugg[i], sugg[j]
+		av, bv := strings.ToLower(strings.TrimSpace(a.Value)), strings.ToLower(strings.TrimSpace(b.Value))
+		if at, bt := suggestionTier(av, ql), suggestionTier(bv, ql); at != bt {
+			return at < bt
+		}
+		if a.Count != b.Count {
+			return a.Count > b.Count
+		}
+		if len(av) != len(bv) {
+			return len(av) < len(bv)
+		}
+		return av < bv
+	})
 }
 
 // parseSuggestions разбирает оба формата автодополнения:

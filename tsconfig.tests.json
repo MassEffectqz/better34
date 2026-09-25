@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "checkJs": false
+  },
+  "include": ["types/**/*.d.ts", "static/js/tests/**/*.js"],
+  "exclude": ["node_modules", "static/js/dist"]
+}

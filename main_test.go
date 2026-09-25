@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -105,6 +106,50 @@ func TestTokenMatches(t *testing.T) {
 	fail("wrong header", func(r *http.Request) { r.Header.Set("X-Briefly-Token", "nope") })
 	fail("wrong bearer", func(r *http.Request) { r.Header.Set("Authorization", "Bearer nope") })
 	fail("no token", nil)
+}
+
+func TestIsMediaPathSeparatesMediaFromLogic(t *testing.T) {
+	for _, p := range []string{
+		"/api/thumb/123", "/api/file/9", "/api/proxy", "/api/proxy?url=x&kind=preview",
+	} {
+		if !isMediaPath(p) {
+			t.Errorf("isMediaPath(%q) = false, want true", p)
+		}
+	}
+	for _, p := range []string{
+		"/api/posts", "/api/profile", "/api/like/1", "/api/download", "/api/thumbs",
+		"/api/healthz", "/",
+	} {
+		if isMediaPath(p) {
+			t.Errorf("isMediaPath(%q) = true, want false", p)
+		}
+	}
+}
+
+func TestMediaLimiterToleratesGridBurst(t *testing.T) {
+	// Сетка лайков дергает сотни миниатюр разом. Общий лимит 120/60 req/s
+	// превращал это в каскад 429 — отсюда битые превью в профиле.
+	mediaLimiter.buckets = make(map[string]*tokenBucket)
+	mediaLimiter.lastPrune = time.Now()
+	apiLimiter.buckets = make(map[string]*tokenBucket)
+	apiLimiter.lastPrune = time.Now()
+
+	const ip = "203.0.113.7"
+	for i := 0; i < 400; i++ {
+		if !mediaLimiter.allow(ip) {
+			t.Fatalf("media request %d was rate limited; grid bursts must pass", i)
+		}
+	}
+	// Логика приложения при этом троттлится как раньше.
+	limited := 0
+	for i := 0; i < 400; i++ {
+		if !apiLimiter.allow(ip) {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Fatal("api limiter must still throttle non-media requests")
+	}
 }
 
 func TestWebSecurityMiddleware(t *testing.T) {

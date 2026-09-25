@@ -7,7 +7,6 @@ on:
 permissions:
   contents: write
   packages: write
-  # Для actions/attest-build-provenance: генерация SLSA-аттестации сборки.
   id-token: write
   attestations: write
 
@@ -16,28 +15,55 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
-      - run: go vet ./...
-      - run: go test -race ./...
+      - run: npm ci
+      - name: Validate release version
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "release tag must be semver: vMAJOR.MINOR.PATCH[-PRERELEASE]"; exit 1;
+          }
+      - name: Quality gate
+        run: npm run check:ci
 
   binaries:
     runs-on: ubuntu-latest
     needs: test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
+      - run: npm ci
+      - name: Determine release channel
+        id: channel
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build frontend before Go
+        run: npm run build
       - name: Build windows/amd64
         run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o briefly.exe .
       - name: Build linux/amd64
         run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o briefly-linux-amd64 .
-      - name: Build linux/arm64 (NAS/RPi)
+      - name: Build linux/arm64
         run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o briefly-linux-arm64 .
-      # Подпись происхождения артефактов: по аттестации можно проверить,
-      # что бинарник собран этим workflow из этого коммита.
+      - name: Smoke test self-contained Linux binary
+        run: bash scripts/smoke.sh briefly-linux-amd64
+      - name: Checksums
+        run: sha256sum briefly.exe briefly-linux-amd64 briefly-linux-arm64 > SHA256SUMS
       - name: Attest build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
@@ -45,13 +71,17 @@ jobs:
             briefly.exe
             briefly-linux-amd64
             briefly-linux-arm64
+            SHA256SUMS
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
+          prerelease: ${{ steps.channel.outputs.stable != 'true' }}
+          make_latest: ${{ steps.channel.outputs.stable == 'true' }}
           files: |
             briefly.exe
             briefly-linux-amd64
             briefly-linux-arm64
+            SHA256SUMS
 
   docker:
     runs-on: ubuntu-latest
@@ -60,6 +90,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - name: Determine release channel
+        id: channel
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Login to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -70,11 +108,22 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          # Multi-arch: как собираемые бинарники (см. job binaries).
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+            ${{ steps.channel.outputs.stable == 'true' && format('ghcr.io/{0}:latest', github.repository) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Smoke test published image
+        if: ${{ steps.channel.outputs.stable == 'true' }}
+        run: |
+          docker run -d --name briefly-smoke -p 39128:3000 ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:39128/api/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:39128/ | grep -q '<!DOCTYPE html>'
+          curl -fsS http://127.0.0.1:39128/static/css/style.css >/dev/null
+          curl -fsS http://127.0.0.1:39128/static/js/dist/app.js >/dev/null
+          docker stop briefly-smoke

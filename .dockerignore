@@ -5,6 +5,7 @@ data/
 .gitignore
 .dockerignore
 .playwright-mcp/
+node_modules/
 *.exe
 *.exe~
 *.md

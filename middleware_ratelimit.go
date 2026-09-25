@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,11 +12,11 @@ import (
 // apiRateLimiter — token bucket rate limiter для API-эндпоинтов.
 // Каждый IP получает burstsPerSec токенов в секунду; при превышении — 429.
 type apiRateLimiter struct {
-	mu       sync.Mutex
-	buckets  map[string]*tokenBucket
-	burst    float64
-	rate     float64
-	maxAge   time.Duration
+	mu        sync.Mutex
+	buckets   map[string]*tokenBucket
+	burst     float64
+	rate      float64
+	maxAge    time.Duration
 	lastPrune time.Time
 }
 
@@ -30,10 +31,22 @@ var apiLimiter = &apiRateLimiter{
 	// Параметры консервативные: burst 120 покрывает первичную загрузку ленты
 	// (~60 превью + /posts + /profile + /events), а 60 req/s всё равно
 	// отсекает абуз. Ложные 429 на легитимном трафике исключены.
-	burst:   120,
-	rate:    60,
-	maxAge:  5 * time.Minute,
+	burst:     120,
+	rate:      60,
+	maxAge:    5 * time.Minute,
 	lastPrune: time.Now(),
+}
+
+// mediaLimiter — отдельное ведро для медиавыдачи (/api/thumb, /api/file,
+// /api/proxy). Сетка профиля запрашивает сотни миниатюр разом; общий лимит
+// 60 req/s превращал это в каскад 429, и превью оставались битыми. Запросы
+// идемпотентные и кэшируются, поэтому здесь нужен запас по burst и rate,
+// а не полное снятие троттлинга.
+var mediaLimiter = &apiRateLimiter{
+	buckets: make(map[string]*tokenBucket),
+	burst:   1000,
+	rate:    480,
+	maxAge:  5 * time.Minute,
 }
 
 func (rl *apiRateLimiter) allow(ip string) bool {
@@ -89,6 +102,23 @@ func apiRateLimitMiddleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		// Медиа (превью, файлы, прокси) — это сотни запросов на одну
+		// страницу: сетка лайков дергает миниатюры пачками по 60+ штук.
+		// Общий лимит 60 req/s превращался в каскад 429 и битые превью,
+		// хотя запросы идемпотентные и у каждого свой кэш. Троттлим их
+		// отдельным, в 8 раз более щедрым ведром.
+		if isMediaPath(c.Request.URL.Path) {
+			if !mediaLimiter.allow(c.ClientIP()) {
+				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+					"error":   "rate_limited",
+					"message": "too many media requests, try again later",
+				})
+				return
+			}
+			mediaLimiter.prune()
+			c.Next()
+			return
+		}
 		ip := c.ClientIP()
 		if !apiLimiter.allow(ip) {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
@@ -102,4 +132,18 @@ func apiRateLimitMiddleware() gin.HandlerFunc {
 		apiLimiter.prune()
 		c.Next()
 	}
+}
+
+// isMediaPath — запросы медиавыдачи. Идемпотентны, отдаются из кэша/CDN
+// и не должны конкурировать за общий лимит с логикой приложения.
+func isMediaPath(p string) bool {
+	switch {
+	case strings.HasPrefix(p, "/api/thumb/"):
+		return true
+	case strings.HasPrefix(p, "/api/file/"):
+		return true
+	case strings.HasPrefix(p, "/api/proxy"):
+		return true
+	}
+	return false
 }
