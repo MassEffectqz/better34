@@ -45,6 +45,17 @@ var (
 // loadDynamicProviderSpecs читает data/providers.json и приводит к siteSpec.
 // Дефектные записи пропускаются с логом: один битый сайт не должен рушить старт.
 func loadDynamicProviderSpecs() []siteSpec {
+	dynProvRelMu.Lock()
+	defer dynProvRelMu.Unlock()
+	loadDynamicProviderSpecsLocked()
+	return dynProvSpec
+}
+
+// loadDynamicProviderSpecsLocked — внутренняя реализация под dynProvRelMu.
+// maybeReloadProviders сбрасывает dynProvInit и dynProvSpec, поэтому читать
+// и писать эти переменные можно только под тем же мьютексом (сброс Once
+// параллельно с Do() — гонка по model of Go).
+func loadDynamicProviderSpecsLocked() {
 	dynProvInit.Do(func() {
 		data, err := os.ReadFile(providersJSONPath)
 		if err != nil {
@@ -98,7 +109,6 @@ func loadDynamicProviderSpecs() []siteSpec {
 			})
 		}
 	})
-	return dynProvSpec
 }
 
 // maybeReloadProviders перечитывает файл, если он появился/изменился после
@@ -121,7 +131,7 @@ func maybeReloadProviders() {
 	dynProvMod.Store(mod)
 	dynProvInit = sync.Once{}
 	dynProvSpec = nil
-	loadDynamicProviderSpecs()
+	loadDynamicProviderSpecsLocked() // уже под dynProvRelMu — публичная версия ждала бы лок заново (дедлок)
 	log.Printf("[providers] %s: перечитан, %d сторонних сайтов", providersJSONPath, len(dynProvSpec))
 }
 

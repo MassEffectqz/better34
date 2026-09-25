@@ -18,7 +18,14 @@ func newTestGelbooru(srvURL string) *booruClient {
 	c := NewGelbooruClient()
 	c.spec.apiURL = srvURL + "/index.php"
 	c.httpClient.Store(&http.Client{})
-	c.cache = newBooruCache(filepath.Join(os.TempDir(), "gb_sc_test.json"))
+	// Межзапусковая изоляция: gb_sc_test.json переживает прогон в %TEMP%
+	// (debounced saveToDisk дописывает его в конце пакета), и следующий
+	// запуск получает SWR-хит вместо запроса к мок-серверу — тесты падают
+	// с «got 0 calls». Удаляем перед загрузкой: каждый тест начинается
+	// с пустого кэша и обязан ходить на сервер.
+	cachePath := filepath.Join(os.TempDir(), "gb_sc_test.json")
+	_ = os.Remove(cachePath)
+	c.cache = newBooruCache(cachePath)
 	c.suggMu.Lock()
 	c.suggM = make(map[string]suggestionCacheEntry)
 	c.suggMu.Unlock()
