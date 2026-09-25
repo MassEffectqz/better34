@@ -1,12 +1,12 @@
 module briefly
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/andybalholm/brotli v1.2.3
 	github.com/disintegration/imaging v1.6.2
 	github.com/gin-gonic/gin v1.12.0
-	github.com/quic-go/quic-go v0.61.0
+	github.com/quic-go/quic-go v0.63.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.44.0
