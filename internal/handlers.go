@@ -21,6 +21,15 @@ type Handler struct {
 	downloader *Downloader
 }
 
+// Параметры окна выдачи для фильтра «Новое/Виденное» в онлайн-ленте.
+// viewedWindow — сколько страниц провайдера просматривает один лист клиента
+// (лист N → страницы (N-1)*W+1 … N*W, окна не пересекаются); viewedMaxFetch —
+// потолок одного запроса к апстриму, чтобы limit клиента не уехал в сотни постов.
+const (
+	viewedWindow   = 3
+	viewedMaxFetch = 200
+)
+
 func NewHandler() *Handler {
 	providers := map[string]Provider{
 		rule34Site.name:    NewRule34Client(),
@@ -133,6 +142,27 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 		limit = 40
 	}
 
+	// Фильтр «Новое/Виденное» (viewed=0/1). Он смотрит в историю просмотров
+	// локальной БД, поэтому работает с любым источником, включая gelbooru,
+	// и не зависит от того, умеет ли сайт такой фильтр (не умеет никто).
+	// Апстрим отдаёт посты подряд, а просмотренные надо вырезать, поэтому
+	// лист расширяется окном в viewedWindow страниц: иначе страница из 40
+	// постов, где 30 уже видели, вырождалась бы в 10 карточек, а часто —
+	// в пустую. Окна соседних листов не пересекаются (лист N смотрит на
+	// страницы (N-1)*W+1 … N*W), поэтому пагинация не дублирует посты.
+	viewedQ := c.Query("viewed")
+	onlyViewed := viewedQ == "1"
+	viewFilter := viewedQ == "0" || onlyViewed
+	fetchPage, fetchLimit, windowFactor := page, limit, 1
+	if viewFilter {
+		windowFactor = viewedWindow
+		fetchPage = (page-1)*viewedWindow + 1
+		fetchLimit = limit * viewedWindow
+		if fetchLimit > viewedMaxFetch {
+			fetchLimit = viewedMaxFetch
+		}
+	}
+
 	cfg := GetConfig()
 	minID := cfg.GetMinID()
 	if midStr := c.Query("min_id"); midStr != "" {
@@ -240,7 +270,7 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 			wg.Add(1)
 			go func(i int, pr Provider) {
 				defer wg.Done()
-				ps, e := pr.SearchPosts(query, page, perProvLimit, minID)
+				ps, e := pr.SearchPosts(query, fetchPage, perProvLimit, minID)
 				lists[i], errs[i] = ps, e
 			}(i, pr)
 		}
@@ -289,10 +319,13 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 	if strings.Contains(tags, "|") {
 		parts := strings.Split(tags, "|")
 		n := len(parts)
-		totalTarget := limit * 2
+		totalTarget := limit * 2 * windowFactor
 		perPartLimit := (totalTarget + n - 1) / n
 		if perPartLimit < 1 {
 			perPartLimit = 1
+		}
+		if perPartLimit > viewedMaxFetch {
+			perPartLimit = viewedMaxFetch
 		}
 		calls := 0
 		failedCalls := 0
@@ -309,7 +342,7 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 				partResults = append(partResults, filterOmitted(mergeMulti(lists), rq.omitted))
 			} else {
 				calls++
-				p, e := h.provider().SearchPosts(rq.query, page, perPartLimit, minID)
+				p, e := h.provider().SearchPosts(rq.query, fetchPage, perPartLimit, minID)
 				if e != nil {
 					failedCalls++
 					continue
@@ -330,7 +363,7 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 	} else {
 		rq := buildQuery(tags)
 		if multi {
-			lists, anyOK := searchAcross(rq.query, limit)
+			lists, anyOK := searchAcross(rq.query, fetchLimit)
 			if !anyOK {
 				c.JSON(http.StatusBadGateway, gin.H{"error": "источники постов недоступны: все сайты завершили запрос ошибкой"})
 				return
@@ -338,7 +371,7 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 			posts = mergeMulti(lists)
 		} else {
 			var err error
-			posts, err = h.provider().SearchPosts(rq.query, page, limit, minID)
+			posts, err = h.provider().SearchPosts(rq.query, fetchPage, fetchLimit, minID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -355,6 +388,33 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 			}
 		}
 		posts = kept
+	}
+
+	// viewed-фильтр по истории просмотров: оставляем только совпавшие и
+	// обрезаем расширенное окно обратно до limit. Срез новый (не posts[:0]):
+	// список мог прийти из кэша провайдера, и запись на месте испортила бы
+	// его. more — апстрим отдал полное окно, значит за ним есть ещё посты:
+	// клиент по этому флагу догрузит следующий лист, не показывая «пусто»
+	// там, где просто не повезло с окном.
+	more := false
+	if viewFilter {
+		windowed := len(posts)
+		ids := make([]int, 0, len(posts))
+		for _, p := range posts {
+			ids = append(ids, p.ID)
+		}
+		viewed := GetDB().ViewedIDs(ids)
+		kept := make([]Rule34Post, 0, len(posts))
+		for _, p := range posts {
+			if viewed[p.ID] == onlyViewed {
+				kept = append(kept, p)
+			}
+		}
+		posts = kept
+		if len(posts) > limit {
+			posts = posts[:limit]
+		}
+		more = windowed >= fetchLimit
 	}
 
 	db := GetDB()
@@ -444,7 +504,13 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 	sortedCopy := make([]gin.H, len(enriched))
 	copy(sortedCopy, enriched)
 	sort.Slice(sortedCopy, func(i, j int) bool { return sortedCopy[i]["id"].(int) < sortedCopy[j]["id"].(int) })
-	body, _ := json.Marshal(gin.H{"posts": sortedCopy, "page": page, "limit": limit})
+	payload := gin.H{"posts": sortedCopy, "page": page, "limit": limit}
+	if viewFilter {
+		// Клиент догружает следующий лист, пока не наберёт карточек или не
+		// упрётся в конец: без флага пустое окно выглядело бы как «нет постов».
+		payload["more"] = more
+	}
+	body, _ := json.Marshal(payload)
 	sum := sha256.Sum256(body)
 	etag := fmt.Sprintf(`"%x"`, sum[:16])
 	c.Header("ETag", etag)

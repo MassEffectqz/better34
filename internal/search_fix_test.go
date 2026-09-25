@@ -206,8 +206,9 @@ func BenchmarkSuggestTagsLocalBoundary(b *testing.B) {
 		}
 		db.AddOrUpdate(&Post{ID: i + 1, Tags: strings.Join(tags, " "), Downloaded: true})
 	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	// b.Loop() вместо b.N: замеряет только тело цикла и не даёт компилятору
+	// выбросить вызов (b.Loop доступен с Go 1.24, модуль на 1.25).
+	for b.Loop() {
 		db.SuggestTagsLocal("tag_100", 8)
 	}
 }

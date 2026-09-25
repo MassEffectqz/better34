@@ -189,6 +189,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .tag-hide-btn{background:none;border:none;color:inherit;cursor:pointer;padding:0;margin:0 0 0 2px;font-size:.65rem;display:inline-flex;align-items:center;opacity:.4;transition:opacity var(--transition)}
 .tag-hide-btn:hover{opacity:1}
 .tag-count{margin-left:3px;font-size:.65rem;opacity:.5}
+/* Значок «?» — у тега есть объяснение. Кружок тонкий и полупрозрачный:
+   он не должен перетягивать внимание с самого тега и не должен сливаться
+   с подсветкой yellow/red, поэтому берёт цвет текста, а не уровня. */
+.tag-hint{display:inline-flex;align-items:center;justify-content:center;width:.9em;height:.9em;margin-left:3px;border:1px solid currentColor;border-radius:50%;font-size:.6rem;line-height:1;opacity:.5;cursor:help;flex-shrink:0}
+.tag-hint:hover{opacity:.9}
 .viewer-progress{font-size:.75rem;color:var(--text-dim);text-align:center;margin-top:4px}
 
 
@@ -655,6 +660,9 @@ select.ss-rate option{color:#111;background:#fff}
   /* Группа «Фильтры» внутри меню: рейтинг, viewed, источник */
   #header-menu-filters{display:block;padding:2px 4px 6px}
   #header-menu-filters .rating-toggle,#header-menu-filters .viewed-toggle{display:flex;width:100%;margin-top:4px}
+  /* Перенос в мобильное меню не должен воскрешать спрятанный переключатель:
+     селектор по id выше по специфичности, чем .viewed-toggle.hidden. */
+  #header-menu-filters .viewed-toggle.hidden{display:none}
   #header-menu-filters .rt-btn,#header-menu-filters .vt-btn{flex:1;padding:11px 6px;font-size:.75rem}
   #header-menu-filters .grid-control{margin-top:6px}
   #header-menu-filters .provider-badge{width:100%;justify-content:space-between;height:40px;padding:0 12px;font-size:.76rem}
@@ -815,6 +823,10 @@ button,a{-webkit-tap-highlight-color:transparent}
 .rt-btn:hover{color:var(--text)}
 .rt-btn.active{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--text)}
 .viewed-toggle{display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+/* Без этого правила класс hidden на переключателе ничего не делал: общих
+   .hidden в стилях нет, а .viewed-toggle задаёт display:flex. Из-за этого
+   «Все/Новое/Виденное» висели в онлайн-ленте, где фильтр не применим. */
+.viewed-toggle.hidden{display:none}
 .vt-btn{flex:1 1 0;padding:7px 9px;background:none;border:none;color:var(--text-dim);font-size:.68rem;font-weight:600;cursor:pointer;line-height:1.4;white-space:nowrap;transition:background var(--transition),color var(--transition)}
 .vt-btn:hover{color:var(--text)}
 .vt-btn.active{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--text)}

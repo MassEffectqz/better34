@@ -75,5 +75,23 @@ await withFetch({ yellow: null, red: null, note: null }, async () => {
   check('без сервера не падает', OddTags.descOf('furry') === null && OddTags.levelOf('furry') === null);
 }
 
+// Теги с дефисом и пробелом: сервер нормализует ключи файла (normalizeOddTag:
+// пробелы/дефисы → подчёркивания), поиск обязан делать то же самое. Раньше
+// t-shirt / o-ring / one-piece_swimsuit не находились вообще.
+await withFetch({ note: { t_shirt: 'Футболка', o_ring: 'Кольцо на члене', top_down_bottom_up: 'Вид сверху и снизу' } }, async () => {
+  await OddTags.load();
+  check('тег с дефисом находится', OddTags.levelOf('t-shirt') === 'note', String(OddTags.levelOf('t-shirt')));
+  check('текст тега с дефисом', OddTags.descOf('t-shirt') === 'Футболка', String(OddTags.descOf('t-shirt')));
+  check('o-ring находится', OddTags.descOf('o-ring') === 'Кольцо на члене', String(OddTags.descOf('o-ring')));
+  check('пробел в теге нормализуется в подчёркивание',
+    OddTags.levelOf('top down bottom up') === 'note', String(OddTags.levelOf('top down bottom up')));
+  // Ключ в файле может остаться с дефисом — приведём при разборе.
+  await withFetch({ note: { 'one-piece_swimsuit': 'Купальник-комбинезон' } }, async () => {
+    await OddTags.load();
+    check('ключ с дефисом из файла нормализуется при разборе',
+      OddTags.descOf('one-piece_swimsuit') === 'Купальник-комбинезон', String(OddTags.descOf('one-piece_swimsuit')));
+  });
+});
+
 console.log(`odd_tags: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

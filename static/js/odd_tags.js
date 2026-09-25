@@ -20,17 +20,24 @@ const ODD_TAG_PRIORITY = ['red', 'yellow', 'note'];
 const asMap = (raw) => {
   const out = new Map();
   if (Array.isArray(raw)) {
-    for (const t of raw) if (t != null && String(t).trim()) out.set(String(t).trim().toLowerCase(), '');
+    for (const t of raw) if (t != null && String(t).trim()) out.set(normTag(t), '');
     return out;
   }
   if (raw && typeof raw === 'object') {
     for (const [t, d] of Object.entries(raw)) {
-      const k = String(t).trim().toLowerCase();
+      const k = normTag(t);
       if (k) out.set(k, typeof d === 'string' ? d : '');
     }
   }
   return out;
 };
+
+// normTag приводит тег к тому же виду, что и сервер (normalizeOddTag в
+// internal/odd_tags.go): нижний регистр, пробелы и дефисы → подчёркивания.
+// Без этого теги с дефисом (t-shirt, o-ring, one-piece_swimsuit) не находились
+// никогда: ключ в файле сервер нормализует, а поиск шёл по сырому тегу.
+const normTag = (tag) => String(tag || '').trim().toLowerCase()
+  .replace(/[\s-]+/g, '_');
 
 export const OddTags = {
   _byLevel: { yellow: new Map(), red: new Map(), note: new Map() },
@@ -48,7 +55,7 @@ export const OddTags = {
 
   // Уровень тега или null. При конфликте разделов побеждает более строгий.
   levelOf(tag) {
-    const t = String(tag || '').trim().toLowerCase();
+    const t = normTag(tag);
     if (!t) return null;
     for (const lvl of ODD_TAG_PRIORITY) {
       if (this._byLevel[lvl].has(t)) return lvl;
@@ -58,7 +65,7 @@ export const OddTags = {
 
   // Текст объяснения для тега или null, если его нет.
   descOf(tag) {
-    const t = String(tag || '').trim().toLowerCase();
+    const t = normTag(tag);
     if (!t) return null;
     const lvl = this.levelOf(t);
     if (!lvl) return null;

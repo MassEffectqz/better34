@@ -3,6 +3,11 @@ import { icon, iconToNode, esc, go } from './utils.js';
 import { API } from './api.js';
 import { t, tf } from './i18n.js';
 
+// Сколько подряд пустых листов готовы догрузить «Новое/Виденное», прежде чем
+// признать выдачу исчерпанной. Окно сервера конечно, но при «Виденное» в
+// большой ленте совпадений может не быть в первых окнах — даём запас.
+const VIEWED_MAX_EMPTY_PAGES = 3;
+
 /** @this {AppType} */
 App.pageSize = function () {
   // U8: адаптируем pageSize к количеству колонок — на мобильных меньше постов,
@@ -180,6 +185,7 @@ App.clearMode = function () {
   this.clearGrid();
   this._clearFeedCache();
   this.renderModeBar();
+  this.updateViewedToggle();
   if (this.state.query) {
     this.loadPosts(true);
   } else {
@@ -210,6 +216,9 @@ App.showGridMode = async function (type, idsOverride) {
   if (this.state.profileOpen) this.toggleProfile();
   this.state.displayMode = type;
   this.state.displayIds = ids;
+  // Лайки/скрытые/коллекция/«похожие» — список задан ids, фильтр по истории
+  // просмотров тут неприменим: переключатель прячем (updateViewedToggle).
+  this.updateViewedToggle();
   this.state.viewerOpen = false;
   this.state.loading = true;
   this.setStatus(`…: ${ids.length}`);
@@ -259,7 +268,40 @@ App.hideSkeletons = function () {
 App._feedCacheKey = function () {
   if (this.state.recommendActive) return null;
   if (this.state.query || this.state.isLocal) return null;
+  // Кэш листа — неотфильтрованная страница: с активным «Новое/Виденное»
+  // он показывал бы посты, отобранные фильтром (и наоборот, скрывал бы
+  // подходящие). При фильтре кэш ленты просто выключаем.
+  if (this.state.viewedFilter) return null;
   return 'briefly_feed_cache';
+};
+
+/** @this {AppType} */
+// setViewedFilter — единая точка смены «Все / Новое / Виденное»: состояние,
+// подсветка кнопок, сброс счётчика пустых листов и перезагрузка ленты.
+App.setViewedFilter = function (value) {
+  const v = value || '';
+  if (!this.els.viewedToggle) {
+    this.state.viewedFilter = v;
+    return;
+  }
+  this.state.viewedFilter = v;
+  this.els.viewedToggle.querySelectorAll('.vt-btn').forEach((/** @type {HTMLElement} */ x) => {
+    x.classList.toggle('active', x.dataset.viewed === v);
+  });
+  this._viewedSkip = 0;
+  this.invalidateFeedCache();
+  this.loadPosts(true, null, true);
+};
+
+/** @this {AppType} */
+// updateViewedToggle — переключатель показываем в обычной ленте (локальной и
+// онлайн-источника, включая gelbooru) и прячем в режимах-сетках (лайки,
+// скрытые, коллекция, «похожие»): там список постов задан ids, фильтр по
+// истории просмотров к нему неприменим.
+App.updateViewedToggle = function () {
+  if (!this.els.viewedToggle) return;
+  const show = this.state.displayMode === 'search' && !this.state.recommendActive;
+  this.els.viewedToggle.classList.toggle('hidden', !show);
 };
 
 /** @this {AppType} */
@@ -334,6 +376,7 @@ App.renderEmptyState = function (opts) {
       const act = btn.dataset.action;
       if (act === 'reset') this.resetFilters();
       else if (act === 'random') go(this.randomPost());
+      else if (act === 'viewed-all') this.setViewedFilter('');
       else if (act === 'retry') this.loadPosts(true);
     });
   });
@@ -444,7 +487,11 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
       ep = `/local?page=${this.state.page}&limit=${this.pageSize()}${this.state.query ? `&tags=${encodeURIComponent(this.state.query)}` : ''}${this.state.viewedFilter ? `&viewed=${this.state.viewedFilter}` : ''}`;
     } else {
       const rp = this.state.ratingFilter ? `&rating=${this.state.ratingFilter}` : '';
-      ep = `/posts?page=${this.state.page}&limit=${this.pageSize()}${this.state.query ? `&tags=${encodeURIComponent(this.state.query)}` : ''}${rp}`;
+      // viewed уходит и в онлайн-выдачу: фильтр «Новое/Виденное» работает
+      // по истории просмотров и не зависит от источника (gelbooru, rule34,
+      // «все сайты»).
+      const vp = this.state.viewedFilter ? `&viewed=${this.state.viewedFilter}` : '';
+      ep = `/posts?page=${this.state.page}&limit=${this.pageSize()}${this.state.query ? `&tags=${encodeURIComponent(this.state.query)}` : ''}${rp}${vp}`;
     }
     if (this.state.minId && !this.state.recommendActive) ep += `&min_id=${this.state.minId}`;
     if (forceRefresh) ep += (ep.includes('?') ? '&' : '?') + 'v=' + Date.now();
@@ -456,23 +503,43 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
     const rawCount = posts.length;
     this.hideSkeletons();
     if (posts.length === 0) {
+      // Пустой лист при активном «Новое/Виденное» ≠ конец выдачи: сервер
+      // смотрит расширенное окно страниц, и в нём могло не оказаться ни
+      // одного поста под фильтр. Он сообщает об этом флагом more — тогда
+      // берём следующий лист сами (ограниченно, чтобы не крутить пустые
+      // окна по кругу). Без флага more это честное «дальше нечего найти».
+      if (this.state.viewedFilter && data.more && (this._viewedSkip = (this._viewedSkip || 0) + 1) <= VIEWED_MAX_EMPTY_PAGES) {
+        this.state.page++;
+        this.state.loading = false;
+        if (mainEl) mainEl.setAttribute('aria-busy', 'false');
+        this._finishFeedLoad();
+        this.loadPosts(false).catch(() => {});
+        return;
+      }
       this.state.hasMore = false;
       if (this.state.posts.length === 0) {
         this.els.grid.innerHTML = '';
-        this.els.grid.appendChild(this.state.isLocal
-          ? this.renderEmptyState({ title: t('empty.noLocal'), subtitle: t('empty.noLocalHint'), actions: [{ key: 'random', label: t('menu.random') }] })
-          : this.renderEmptyState({
-              title: t('empty.nothing'),
-              subtitle: t('empty.tryOther'),
-              actions: (this.state.query || (this.state.profile && this.state.profile.hidden_tags && this.state.profile.hidden_tags.length))
-                ? [{ key: 'reset', label: t('btn.resetFilters') }, { key: 'random', label: t('menu.random') }]
-                : [{ key: 'random', label: t('menu.random') }],
-            }));
+        this.els.grid.appendChild(this.state.viewedFilter
+          ? this.renderEmptyState({
+              title: t(this.state.viewedFilter === '1' ? 'viewed.seenEmpty' : 'viewed.newEmpty'),
+              subtitle: t('viewed.empty'),
+              actions: [{ key: 'viewed-all', label: t('viewed.all') }],
+            })
+          : this.state.isLocal
+            ? this.renderEmptyState({ title: t('empty.noLocal'), subtitle: t('empty.noLocalHint'), actions: [{ key: 'random', label: t('menu.random') }] })
+            : this.renderEmptyState({
+                title: t('empty.nothing'),
+                subtitle: t('empty.tryOther'),
+                actions: (this.state.query || (this.state.profile && this.state.profile.hidden_tags && this.state.profile.hidden_tags.length))
+                  ? [{ key: 'reset', label: t('btn.resetFilters') }, { key: 'random', label: t('menu.random') }]
+                  : [{ key: 'random', label: t('menu.random') }],
+              }));
       }
       this.state.loading = false;
       if (mainEl) mainEl.setAttribute('aria-busy', 'false');
       restoreTop(); this._finishFeedLoad(); this.updateStatus(); this._runPendingReload(); return;
     }
+    this._viewedSkip = 0;
     const existingIds = new Set(this.state.posts.map(p => p.id));
     const hiddenIds = new Set(this.state.profile.hidden_posts || []);
     const hiddenTags = this.state.query
@@ -628,7 +695,7 @@ App._prefetchNextPage = function () {
   const next = this.state.page;
   if (this._prefetchedPage >= next) return;
   this._prefetchedPage = next;
-  let ep = `/posts?page=${next}&limit=${this.pageSize()}${this.state.query ? `&tags=${encodeURIComponent(this.state.query)}` : ''}${this.state.ratingFilter ? `&rating=${this.state.ratingFilter}` : ''}`;
+  let ep = `/posts?page=${next}&limit=${this.pageSize()}${this.state.query ? `&tags=${encodeURIComponent(this.state.query)}` : ''}${this.state.ratingFilter ? `&rating=${this.state.ratingFilter}` : ''}${this.state.viewedFilter ? `&viewed=${this.state.viewedFilter}` : ''}`;
   if (this.state.minId) ep += `&min_id=${this.state.minId}`;
   API.get(ep).catch(() => {});
 };

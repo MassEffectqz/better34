@@ -5,6 +5,11 @@ import { API } from './api.js';
 import { t, getLang, setLang } from './i18n.js';
 import { flushOfflineQueue } from './offline.js';
 
+// Пауза перед отправкой пачки отметок «просмотрено». Нужна, чтобы быстрое
+// листание не превращалось в запрос на каждый пост; сама очередь при этом не
+// теряет id — накопленное уходит одним POST /api/views.
+const VIEW_FLUSH_MS = 1500;
+
 export const App = {
   state: {
     /** @type {Post[]} */ posts: [], page: 1, loading: false, hasMore: true, query: '',
@@ -113,6 +118,8 @@ export const App = {
     this.initIntersectionObserver();
     this.initPullToRefresh();
     this.initHeaderFilters();
+    // Стартовая лента — обычная (не сетка): показываем «Все/Новое/Виденное».
+    this.updateViewedToggle();
     this.startDlPoll();
     try { if (localStorage.getItem('briefly_viewer_panel') === '1') this.els.viewerMobileActions.classList.add('collapsed'); } catch (_) {}
     this.loadAccent();
@@ -393,6 +400,8 @@ export const App = {
       else if (action === 'stats') go(this.showStats());
       else if (action === 'logout') go(this.logout());
       else if (action === 'local') this.toggleLocal();
+      else if (action === 'mark-viewed') go(this.markLoadedViewed());
+      else if (action === 'unmark-viewed') go(this.unmarkViewed());
       else if (action === 'random') go(this.randomPost());
       else if (action === 'recommend') this.recommendFeed();
       else if (action === 'grid') this.cycleGridDensity();
@@ -452,16 +461,22 @@ export const App = {
         this.loadPosts(true, null, true);
       });
     }
-    // Переключатель «просмотренности» (локальная лента): Все / Новые / Виденное.
+    // Переключатель «просмотренности»: Все / Новые / Виденное. Работает и в
+    // локальной ленте, и в онлайн-выдаче любого источника (в т.ч. gelbooru):
+    // фильтр живёт на сервере, в /local и /api/posts одинаково.
     if (e.viewedToggle) {
       e.viewedToggle.addEventListener('click', (ev) => {
         const b = ev.target.closest('.vt-btn');
         if (!b || b.dataset.viewed === this.state.viewedFilter) return;
-        this.state.viewedFilter = b.dataset.viewed;
-        e.viewedToggle.querySelectorAll('.vt-btn').forEach(x => x.classList.toggle('active', x === b));
-        this.loadPosts(true, null, true);
+        this.setViewedFilter(b.dataset.viewed);
       });
     }
+    // Хвост очереди отметок не должен теряться при закрытии/сворачивании
+    // вкладки: иначе последние 1.5с листания остались бы «Новыми» навсегда.
+    window.addEventListener('pagehide', () => this._flushViewed());
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') this._flushViewed();
+    });
     // Алиасы тегов: добавить/обновить список в настройках.
     if (e.btnAddAlias) {
       e.btnAddAlias.addEventListener('click', () => this.addAlias());
@@ -1678,6 +1693,7 @@ export const App = {
     if (this.state.viewerOpen) this.closeViewer();
     this.state.recommendActive = true;
     this.renderModeBar();
+    this.updateViewedToggle();
     this.loadPosts(true, null, true);
     this.showToast('Собираю рекомендации по вашим лайкам...');
   },
@@ -1686,6 +1702,7 @@ export const App = {
     if (!this.state.recommendActive) return;
     this.state.recommendActive = false;
     this.renderModeBar();
+    this.updateViewedToggle();
     this.loadPosts(true, null, true);
     this.showToast('Вернулся к вашему запросу');
   },
@@ -1728,21 +1745,100 @@ export const App = {
     }
   },
 
-  // _markViewed — серверная история просмотров (фильтр «Новое/Виденное» в
-  // локальной ленте). Debounce 1.5с батчит быстрое листание/слайдшоу; каждый
-  // пост отсылается не чаще раза за сессию (повторный показ — не новый факт).
+  // _markViewed — серверная история просмотров (фильтр «Новое/Виденное»).
+  //
+  // Раньше debounce хранил ОДНО pending-id и перезаписывал его каждым новым
+  // постом: при быстром листании (стрелки, свайп, слайдшоу) на сервер уходил
+  // только последний пост, а остальные навсегда оставались «непросмотренными»
+  // — «Виденное» их не показывало, «Новое» продолжало предлагать. Теперь id
+  // копятся в очереди и уходят одним POST /api/views (RecordViews, одна
+  // транзакция), хвост очереди досылается при уходе со страницы.
+  //
+  // _viewSent — дедуп за сессию: повторный показ того же поста не новый факт.
   _markViewed(postId) {
     if (!postId) return;
+    if (!this._viewSent) this._viewSent = new Set();
+    if (this._viewSent.has(postId)) return;
+    this._viewSent.add(postId);
+    if (!this._pendingViews) this._pendingViews = new Set();
+    this._pendingViews.add(postId);
     clearTimeout(this._viewTimer);
-    this._pendingView = postId;
-    this._viewTimer = setTimeout(() => {
-      const id = this._pendingView;
-      if (!id) return;
-      if (!this._viewSent) this._viewSent = new Set();
-      if (this._viewSent.has(id)) return;
-      this._viewSent.add(id);
-      API.post(`/view/${id}`).catch(() => this._viewSent.delete(id));
-    }, 1500);
+    this._viewTimer = setTimeout(() => this._flushViewed(), VIEW_FLUSH_MS);
+  },
+
+  // _flushViewed — отправляет накопленные отметки пачкой. Ошибка не теряет
+  // очередь: id возвращаются в неё и уходят следующим тиком, иначе один
+  // оборванный запрос навсегда оставил бы пост в «Новых».
+  _flushViewed() {
+    clearTimeout(this._viewTimer);
+    this._viewTimer = null;
+    const pending = this._pendingViews;
+    if (!pending || !pending.size) return;
+    this._pendingViews = new Set();
+    const ids = Array.from(pending);
+    API.post('/views', { ids }).catch(() => {
+      if (!this._pendingViews) this._pendingViews = new Set();
+      for (const id of ids) {
+        this._pendingViews.add(id);
+        if (this._viewSent) this._viewSent.delete(id);
+      }
+      clearTimeout(this._viewTimer);
+      this._viewTimer = setTimeout(() => this._flushViewed(), VIEW_FLUSH_MS);
+    });
+  },
+
+  // unmarkViewed — снимает отметку «просмотрено» с открытого поста (или с
+  // выделенного в сетке) и перезагружает ленту: под «Виденное» пост сразу
+  // исчезнет, под «Новое» — вернётся. Отметки ставятся автоматически при
+  // открытии, поэтому откат без этого был недоступен вообще.
+  async unmarkViewed() {
+    const idx = this.state.viewerOpen ? this.state.viewerIndex : this.state.focusedIndex;
+    const post = idx >= 0 ? this.state.posts[idx] : null;
+    if (!post) {
+      this.showToast(t('viewed.unmarkNone'), 'warning');
+      return;
+    }
+    try {
+      await API.post(`/view/${post.id}/forget`);
+    } catch (err) {
+      this.showToast(`Ошибка: ${err.message}`, 'error');
+      return;
+    }
+    if (this._viewSent) this._viewSent.delete(post.id);
+    if (this._pendingViews) this._pendingViews.delete(post.id);
+    this.showToast(t('viewed.unmarked'), 'success');
+    if (this.state.viewerOpen) this.closeViewer();
+    // Перезагружаем только под активным фильтром: без него перерисовка ленты
+    // ничего не изменит, а лишь сбросит позицию скролла.
+    if (this.state.viewedFilter) {
+      this.invalidateFeedCache();
+      this.loadPosts(true, null, true);
+    }
+  },
+
+  // markLoadedViewed — «отметить загруженное виденным» одним кликом: то же
+  // самое, что делает автоматическая отметка, но разом для всей собранной
+  // ленты. Спасает, когда посты смотрели с другого устройства или отметки
+  // не успели уйти при закрытии вкладки.
+  async markLoadedViewed() {
+    const ids = Array.from(new Set((this.state.posts || []).map(p => p.id).filter(id => id > 0)));
+    if (!ids.length) {
+      this.showToast(t('viewed.markNone'), 'warning');
+      return;
+    }
+    try {
+      await API.post('/views', { ids });
+    } catch (err) {
+      this.showToast(`Ошибка: ${err.message}`, 'error');
+      return;
+    }
+    if (!this._viewSent) this._viewSent = new Set();
+    for (const id of ids) this._viewSent.add(id);
+    this.showToast(t('viewed.marked'), 'success');
+    if (this.state.viewedFilter) {
+      this.invalidateFeedCache();
+      this.loadPosts(true, null, true);
+    }
   },
 
   async _recSendDislike(postId) {

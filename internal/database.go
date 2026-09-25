@@ -497,6 +497,9 @@ func (db *PostDB) GetMany(ids []int) map[int]*Post {
 			}
 			out[p.ID] = p
 		}
+		if err := rows.Err(); err != nil {
+			log.Printf("[db] GetMany: rows err: %v", err)
+		}
 		rows.Close()
 	}
 	return out
@@ -960,6 +963,48 @@ func (db *PostDB) IsViewed(postID int) bool {
 		return false
 	}
 	return true
+}
+
+// ViewedIDs — какие из переданных id помечены просмотренными, одним
+// SELECT ... WHERE post_id IN (...) вместо N вызовов IsViewed. Нужен фильтру
+// «Новое/Виденное» в онлайн-ленте: там страница выдачи — до 60 постов, и
+// поштучная проверка давала бы 60 запросов на каждый лист. Чанкинг по 500
+// id — как в GetMany (лимит параметров SQLite).
+func (db *PostDB) ViewedIDs(ids []int) map[int]bool {
+	out := make(map[int]bool, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := db.read.Query(`SELECT post_id FROM view_history WHERE post_id IN (`+ph+`)`, args...)
+		if err != nil {
+			log.Printf("[db] ViewedIDs(%d ids): %v", len(ids), err)
+			return out
+		}
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				continue
+			}
+			out[id] = true
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("[db] ViewedIDs: rows err: %v", err)
+		}
+		rows.Close()
+	}
+	return out
 }
 
 // ViewedStats возвращает системную статистику просмотров: всего отметок и

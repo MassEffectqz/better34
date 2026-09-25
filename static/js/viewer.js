@@ -322,6 +322,18 @@ App._renderViewerTags = function () {
     const text = document.createElement('span');
     text.textContent = tag;
     span.appendChild(text);
+    // Значок «?» в кружочке — признак, что у тега есть объяснение.
+    // Ставится для всех уровней, включая note (без цвета).
+    if (oddDesc) {
+      const hint = document.createElement('span');
+      hint.className = 'tag-hint';
+      hint.textContent = '?';
+      hint.title = oddDesc;
+      // Скринридеру «?» ничего не даёт: объяснение уже висит в подсказке
+      // самого тега, лишний символ только шумит.
+      try { hint.setAttribute('aria-hidden', 'true'); } catch { /* тестовый DOM */ }
+      span.appendChild(hint);
+    }
     const countSpan = document.createElement('span');
     countSpan.className = 'tag-count';
     if (this._tagCounts && this._tagCounts[tag] != null) {

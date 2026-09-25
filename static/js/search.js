@@ -36,6 +36,7 @@ App.onSearchInput = function () {
   if (this.state.recommendActive && q !== this.state.query) {
     this.state.recommendActive = false;
     this.renderModeBar();
+    this.updateViewedToggle();
   }
   this.state.query = q;
   this.els.searchClear.classList.toggle('visible', q.length > 0);
@@ -565,6 +566,7 @@ App.search = async function (query) {
   this.state.displayIds = [];
   if (query) this._clearFeedCache();
   this.els.btnLocal.innerHTML = icon('house', 18);
+  this.updateViewedToggle();
   this.pushState(query, null);
   this.renderQueryChips(query);
   // forceRefresh=true: добавляет v=timestamp к URL, чтобы обойти кэш API.get.
@@ -597,14 +599,11 @@ App.toggleLocal = function () {
   this.els.btnLocal.innerHTML = this.state.isLocal
     ? icon('folder', 18)
     : icon('house', 18);
-  // Переключатель «Все/Новое/Виденное» виден только в локальной ленте.
-  if (this.els.viewedToggle) {
-    this.els.viewedToggle.classList.toggle('hidden', !this.state.isLocal);
-    if (!this.state.isLocal) {
-      this.state.viewedFilter = '';
-      this.els.viewedToggle.querySelectorAll('.vt-btn').forEach(x => x.classList.toggle('active', x.dataset.viewed === ''));
-    }
-  }
+  // Переключатель «Все/Новое/Виденное» виден в любой обычной ленте —
+  // локальной и онлайн-источника (gelbooru, rule34, «все сайты»). Сам
+  // фильтр не сбрасываем: он относится к истории просмотров, а не к
+  // источнику, и пользователь ждёт его при возврате в локальную ленту.
+  this.updateViewedToggle();
   this.loadPosts(true);
   this.els.searchInput.focus();
 };
