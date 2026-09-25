@@ -15,7 +15,7 @@ COPY --from=frontend /frontend/static ./static
 # Frontend must be built before the Go binary; go:embed consumes this tree.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o briefly .
 
-FROM alpine:3.22
+FROM alpine:3.24
 # Сертификаты для исходящих запросов к провайдерам, wget — для HEALTHCHECK,
 # tini — init-процесс: зомби от дочерних процессов не копятся.
 RUN apk add --no-cache ca-certificates tzdata tini \
