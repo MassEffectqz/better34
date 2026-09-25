@@ -98,6 +98,7 @@ export const App = {
       batchZip: _('batch-zip'),
       btnExportProfile: _('btn-export-profile'), btnImportProfile: _('btn-import-profile'), profileImportFile: _('profile-import-file'),
       btnQRLogin: _('btn-qr-login'), btnRemotePush: _('btn-remote-push'), viewerSimilar: _('viewer-similar'),
+      viewerSource: _('viewer-source'), backToTop: _('back-to-top'),
     };
     this.loadTheme();
           this.loadGridSetting();
@@ -137,7 +138,10 @@ export const App = {
     // выдачи (старый пост, лимит источника) — openViewerByPostId достроит его
     // точечным запросом и откроет вьювер.
     this.loadPosts(true).then(() => {
-      if (target.matched && target.postId != null && !this.state.viewerOpen) {
+      if (!target.matched) return;
+      // Глубокая ссылка /similar/<id> — режим «похожие по картинке».
+      if (target.similarId != null) { go(this.openSimilarById(target.similarId)); return; }
+      if (target.postId != null && !this.state.viewerOpen) {
         go(this.openViewerByPostId(target.postId));
       }
     }).catch(() => {});
@@ -164,6 +168,22 @@ export const App = {
     this._lastURL = path;
     const target = this.parseLocation(path);
     if (!target.matched) return;
+    // /similar/<id>: режим «похожие по картинке». Идемпотентно — повторное
+    // попадание на уже открытый URL не перезапрашивает список.
+    if (target.similarId != null) {
+      if (this.state.displayMode !== 'similar' || this._similarSourceId !== target.similarId) {
+        await this.openSimilarById(target.similarId);
+      }
+      return;
+    }
+    // Назад/вперёд из режима «похожие» на обычный URL ленты — выходим из
+    // режима и подхватываем запрос из URL (сетка содержит «похожие», а не выдачу).
+    if (this.state.displayMode === 'similar' && target.postId == null) {
+      this.state.query = target.query;
+      if (this.els.searchInput) this.els.searchInput.value = target.query;
+      this.clearMode();
+      return;
+    }
     if (target.query !== this.state.query || this.state.posts.length === 0) {
       this.state.query = target.query;
       if (this.els.searchInput) this.els.searchInput.value = target.query;
@@ -176,19 +196,21 @@ export const App = {
     else if (this.state.viewerOpen) this.closeViewer();
   },
 
-  /** Разбор пути приложения: /search/<query>[/post/<id>], /post/<id>, /. */
+  /** Разбор пути приложения: /search/<query>[/post/<id>], /post/<id>, /similar/<id>, /. */
   parseLocation(path) {
     const p = path || '';
-    if (p === '/' || p === '') return { query: '', postId: null, matched: true };
+    if (p === '/' || p === '') return { query: '', postId: null, similarId: null, matched: true };
     let m = p.match(/^\/search\/(.+?)(?:\/post\/(\d+))?$/);
     if (m) {
       let query = m[1];
       try { query = decodeURIComponent(query); } catch { /* битый %-эскейп — оставляем как есть */ }
-      return { query, postId: m[2] ? parseInt(m[2], 10) : null, matched: true };
+      return { query, postId: m[2] ? parseInt(m[2], 10) : null, similarId: null, matched: true };
     }
     m = p.match(/^\/post\/(\d+)$/);
-    if (m) return { query: '', postId: parseInt(m[1], 10), matched: true };
-    return { query: '', postId: null, matched: false };
+    if (m) return { query: '', postId: parseInt(m[1], 10), similarId: null, matched: true };
+    m = p.match(/^\/similar\/(\d+)$/);
+    if (m) return { query: '', postId: null, similarId: parseInt(m[1], 10), matched: true };
+    return { query: '', postId: null, similarId: null, matched: false };
   },
 
   bindEvents() {
@@ -423,7 +445,16 @@ export const App = {
     if (e.profileImportFile) e.profileImportFile.addEventListener('change', (ev) => go(this.importProfile(ev)));
     if (e.btnQRLogin) e.btnQRLogin.addEventListener('click', () => this.showQRLogin());
     if (e.btnRemotePush) e.btnRemotePush.addEventListener('click', () => this.remotePushCurrent());
-    if (e.viewerSimilar) e.viewerSimilar.addEventListener('click', () => this.showSimilar());
+    if (e.viewerSimilar) {
+      // Ctrl/Cmd+ЛКМ и средняя кнопка — глубокая ссылка /similar/<id> в новой вкладке.
+      e.viewerSimilar.addEventListener('click', (ev) => this.onSimilarClick(ev));
+      e.viewerSimilar.addEventListener('auxclick', (ev) => this.onSimilarAuxClick(ev));
+    }
+    if (e.viewerSource) {
+      e.viewerSource.addEventListener('click', (ev) => this.onSourceClick(ev));
+      e.viewerSource.addEventListener('auxclick', (ev) => this.onSourceAuxClick(ev));
+    }
+    if (e.backToTop) e.backToTop.addEventListener('click', () => this.scrollToTop());
     const remoteFollow = /** @type {HTMLInputElement|null} */ (document.getElementById('setting-remote-follow'));
     if (remoteFollow) {
       remoteFollow.checked = localStorage.getItem('briefly_remote_follow') === '1';
@@ -665,6 +696,8 @@ export const App = {
     if (this.els.scrollProgress) {
       this.els.scrollProgress.style.width = max > 4 ? ((y / max) * 100).toFixed(2) + '%' : '0%';
     }
+    // Кнопка «Наверх»: после ~1.5 экранов прокрутки (запас до подсказок шапки).
+    if (this.els.backToTop) this.els.backToTop.classList.toggle('hidden', y <= main.clientHeight * 1.5);
     const hd = document.getElementById('header');
     if (!hd) return;
     const e = this.els;
@@ -683,6 +716,14 @@ export const App = {
       hd.classList.add('header-hidden');
     }
     this._lastST = y;
+  },
+
+  // Скролл ленты «наверх» из кнопки back-to-top (плавно, где поддерживается).
+  scrollToTop() {
+    const main = document.getElementById('main');
+    if (!main) return;
+    if (typeof main.scrollTo === 'function') main.scrollTo({ top: 0, behavior: 'smooth' });
+    else main.scrollTop = 0;
   },
 
   ACCENTS: {
@@ -779,6 +820,30 @@ export const App = {
     let url = query ? `/search/${encodeURIComponent(query)}` : '/';
     if (postId != null) url = url === '/' ? `/post/${postId}` : `${url}/post/${postId}`;
     return url;
+  },
+
+  /**
+   * URL поста на источнике из Post.Source (имя провайдера или CDN-хост).
+   * Встроенные booru держат единую схему index.php?page=post&s=view&id=N;
+   * для произвольных хостов (img4.gelbooru.com и т.п.) вычисляем базовый
+   * домен. Непонятный формат (например е621 с иной разметкой) — null:
+   * кнопку «Открыть на источнике» прячем, чтобы не вести в битый URL.
+   */
+  sourcePostUrl(post) {
+    if (!post) return null;
+    const s = String(post.source || '').trim().toLowerCase();
+    if (!s) return null;
+    let base;
+    if (s.includes('rule34')) base = 'https://rule34.xxx';
+    else if (s.includes('safebooru')) base = 'https://safebooru.org';
+    else if (s.includes('gelbooru')) base = 'https://gelbooru.com';
+    else if (/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(s)) {
+      // Хост: img4.gelbooru.com → gelbooru.com (cdn/static/media-префиксы срезаем).
+      base = 'https://' + s.replace(/^(img\d*|cdn|static|assets|media|wimg)\./, '');
+    } else {
+      return null;
+    }
+    return `${base}/index.php?page=post&s=view&id=${post.id}`;
   },
 
   pushState(query, postId) {
@@ -1238,18 +1303,92 @@ export const App = {
   },
 
   // showSimilar — визуально похожие скачанные посты (pHash).
-  async showSimilar() {
+
+  /** URL режима «похожие по картинке» (глубокая ссылка / новая вкладка). */
+  similarUrl(id) {
+    return `/similar/${id}`;
+  },
+
+  /**
+   * Клик по «Похожие (по картинке)»: Ctrl/Cmd — глубокая ссылка в новой
+   * вкладке (там её подхватит parseLocation), обычный клик — режим похожих.
+   */
+  onSimilarClick(ev) {
+    const p = this.state.posts[this.state.viewerIndex];
+    if (this.isOpenInNewTabClick(ev)) {
+      ev.preventDefault();
+      if (p) this.openInNewTab(this.similarUrl(p.id));
+      return;
+    }
+    go(this.showSimilar());
+  },
+
+  /** Средняя кнопка мыши по «Похожие (по картинке)» — тоже новая вкладка. */
+  onSimilarAuxClick(ev) {
+    if (ev.button !== 1) return;
     const p = this.state.posts[this.state.viewerIndex];
     if (!p) return;
+    ev.preventDefault();
+    this.openInNewTab(this.similarUrl(p.id));
+  },
+
+  /**
+   * Клик по «Открыть на источнике»: обычный клик — переход на сайт источника
+   * (в этой же вкладке), Ctrl/Cmd — новая вкладка. URL заранее кладётся в
+   * data-url кнопки из _syncSourceButton (viewer.js).
+   */
+  onSourceClick(ev) {
+    const btn = this.els.viewerSource;
+    const url = btn && btn.dataset ? btn.dataset.url : null;
+    if (!url) return;
+    ev.preventDefault();
+    if (this.isOpenInNewTabClick(ev)) this.openInNewTab(url);
+    else location.assign(url);
+  },
+
+  /** Средняя кнопка по «Открыть на источнике» — новая вкладка. */
+  onSourceAuxClick(ev) {
+    if (ev.button !== 1) return;
+    const btn = this.els.viewerSource;
+    const url = btn && btn.dataset ? btn.dataset.url : null;
+    if (!url) return;
+    ev.preventDefault();
+    this.openInNewTab(url);
+  },
+
+  /**
+   * Открыть режим «похожие по картинке» для поста и дописать /similar/<id>
+   * в историю — ссылку можно скопировать и открыть в новой вкладке.
+   * Возвращает true, если режим открыт.
+   */
+  async openSimilarById(id) {
     try {
-      const d = await API.get(`/similar/${p.id}`);
+      const d = await API.get(`/similar/${id}`);
       const ids = (d.posts || []).map(x => x.id);
-      if (!ids.length) { this.showToast('Похожих локальных постов не найдено'); return; }
-      this.closeViewer();
+      if (!ids.length) { this.showToast('Похожих локальных постов не найдено'); return false; }
+      if (this.state.viewerOpen) this.closeViewer();
       await this.showGridMode('similar', ids);
+      this._similarSourceId = id;
+      this.pushSimilarState(id);
+      return true;
     } catch (e) {
       this.showToast('Ошибка: ' + (e && e.message || 'ошибка'), 'error');
+      return false;
     }
+  },
+
+  /** Запись истории /similar/<id> (если это не текущий URL). */
+  pushSimilarState(id) {
+    const url = this.similarUrl(id);
+    if (url === this._lastURL) return;
+    this._lastURL = url;
+    history.pushState({ query: this.state.query, postId: null, similarId: id }, '', url);
+  },
+
+  async showSimilar() {
+    const p = this.state.posts[this.state.viewerIndex];
+    if (!p) return false;
+    return this.openSimilarById(p.id);
   },
 
   async pauseDownloads() {

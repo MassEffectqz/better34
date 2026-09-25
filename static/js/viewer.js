@@ -514,6 +514,26 @@ App._saveTagCounts = function () {
   } catch {}
 };
 
+/**
+ * Кнопка «Открыть на источнике»: URL кладём в data-url, при отсутствии
+ * источника кнопку прячем (формат Post.Source может быть неизвестен).
+ * Возвращает URL или null.
+ * @this {AppType}
+ */
+App._syncSourceButton = function (post) {
+  const btn = this.els.viewerSource;
+  if (!btn) return null;
+  const url = this.sourcePostUrl(post);
+  if (url) {
+    btn.classList.remove('hidden');
+    btn.dataset.url = url;
+  } else {
+    btn.classList.add('hidden');
+    delete btn.dataset.url;
+  }
+  return url;
+};
+
 App.renderViewer = function (force) {
   const post = this.state.posts[this.state.viewerIndex];
   if (!post) return;
@@ -704,6 +724,7 @@ App.renderViewer = function (force) {
 
   const isLiked = this.state.profile.liked_posts && this.state.profile.liked_posts.includes(post.id);
   viewerInfo.textContent = `${post.source ? post.source + ' · ' : ''}${post.id} · ${post.width||'?'}×${post.height||'?'} · ${post.file_type || '?'} · ${this.state.viewerIndex + 1}/${this.state.posts.length}`;
+  this._syncSourceButton(post);
 
   this._renderViewerTags();
   this._renderViewerRelations(post);

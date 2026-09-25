@@ -160,7 +160,7 @@ App.renderModeBar = function () {
   if (mode === 'search') {
     bar.classList.add('hidden');
   } else {
-    const what = mode === 'likes' ? t('mode.likes') : mode === 'hides' ? t('mode.hides') : t('mode.collection');
+    const what = mode === 'likes' ? t('mode.likes') : mode === 'hides' ? t('mode.hides') : mode === 'similar' ? t('mode.similar') : t('mode.collection');
     const count = this.state.displayIds.length;
     this.els.modeBarText.textContent = tf('mode.showing', { what, n: count });
     bar.classList.remove('hidden');
@@ -173,6 +173,7 @@ App.renderModeBar = function () {
 App.clearMode = function () {
   this.state.displayMode = 'search';
   this.state.displayIds = [];
+  this._similarSourceId = null;
   this.state.posts = [];
   this.state.page = 1;
   this.state.hasMore = true;
@@ -204,7 +205,9 @@ App.showGridMode = async function (type, idsOverride) {
   if (this._feedAbort) this._feedAbort.abort();
   // Инвалидируем in-flight loadPosts: их ответы не должны дописываться в лайки.
   this._feedSeq = (this._feedSeq || 0) + 1;
-  this.toggleProfile();
+  // Панель профиля закрываем, только если она открыта: при входе в режим по
+  // глубокой ссылке (покупка /similar/<id>) панель не должна выезжать сама.
+  if (this.state.profileOpen) this.toggleProfile();
   this.state.displayMode = type;
   this.state.displayIds = ids;
   this.state.viewerOpen = false;
@@ -668,7 +671,7 @@ App.createPostCard = function (post) {
   const cb = document.createElement('div');
   cb.className = 'card-checkbox' + (this.state.selected.has(post.id) ? ' checked' : '');
   cb.dataset.id = post.id;
-  cb.addEventListener('click', (e) => { e.stopPropagation(); this.toggleSelect(post.id); });
+  cb.addEventListener('click', (e) => { e.stopPropagation(); this.toggleSelect(post.id, e.shiftKey); });
   card.appendChild(cb);
 
   const wrap = document.createElement('div');
@@ -922,9 +925,29 @@ App.renderPosts = function () {
 };
 
 /** @this {AppType} */
-App.toggleSelect = function (id) {
+App.toggleSelect = function (id, shiftKey) {
+  // Shift+клик по чекбоксу — диапазон от последнего обычного клика до этого
+  // (как в файловых менеджерах): выделение заменяется диапазоном, якорь
+  // остаётся на прежнем клике — повторный Shift растягивает/сжимает его.
+  const posts = this.state.posts;
+  if (shiftKey && this._lastSelId != null && this._lastSelId !== id) {
+    const a = posts.findIndex(p => p.id === this._lastSelId);
+    const b = posts.findIndex(p => p.id === id);
+    if (a !== -1 && b !== -1) {
+      const from = Math.min(a, b), to = Math.max(a, b);
+      this.state.selected.clear();
+      for (let i = from; i <= to; i++) this.state.selected.add(posts[i].id);
+      this.els.grid.querySelectorAll('.card-checkbox').forEach(c => {
+        const el = /** @type {HTMLElement} */ (c);
+        el.classList.toggle('checked', this.state.selected.has(Number(el.dataset.id)));
+      });
+      this.updateBatchBar();
+      return;
+    }
+  }
   if (this.state.selected.has(id)) this.state.selected.delete(id);
   else this.state.selected.add(id);
+  this._lastSelId = id;
   const card = this.getCardById(id);
   const cb = card ? card.querySelector('.card-checkbox') : null;
   if (cb) cb.classList.toggle('checked');
@@ -934,6 +957,7 @@ App.toggleSelect = function (id) {
 /** @this {AppType} */
 App.clearSelection = function () {
   this.state.selected.clear();
+  this._lastSelId = null;
   this.els.grid.querySelectorAll('.card-checkbox').forEach(c => c.classList.remove('checked'));
   this.updateBatchBar();
 };

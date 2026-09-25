@@ -31,6 +31,7 @@ App.onKeydown = function (e) {
   }
 
   if (code === 'KeyL' && !e.ctrlKey && !e.metaKey && !viewerOpen && !settingsOpen && !isInput) { e.preventDefault(); this.toggleLocal(); return; }
+  if (code === 'KeyT' && !e.ctrlKey && !e.metaKey && !viewerOpen && !settingsOpen && !isInput) { e.preventDefault(); this.toggleTheme(); return; }
   if (code === 'KeyF' && viewerOpen) { e.preventDefault(); this.toggleFullscreen(); return; }
 
   if (viewerOpen) {

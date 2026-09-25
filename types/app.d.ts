@@ -224,6 +224,8 @@ interface AppElements {
   btnQRLogin: HTMLElement;
   btnRemotePush: HTMLElement;
   viewerSimilar: HTMLElement;
+  viewerSource: HTMLElement;
+  backToTop: HTMLElement;
   [key: string]: HTMLElement | HTMLInputElement | HTMLSelectElement | HTMLImageElement | HTMLElement | null;
 }
 
