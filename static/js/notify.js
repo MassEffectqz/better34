@@ -44,17 +44,17 @@ App.bindDlNotifySetting = function (checkbox) {
   checkbox.addEventListener('change', async () => {
     if (!checkbox.checked) {
       localStorage.setItem('briefly_dl_notify', '0');
-      this.showToast('Уведомления о загрузках выключены');
+      this.showToast(t('notify.dlOff'));
       return;
     }
     const perm = await requestNotifyPermission();
     if (perm !== 'granted') {
       checkbox.checked = false;
-      this.showToast('Разрешение на уведомления не выдано', 'error');
+      this.showToast(t('notify.denied'), 'error');
       return;
     }
     localStorage.setItem('briefly_dl_notify', '1');
-    this.showToast('Уведомления о загрузках включены', 'success');
+    this.showToast(t('notify.dlOn'), 'success');
   });
 };
 

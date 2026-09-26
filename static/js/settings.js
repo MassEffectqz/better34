@@ -1,7 +1,7 @@
 import { App } from './state.js';
 import { _, icon, esc } from './utils.js';
 import { API } from './api.js';
-import { t } from './i18n.js';
+import { t, tf } from './i18n.js';
 App.toggleSettings = function () {
   const opening = !this.state.settingsOpen;
   if (opening && !this.state.profileOpen) this._panelReturnFocus = document.activeElement;
@@ -42,9 +42,9 @@ App.renderAPIKeys = function (keys) {
     row.querySelector('.api-key-uid').addEventListener('input', e => { list[i].user_id = e.target.value; });
     row.querySelector('.btn-icon').addEventListener('click', async () => {
       const ok = await this.confirmDialog({
-        title: 'Удалить API-ключ?',
-        message: `Удалить ключ <b>«${esc(k.name || k.api_key.slice(0, 8) + '…')}»</b>?`,
-        okText: 'Удалить',
+        title: t('set.delKeyTitle'),
+        message: tf('set.delKeyMsg', { name: k.name || k.api_key.slice(0, 8) + '…' }),
+        okText: t('confirm.ok'),
         danger: true,
       });
       if (!ok) return;
@@ -113,32 +113,32 @@ App.saveSettings = async function () {
       API.invalidate('/');
       this.loadPosts(true, null, true);
     }
-    this.showToast('Настройки сохранены');
+    this.showToast(t('set.saved'));
     this.toggleSettings();
-  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+  } catch (err) { this.showToast(tf('err.withMsg', { msg: err.message }), 'error'); }
 };
 
 App.resetSettings = async function () {
-  const ok = await this.confirmDialog({ title: 'Сбросить настройки?', message: 'Все настройки будут сброшены к значениям по умолчанию.', okText: 'Сбросить', danger: true });
+  const ok = await this.confirmDialog({ title: t('set.resetTitle'), message: t('set.resetMsg'), okText: t('set.resetOk'), danger: true });
   if (!ok) return;
   this.state.theme = 'dark';
   this.state.gridCols = null;
   this.state.autoRefreshFeed = true;
   this.state.activeProvider = 'rule34';
   this.syncCustomControls();
-  this.showToast('Настройки сброшены');
+  this.showToast(t('set.resetDone'));
 };
 
 App.checkForUpdates = async function () {
   const btn = this.els.btnCheckUpdate;
-  if (btn) { btn.disabled = true; btn.textContent = 'Проверяю…'; }
+  if (btn) { btn.disabled = true; btn.textContent = t('set.checking'); }
   try {
     await new Promise(resolve => setTimeout(resolve, 1000));
-    this.showToast('Установлена последняя версия', 'success');
+    this.showToast(t('set.upToDate'), 'success');
   } catch (err) {
-    this.showToast(`Ошибка проверки: ${err.message}`, 'error');
+    this.showToast(tf('set.checkFailed', { msg: err.message }), 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Проверить обновления'; }
+    if (btn) { btn.disabled = false; btn.textContent = t('set.checkUpdates'); }
   }
 };
 
@@ -230,7 +230,7 @@ App.cleanDB = async function () {
 App.findDuplicates = async function () {
   const btn = this.els.btnFindDups;
   const info = this.els.dupsInfo;
-  if (btn) { btn.disabled = true; btn.textContent = 'Поиск…'; }
+  if (btn) { btn.disabled = true; btn.textContent = t('set.searching'); }
   if (info) info.classList.add('hidden');
   this.els.btnCleanDups.classList.add('hidden');
   if (this.els.btnMergeDups) this.els.btnMergeDups.classList.add('hidden');
@@ -255,8 +255,8 @@ App.findDuplicates = async function () {
       this.els.btnMergeDups.textContent = t('btn.mergeDupsN', {n: mergeTotal});
       this.els.btnMergeDups.classList.remove('hidden');
     }
-  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
-  if (btn) { btn.disabled = false; btn.textContent = 'Найти дубликаты'; }
+  } catch (err) { this.showToast(tf('err.withMsg', { msg: err.message }), 'error'); }
+  if (btn) { btn.disabled = false; btn.textContent = t('btn.findDups'); }
 };
 
 App.cleanDuplicates = async function () {
@@ -287,9 +287,9 @@ App.mergeDuplicates = async function () {
   const total = merges.reduce((s, m) => s + m.remove_ids.length, 0);
   if (!total) { if (this.els.btnMergeDups) this.els.btnMergeDups.classList.add('hidden'); return; }
   const ok = await this.confirmDialog({
-    title: 'Объединение дубликатов',
-    message: `Объединить <b>${total}</b> постов-дубликатов с их оригиналами? Лайки, скрытия, коллекции и комментарии перенесутся на сохранённый пост.`,
-    okText: 'Объединить',
+    title: t('set.mergeTitle'),
+    message: tf('set.mergeMsg', { n: total }),
+    okText: t('set.mergeOk'),
     danger: true,
   });
   if (!ok) return;
@@ -331,7 +331,7 @@ App.exportProfile = function () {
   a.href = '/api/profile/export';
   a.download = 'briefly-profile.json';
   a.click();
-  this.showToast('Профиль экспортирован', 'success');
+  this.showToast(t('set.profileExported'), 'success');
 };
 
 App.importProfile = async function (ev) {
@@ -359,11 +359,11 @@ App.showQRLogin = function () {
   const card = document.createElement('div');
   card.style.cssText = 'background:#1a1a1a;border-radius:16px;padding:24px;text-align:center;max-width:320px;color:#eee;box-shadow:0 8px 40px rgba(0,0,0,.5);';
   card.innerHTML = `
-    <div style="font-weight:600;margin-bottom:12px">QR-вход на другом устройстве</div>
+    <div style="font-weight:600;margin-bottom:12px">${esc(t('set.qrLogin'))}</div>
     <div id="qr-login-loader" style="width:256px;height:256px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:#fff"><span class="pf-more-spin"></span></div>
     <img id="qr-login-img" alt="QR" style="width:256px;height:256px;border-radius:8px;background:#fff;display:none">
-    <div id="qr-login-hint" style="font-size:12px;opacity:.7;margin-top:12px">Отсканируйте камерой телефона. Код действует 5 минут и сгорает после входа.</div>
-    <button id="qr-login-close" class="btn-primary btn-sm" style="margin-top:14px">Закрыть</button>`;
+    <div id="qr-login-hint" style="font-size:12px;opacity:.7;margin-top:12px">${esc(t('set.qrHint'))}</div>
+    <button id="qr-login-close" class="btn-primary btn-sm" style="margin-top:14px">${esc(t('btn.close'))}</button>`;
   overlay.appendChild(card);
   document.body.appendChild(overlay);
   const close = () => { document.removeEventListener('keydown', onKey); overlay.remove(); };
@@ -378,6 +378,6 @@ App.showQRLogin = function () {
   img.onerror = () => {
     if (loader) loader.style.display = 'none';
     img.style.display = 'none';
-    card.querySelector('#qr-login-hint').textContent = 'Не удалось получить QR — проверьте, что вы залогинены.';
+    card.querySelector('#qr-login-hint').textContent = t('auth.qrFailed');
   };
 };

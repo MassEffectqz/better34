@@ -1,6 +1,7 @@
 import { App } from './state.js';
 import { _ } from './utils.js';
 import { API } from './api.js';
+import { t, tf } from './i18n.js';
 
 /** @this {AppType} */
 App.initAuth = async function () {
@@ -76,8 +77,8 @@ App.updateAuthMatch = function () {
   const p1 = /** @type {HTMLInputElement} */ (_('auth-password')).value;
   const p2 = /** @type {HTMLInputElement} */ (_('auth-password2')).value;
   if (!p2) { hint.textContent = ''; hint.className = 'auth-hint'; return; }
-  if (p1 === p2) { hint.textContent = 'пароли совпадают'; hint.className = 'auth-hint ok'; }
-  else { hint.textContent = 'пароли не совпадают'; hint.className = 'auth-hint bad'; }
+  if (p1 === p2) { hint.textContent = t('auth.pwdMatch'); hint.className = 'auth-hint ok'; }
+  else { hint.textContent = t('auth.pwdMismatch'); hint.className = 'auth-hint bad'; }
 };
 
 /** @this {AppType} */
@@ -256,10 +257,10 @@ App.setAuthError = function (msg) {
 App.authSubmit = async function () {
   const u = /** @type {HTMLInputElement} */ (_('auth-username')).value.trim().toLowerCase();
   const p = /** @type {HTMLInputElement} */ (_('auth-password')).value;
-  if (!u || !p) { this.setAuthError('Заполните логин и пароль'); return; }
+  if (!u || !p) { this.setAuthError(t('auth.fillBoth')); return; }
   if (this._authMode === 'register') {
-    if (p !== /** @type {HTMLInputElement} */ (_('auth-password2')).value) { this.setAuthError('Пароли не совпадают'); return; }
-    if (p.length < 6) { this.setAuthError('Пароль: минимум 6 символов'); return; }
+    if (p !== /** @type {HTMLInputElement} */ (_('auth-password2')).value) { this.setAuthError(t('auth.pwdMismatch')); return; }
+    if (p.length < 6) { this.setAuthError(t('auth.pwdMin')); return; }
   }
   const btn = /** @type {HTMLButtonElement} */ (_('auth-submit'));
   btn.disabled = true;
@@ -385,41 +386,41 @@ App.changePassword = async function () {
   const unField = document.getElementById('input-current-username');
     if (unField && !/** @type {HTMLInputElement} */ (unField).value && this.state.user?.username) /** @type {HTMLInputElement} */ (unField).value = this.state.user.username;
   if (!current || next.length < 6) {
-    this.showToast('Введите текущий и новый пароль (мин. 6 символов)', 'error');
+    this.showToast(t('auth.pwdHint'), 'error');
     return;
   }
   try {
     const r = await API.post('/auth/password', { current_password: current, new_password: next });
     if (r.ok) {
-      this.showToast('Пароль изменён', 'success');
+      this.showToast(t('auth.pwdChanged'), 'success');
       if (this.els.inputCurrentPassword) this.els.inputCurrentPassword.value = '';
       if (this.els.inputNewPassword) this.els.inputNewPassword.value = '';
     }
   } catch (err) {
-    this.showToast(`Ошибка: ${err.message}`, 'error');
+    this.showToast(tf('err.withMsg', { msg: err.message }), 'error');
   }
 };
 
 /** @this {AppType} */
 App.logoutOthers = async function () {
   const ok = await this.confirmDialog({
-    title: 'Завершить другие сессии?',
-    message: 'Все устройства, кроме текущего, будут разлогинены.',
-    okText: 'Завершить',
+    title: t('auth.logoutOthersTitle'),
+    message: t('auth.logoutOthersMsg'),
+    okText: t('auth.logoutOthersOk'),
     danger: true,
   });
   if (!ok) return;
   try {
     const r = await API.post('/auth/logout-others');
-    this.showToast(`Отозвано сессий: ${r.revoked || 0}`, 'success');
+    this.showToast(tf('auth.revoked', { n: r.revoked || 0 }), 'success');
   } catch (err) {
-    this.showToast(`Ошибка: ${err.message}`, 'error');
+    this.showToast(tf('err.withMsg', { msg: err.message }), 'error');
   }
 };
 
 /** @this {AppType} */
 App.logout = async function () {
-  const ok = await this.confirmDialog({ title: 'Выйти из аккаунта?', message: 'Вы будете перенаправлены на страницу входа.', okText: 'Выйти', danger: true });
+  const ok = await this.confirmDialog({ title: t('auth.logoutTitle'), message: t('auth.logoutMsg'), okText: t('auth.logoutOk'), danger: true });
   if (!ok) return;
   try { await API.post('/auth/logout'); } catch {}
   API.invalidate('/');

@@ -7,6 +7,7 @@
 // сам импортирует этот модуль — ES-цикл безопасен, App используется
 // только внутри функций (живая привязка модулей).
 import { App } from './state.js';
+import { t } from './i18n.js';
 
 // toast — безопасная обёртка: в реальном приложении showToast приходит из
 // toast.js, а в изолированных тестах (импортируют этот модуль без toast.js)
@@ -81,7 +82,7 @@ export async function enqueueMutation(method, endpoint, body) {
     });
     registerSync();
     if (typeof App !== 'undefined' && App.showToast) {
-      App.showToast('Действие отложено — будет отправлено при появлении сети', 'info');
+      App.showToast(t('offline.deferred'), 'info');
     }
     return true;
   } catch {

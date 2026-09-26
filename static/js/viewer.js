@@ -689,7 +689,7 @@ App.renderViewer = function (force) {
       btn.type = 'button';
       btn.className = 'viewer-orig';
       btn.textContent = '1:1';
-      btn.title = 'Догрузить оригинал (крупнее и тяжелее)';
+      btn.title = t('viewer.loadOriginal');
       btn.style.cssText = 'position:absolute;top:10px;right:10px;z-index:6;padding:4px 10px;cursor:pointer;';
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -724,10 +724,10 @@ App.renderViewer = function (force) {
     ssBar = document.createElement('div');
     ssBar.className = 'slideshow-controls';
     ssBar.innerHTML =
-      '<select class="btn-ss ss-rate" title="Скорость видео" aria-label="Скорость видео">' +
+      `<select class="btn-ss ss-rate" title="${esc(t('viewer.rateVideo'))}" aria-label="${esc(t('viewer.rateVideo'))}">` +
       [0.5, 0.75, 1, 1.25, 1.5, 2].map(r => `<option value="${r}">${r}×</option>`).join('') +
       '</select>' +
-      `<button type="button" class="btn-ss btn-pip" title="Картинка в картинке">${icon('pip', 16)}</button>` +
+      `<button type="button" class="btn-ss btn-pip" title="${esc(t('viewer.pip'))}">${icon('pip', 16)}</button>` +
       `<button type="button" class="btn-ss" id="slideshow-btn">${SS_PLAY_ICO()}</button>`;
     barHost.appendChild(ssBar);
     this.els.slideshowBtn = ssBar.querySelector('#slideshow-btn');
@@ -1329,13 +1329,13 @@ App.toggleLikeCurrent = function () {
   if (!post) return;
   const liked = this.optimisticLike(post.id);
   this._syncLikeIcons(liked);
-  this.showToast(liked ? 'Лайкнут' : 'Лайк убран');
+  this.showToast(liked ? t('viewer.liked') : t('viewer.unliked'));
   // Явное состояние: переигровка оффлайн-очереди (потерянный ответ на
   // мобильной сети) не должна переключить лайк обратно.
   API.post(`/like/${post.id}`, { liked }).catch(() => {
     this.optimisticLike(post.id, !liked);
     this._syncLikeIcons(!liked);
-    this.showToast('Ошибка', 'error');
+    this.showToast(t('err.generic'), 'error');
   });
 };
 
@@ -1358,7 +1358,7 @@ App._hideWithUndo = function (postId) {
   const req = API.post(`/hide/${postId}`, { hidden }).catch(() => null);
   if (hidden) {
     this.removeHiddenFromFeed(postId);
-    this.showToastWithUndo('Пост скрыт', () => {
+    this.showToastWithUndo(t('viewer.postHidden'), () => {
       this.optimisticHide(postId, false);
       this.restoreHiddenPost(postId);
       req.then(res => {
@@ -1369,7 +1369,7 @@ App._hideWithUndo = function (postId) {
   } else {
     const rec = this._lastRemoved;
     if (rec && rec.post.id === postId) this.restoreHiddenPost(postId);
-    this.showToast('Пост показан');
+    this.showToast(t('viewer.postShown'));
   }
   this.invalidateFeedCache();
 };
@@ -1392,7 +1392,7 @@ App.feedToggleLike = function (post) {
   const liked = this.optimisticLike(post.id);
   API.post(`/like/${post.id}`, { liked }).catch(() => {
     this.optimisticLike(post.id, !liked);
-    this.showToast('Ошибка', 'error');
+    this.showToast(t('err.generic'), 'error');
   });
 };
 
@@ -1415,9 +1415,9 @@ App.removeCardFromGrid = function (postId, instant) {
     if (!this.els.grid.querySelector('.post-card')) {
       this.els.grid.innerHTML = '';
       this.els.grid.appendChild(this.renderEmptyState({
-        title: 'Нет постов',
-        subtitle: 'Попробуйте изменить фильтры',
-        actions: [{ key: 'reset', label: 'Сбросить фильтры' }, { key: 'random', label: 'Случайный пост' }],
+        title: t('empty.noPosts'),
+        subtitle: t('empty.changeFilters'),
+        actions: [{ key: 'reset', label: t('btn.resetFilters') }, { key: 'random', label: t('menu.random') }],
       }));
     }
   };
@@ -1482,14 +1482,14 @@ App.updateCardLike = function (postId, liked) {
 App.downloadCurrent = function () { const p = this.state.posts[this.state.viewerIndex]; if (p) this.downloadPost(p); };
 
 App.downloadPost = function (post) {
-  if (!post || !post.file_url) { this.showToast('Нет файла для скачивания', 'error'); return; }
+  if (!post || !post.file_url) { this.showToast(t('viewer.noFile'), 'error'); return; }
   const a = document.createElement('a');
   a.href = `/api/save/${post.id}`;
   a.download = `${post.id}.${post.file_type || 'bin'}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  this.showToast(`Скачивание #${post.id} на устройство`);
+  this.showToast(tf('viewer.downloading', { id: post.id }));
 };
 
 App.toggleInvert = function () {
@@ -1497,7 +1497,7 @@ App.toggleInvert = function () {
   if (!el) return;
   const inv = el.style.filter === 'invert(1)' ? '' : 'invert(1)';
   el.style.filter = inv;
-  this.showToast(inv ? 'Инвертировано' : 'Инверсия снята');
+  this.showToast(inv ? t('viewer.inverted') : t('viewer.uninverted'));
 };
 
 App._ensureZoomState = function () {

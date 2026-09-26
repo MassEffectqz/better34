@@ -1,6 +1,7 @@
 import { App } from './state.js';
 import { icon, getHistory, addHistory, removeHistory, togglePinHistory, clearHistory } from './utils.js';
 import { API } from './api.js';
+import { t, tf } from './i18n.js';
 App._suggestSeq = 0;
 App._profileSuggestSeq = 0;
 App._nlSearching = false;
@@ -528,7 +529,7 @@ App.search = async function (query) {
     if (this._nlSearching) return;
     const nl = query.trim().slice(1).trim();
     this._nlSearching = true;
-    this.showToast('Спрашиваю модель…');
+    this.showToast(t('search.nlThinking'));
     this.state.loading = true;
     this.els.searchBox.classList.add('loading');
     try {
@@ -537,9 +538,9 @@ App.search = async function (query) {
       query = d.query;
       this.els.searchInput.value = query;
       this.onSearchInput();
-      this.showToast('Распознано: ' + query, 'success');
+      this.showToast(tf('search.nlResult', { query }), 'success');
     } catch (e) {
-      this.showToast('Семантический поиск недоступен: ' + (e && e.message || 'ошибка'), 'error');
+      this.showToast(tf('search.nlFailed', { msg: (e && e.message) || t('err.generic') }), 'error');
       this._nlSearching = false;
       this.state.loading = false;
       this.els.searchBox.classList.remove('loading');

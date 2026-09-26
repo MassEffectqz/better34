@@ -19,34 +19,34 @@
 <div id="app">
   <header id="header">
     <div class="header-content">
-      <button id="btn-home" class="brand" data-i18n-title="header.home" aria-label="На главную">
+      <button id="btn-home" class="brand" data-i18n-title="header.home" aria-label="На главную" data-i18n-aria="header.home">
         <svg class="brand-logo" viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="brand-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c5cbf"/></linearGradient></defs><rect x="4" y="4" width="92" height="92" rx="24" class="brand-logo-bg"/><circle cx="45" cy="45" r="20" fill="none" stroke="url(#brand-g)" stroke-width="8"/><line x1="59" y1="59" x2="76" y2="76" stroke="url(#brand-g)" stroke-width="9" stroke-linecap="round"/></svg>
         <span class="auth-name brand-name"><span>better</span><span class="auth-name-34">34</span></span>
       </button>
-      <nav aria-label="Основная навигация">
+      <nav aria-label="Основная навигация" data-i18n-aria="nav.main">
       <div class="search-box">
         <i class="search-icon" data-lucide="search" data-size="15"></i>
-        <input type="text" id="search-input" placeholder="Поиск тегов..." spellcheck="false" autocomplete="off" title="Пробел — И · -тег — исключить · | — чередование лент · / или Ctrl+K — фокус">
-        <span id="query-meta" class="query-meta" title="Часть тегов фильтруется локально (лимит источника)"></span>
-        <button class="search-clear" id="search-clear" aria-label="Очистить"><i data-lucide="x" data-size="14"></i></button>
+        <input type="text" id="search-input" placeholder="Поиск тегов..." data-i18n-ph="search.placeholder" spellcheck="false" autocomplete="off" title="Пробел — И · -тег — исключить · | — чередование лент · / или Ctrl+K — фокус" data-i18n-title="search.hint">
+        <span id="query-meta" class="query-meta" title="Часть тегов фильтруется локально (лимит источника)" data-i18n-title="search.metaHint"></span>
+        <button class="search-clear" id="search-clear" aria-label="Очистить" data-i18n-aria="search.clear"><i data-lucide="x" data-size="14"></i></button>
         <div id="suggestions" class="suggestions"></div>
         <div id="history-dropdown" class="history-dropdown"></div>
       </div>
       <div id="search-chips" class="search-chips"></div>
       <div class="header-actions">
-        <button id="btn-local" class="btn-icon" title="Локальные (L)" aria-label="Локальные посты"><i data-lucide="house" data-size="17"></i></button>
-        <div class="rating-toggle" id="rating-toggle" role="group" aria-label="Фильтр рейтинга">
+        <button id="btn-local" class="btn-icon" title="Локальные (L)" data-i18n-title="header.local" aria-label="Локальные посты" data-i18n-aria="header.localAria"><i data-lucide="house" data-size="17"></i></button>
+        <div class="rating-toggle" id="rating-toggle" role="group" aria-label="Фильтр рейтинга" data-i18n-aria="rating.label">
           <button type="button" class="rt-btn active" data-rating="">All</button>
           <button type="button" class="rt-btn" data-rating="sfw">SFW</button>
           <button type="button" class="rt-btn" data-rating="nsfw">18+</button>
         </div>
-        <div class="viewed-toggle hidden" id="viewed-toggle" role="group" aria-label="Фильтр просмотров">
+        <div class="viewed-toggle hidden" id="viewed-toggle" role="group" aria-label="Фильтр просмотров" data-i18n-aria="viewed.filter">
           <button type="button" class="vt-btn active" data-viewed="" data-i18n="viewed.all">Все</button>
           <button type="button" class="vt-btn" data-viewed="0" data-i18n="viewed.new">Новое</button>
           <button type="button" class="vt-btn" data-viewed="1" data-i18n="viewed.seen">Виденное</button>
         </div>
         <div class="grid-control" id="provider-control">
-          <button id="provider-badge" class="provider-badge" title="Источник постов"><span id="provider-badge-label">rule34</span><i data-lucide="chevronDown" data-size="13"></i></button>
+          <button id="provider-badge" class="provider-badge" title="Источник постов" data-i18n-title="provider.title"><span id="provider-badge-label">rule34</span><i data-lucide="chevronDown" data-size="13"></i></button>
           <div id="provider-menu" class="grid-menu hidden">
             <div class="grid-menu-title">Источник постов</div>
             <div id="provider-menu-list" class="provider-menu-list"></div>
@@ -54,7 +54,7 @@
         </div>
       </div>
       </nav>
-      <button id="btn-header-menu" class="btn-icon" title="Меню" aria-label="Меню"><i data-lucide="menu" data-size="17"></i></button>
+      <button id="btn-header-menu" class="btn-icon" title="Меню" data-i18n-title="header.menu" aria-label="Меню" data-i18n-aria="header.menu"><i data-lucide="menu" data-size="17"></i></button>
 
       <div id="header-menu" class="header-menu hidden">
         <div class="header-menu-group" id="header-menu-filters">
@@ -95,14 +95,14 @@
   <main id="main">
     <div id="mode-bar" class="mode-bar hidden">
       <span id="mode-bar-text"></span>
-      <button class="btn-icon btn-icon-sm hidden" id="mode-bar-refresh" title="Обновить подборку"><i data-lucide="refresh" data-size="14"></i></button>
+      <button class="btn-icon btn-icon-sm hidden" id="mode-bar-refresh" title="Обновить подборку" data-i18n-title="rec.refreshTitle"><i data-lucide="refresh" data-size="14"></i></button>
       <button class="btn-icon btn-icon-sm" id="mode-bar-close"><i data-lucide="x" data-size="14"></i></button>
     </div>
     <div id="posts-grid" class="posts-grid"></div>
     <div id="sentinel" class="sentinel"><div class="load-more-dot"></div></div>
   </main>
 
-  <button id="back-to-top" class="back-to-top hidden" title="Наверх" aria-label="Наверх (к началу ленты)"><i data-lucide="arrowUp" data-size="18"></i></button>
+  <button id="back-to-top" class="back-to-top hidden" title="Наверх" data-i18n-title="btn.top" aria-label="Наверх (к началу ленты)" data-i18n-aria="btn.topAria"><i data-lucide="arrowUp" data-size="18"></i></button>
 
   <div id="viewer" class="viewer hidden">
     <div class="viewer-backdrop"></div>
@@ -112,35 +112,35 @@
       <div id="viewer-relations" class="viewer-relations hidden"></div>
       <div class="viewer-actions">
         <div class="zoom-controls" id="viewer-zoom-controls">
-          <button class="btn-icon btn-icon-sm" id="zoom-out" title="Отдалить (−)" aria-label="Отдалить (−)"><i data-lucide="minus" data-size="13"></i></button>
+          <button class="btn-icon btn-icon-sm" id="zoom-out" title="Отдалить (−)" data-i18n-title="zoom.out" aria-label="Отдалить (−)" data-i18n-aria="zoom.outAria"><i data-lucide="minus" data-size="13"></i></button>
           <span id="zoom-label" class="zoom-label">100%</span>
-          <button class="btn-icon btn-icon-sm" id="zoom-in" title="Приблизить (+)" aria-label="Приблизить (+)"><i data-lucide="plus" data-size="13"></i></button>
-          <button class="btn-icon btn-icon-sm" id="zoom-fit" title="Сброс / по размеру (Z)" aria-label="Сброс (Z)"><i data-lucide="maximize" data-size="13"></i></button>
+          <button class="btn-icon btn-icon-sm" id="zoom-in" title="Приблизить (+)" data-i18n-title="zoom.in" aria-label="Приблизить (+)" data-i18n-aria="zoom.inAria"><i data-lucide="plus" data-size="13"></i></button>
+          <button class="btn-icon btn-icon-sm" id="zoom-fit" title="Сброс / по размеру (Z)" data-i18n-title="zoom.fit" aria-label="Сброс (Z)" data-i18n-aria="zoom.fitAria"><i data-lucide="maximize" data-size="13"></i></button>
         </div>
         <div class="ss-speed">
           <i data-lucide="clock" data-size="14"></i>
-          <input type="number" id="ss-speed-input" min="1" max="30" value="3" title="Скорость слайдшоу (сек)">
+          <input type="number" id="ss-speed-input" min="1" max="30" value="3" title="Скорость слайдшоу (сек)" data-i18n-title="ss.speed">
         </div>
-        <button class="btn-icon" id="viewer-like" title="Лайк" aria-label="Лайк (Q)"><i data-lucide="heart" data-size="20"></i></button>
-        <button class="btn-icon" id="viewer-hide" title="Дизлайк" aria-label="Скрыть (E)"><i data-lucide="heartOff" data-size="20"></i></button>
-        <button class="btn-icon" id="viewer-similar" title="Похожие (по картинке)" aria-label="Похожие посты"><i data-lucide="images" data-size="20"></i></button>
-        <button class="btn-icon hidden" id="viewer-source" title="Открыть на источнике (Ctrl — в новой вкладке)" aria-label="Открыть на источнике"><i data-lucide="externalLink" data-size="20"></i></button>
-        <button class="btn-icon" id="btn-remote-push" title="Показать на других устройствах" aria-label="Показать на других устройствах"><i data-lucide="cast" data-size="20"></i></button>
+        <button class="btn-icon" id="viewer-like" title="Лайк" data-i18n-title="viewer.like" aria-label="Лайк (Q)" data-i18n-aria="viewer.likeAria"><i data-lucide="heart" data-size="20"></i></button>
+        <button class="btn-icon" id="viewer-hide" title="Дизлайк" data-i18n-title="viewer.dislike" aria-label="Скрыть (E)" data-i18n-aria="viewer.dislikeAria"><i data-lucide="heartOff" data-size="20"></i></button>
+        <button class="btn-icon" id="viewer-similar" title="Похожие (по картинке)" data-i18n-title="btn.similar" aria-label="Похожие посты" data-i18n-aria="btn.similarAria"><i data-lucide="images" data-size="20"></i></button>
+        <button class="btn-icon hidden" id="viewer-source" title="Открыть на источнике (Ctrl — в новой вкладке)" data-i18n-title="viewer.sourceBtn" aria-label="Открыть на источнике" data-i18n-aria="viewer.sourceAria"><i data-lucide="externalLink" data-size="20"></i></button>
+        <button class="btn-icon" id="btn-remote-push" title="Показать на других устройствах" data-i18n-title="btn.remotePush" aria-label="Показать на других устройствах" data-i18n-aria="btn.remotePush"><i data-lucide="cast" data-size="20"></i></button>
         <div class="collect-control">
-          <button class="btn-icon" id="viewer-collect" title="В коллекцию" aria-label="В коллекцию"><i data-lucide="folder" data-size="20"></i></button>
+          <button class="btn-icon" id="viewer-collect" title="В коллекцию" data-i18n-title="batch.collect" aria-label="В коллекцию" data-i18n-aria="batch.collect"><i data-lucide="folder" data-size="20"></i></button>
           <div id="collect-menu" class="collect-menu hidden"></div>
         </div>
-        <button class="btn-icon download-btn" id="viewer-download" title="Скачать (X)" aria-label="Скачать (X)"><i data-lucide="download" data-size="20"></i></button>
-        <button class="btn-icon" id="viewer-fullscreen" title="На весь экран (F)" aria-label="Полноэкранный режим (F)"><i data-lucide="maximize" data-size="20"></i></button>
-        <button class="btn-icon" id="viewer-close" title="Закрыть (ESC)" aria-label="Закрыть (ESC)"><i data-lucide="x" data-size="20"></i></button>
+        <button class="btn-icon download-btn" id="viewer-download" title="Скачать (X)" data-i18n-title="viewer.downloadBtn" aria-label="Скачать (X)" data-i18n-aria="viewer.downloadAria"><i data-lucide="download" data-size="20"></i></button>
+        <button class="btn-icon" id="viewer-fullscreen" title="На весь экран (F)" data-i18n-title="viewer.fsBtn" aria-label="Полноэкранный режим (F)" data-i18n-aria="viewer.fsAria"><i data-lucide="maximize" data-size="20"></i></button>
+        <button class="btn-icon" id="viewer-close" title="Закрыть (ESC)" data-i18n-title="viewer.closeAria" aria-label="Закрыть (ESC)" data-i18n-aria="viewer.closeAria"><i data-lucide="x" data-size="20"></i></button>
       </div>
     </div>
     <div class="viewer-body" id="viewer-body">
-      <button class="nav-btn prev-btn" id="prev-btn" title="Назад (←)"><i data-lucide="chevronLeft" data-size="24"></i></button>
+      <button class="nav-btn prev-btn" id="prev-btn" title="Назад (←)" data-i18n-title="nav.prev"><i data-lucide="chevronLeft" data-size="24"></i></button>
       <div class="viewer-content" id="viewer-content">
         <div class="viewer-loader" id="viewer-loader"><div class="spinner"></div></div>
       </div>
-      <button class="nav-btn next-btn" id="next-btn" title="Вперёд (→)"><i data-lucide="chevronRight" data-size="24"></i></button>
+      <button class="nav-btn next-btn" id="next-btn" title="Вперёд (→)" data-i18n-title="nav.next"><i data-lucide="chevronRight" data-size="24"></i></button>
       <div class="zoom-hud" id="zoom-hud">
         <div class="z-track z-track-x"><div class="z-thumb" id="z-thumb-x"></div></div>
         <div class="z-track z-track-y"><div class="z-thumb" id="z-thumb-y"></div></div>
@@ -154,10 +154,10 @@
       <div id="viewer-progress" class="viewer-progress"></div>
     </div>
     <div class="viewer-mobile-actions" id="viewer-mobile-actions">
-      <button class="viewer-mobile-toggle" id="viewer-mobile-toggle" title="Свернуть панель" aria-label="Свернуть/развернуть панель"><i data-lucide="chevronDown" data-size="12"></i></button>
-      <button class="btn-icon" id="viewer-like-mobile" title="Лайк" aria-label="Лайк (Q)"><i data-lucide="heart" data-size="20"></i></button>
-      <button class="btn-icon" id="viewer-hide-mobile" title="Дизлайк" aria-label="Скрыть (E)"><i data-lucide="heartOff" data-size="20"></i></button>
-      <button class="btn-icon" id="viewer-fullscreen-mobile" title="Свернуть полный просмотр" aria-label="Свернуть полный просмотр (F)"><i data-lucide="minimize" data-size="24"></i></button>
+      <button class="viewer-mobile-toggle" id="viewer-mobile-toggle" title="Свернуть панель" data-i18n-title="viewer.mobileToggle" aria-label="Свернуть/развернуть панель" data-i18n-aria="viewer.mobileToggleAria"><i data-lucide="chevronDown" data-size="12"></i></button>
+      <button class="btn-icon" id="viewer-like-mobile" title="Лайк" data-i18n-title="viewer.like" aria-label="Лайк (Q)" data-i18n-aria="viewer.likeAria"><i data-lucide="heart" data-size="20"></i></button>
+      <button class="btn-icon" id="viewer-hide-mobile" title="Дизлайк" data-i18n-title="viewer.dislike" aria-label="Скрыть (E)" data-i18n-aria="viewer.dislikeAria"><i data-lucide="heartOff" data-size="20"></i></button>
+      <button class="btn-icon" id="viewer-fullscreen-mobile" title="Свернуть полный просмотр" data-i18n-title="viewer.fsMin" aria-label="Свернуть полный просмотр (F)" data-i18n-aria="viewer.fsMinAria"><i data-lucide="minimize" data-size="24"></i></button>
     </div>
     </div>
   </div>
@@ -268,7 +268,7 @@
         <div class="collection-form">
           <input type="text" id="collection-name" placeholder="Новая коллекция…" data-i18n-ph="collections.namePh" maxlength="60">
           <button id="btn-create-collection" class="btn-primary btn-sm"><i data-lucide="plus" data-size="14"></i> <span data-i18n="btn.create">Создать</span></button>
-          <button id="btn-collections-zip-all" class="btn-sm" title="Скачать ZIP из всех коллекций" data-i18n="collections.downloadAll">Скачать всё</button>
+          <button id="btn-collections-zip-all" class="btn-sm" title="Скачать ZIP из всех коллекций" data-i18n-title="collections.zipAll" data-i18n="collections.downloadAll">Скачать всё</button>
         </div>
         <div id="collections-list" class="collections-list"></div>
       </div>
@@ -327,17 +327,17 @@
     </div>
   </aside>
 
-  <aside id="settings-panel" class="panel-layout settings-panel hidden" aria-label="Настройки" aria-hidden="true">
+  <aside id="settings-panel" class="panel-layout settings-panel hidden" aria-label="Настройки" data-i18n-aria="set.title" aria-hidden="true">
     <div class="panel-resize" aria-hidden="true"></div>
     <div class="panel-header profile-hero">
       <div class="profile-hero-glow" aria-hidden="true"></div>
       <div class="profile-hero-top">
         <span class="profile-panel-title" data-i18n="set.title">Настройки</span>
-        <button class="btn-icon" id="settings-close" title="Закрыть (Esc)" aria-label="Закрыть настройки (Esc)"><i data-lucide="x" data-size="18"></i></button>
+        <button class="btn-icon" id="settings-close" title="Закрыть (Esc)" data-i18n-title="pf.close" aria-label="Закрыть настройки (Esc)" data-i18n-aria="set.closeAria"><i data-lucide="x" data-size="18"></i></button>
       </div>
     </div>
     <div class="panel-layout-body">
-      <nav class="panel-nav profile-tabs" aria-label="Разделы настроек">
+      <nav class="panel-nav profile-tabs" aria-label="Разделы настроек" data-i18n-aria="set.sectionsAria">
         <button class="panel-nav-item profile-tab active" id="settings-tab-appearance" type="button" data-tab="appearance" aria-controls="stab-appearance" aria-selected="true"><span data-i18n="stab.appearance">Оформление</span></button>
         <button class="panel-nav-item profile-tab" id="settings-tab-network" type="button" data-tab="network" aria-controls="stab-network" aria-selected="false"><span data-i18n="stab.network">Сеть</span></button>
         <button class="panel-nav-item profile-tab" id="settings-tab-download" type="button" data-tab="download" aria-controls="stab-download" aria-selected="false"><span data-i18n="stab.download">Скачивание</span></button>
@@ -376,20 +376,20 @@
         <div class="setting-group">
           <span class="setting-label" data-i18n="set.accent">Акцентный цвет</span>
           <div class="accent-row" id="setting-accent">
-            <button class="accent-swatch" data-accent="purple" style="--sw:#a78bfa" title="Фиолетовый"></button>
-            <button class="accent-swatch" data-accent="indigo" style="--sw:#818cf8" title="Индиго"></button>
-            <button class="accent-swatch" data-accent="blue" style="--sw:#60a5fa" title="Синий"></button>
-            <button class="accent-swatch" data-accent="sky" style="--sw:#38bdf8" title="Небесный"></button>
-            <button class="accent-swatch" data-accent="cyan" style="--sw:#22d3ee" title="Бирюзовый"></button>
-            <button class="accent-swatch" data-accent="teal" style="--sw:#2dd4bf" title="Бирюза-зелёный"></button>
-            <button class="accent-swatch" data-accent="green" style="--sw:#34d399" title="Зелёный"></button>
-            <button class="accent-swatch" data-accent="lime" style="--sw:#a3e635" title="Лаймовый"></button>
-            <button class="accent-swatch" data-accent="amber" style="--sw:#fbbf24" title="Янтарный"></button>
-            <button class="accent-swatch" data-accent="orange" style="--sw:#fb923c" title="Оранжевый"></button>
-            <button class="accent-swatch" data-accent="rose" style="--sw:#fb7185" title="Розово-красный"></button>
-            <button class="accent-swatch" data-accent="pink" style="--sw:#f472b6" title="Розовый"></button>
-            <button class="accent-swatch" data-accent="red" style="--sw:#f87171" title="Красный"></button>
-            <input type="color" id="setting-accent-custom" class="accent-custom" value="#e879f9" title="Свой цвет" aria-label="Свой цвет акцента">
+            <button class="accent-swatch" data-accent="purple" style="--sw:#a78bfa" title="Фиолетовый" data-i18n-title="accent.purple"></button>
+            <button class="accent-swatch" data-accent="indigo" style="--sw:#818cf8" title="Индиго" data-i18n-title="accent.indigo"></button>
+            <button class="accent-swatch" data-accent="blue" style="--sw:#60a5fa" title="Синий" data-i18n-title="accent.blue"></button>
+            <button class="accent-swatch" data-accent="sky" style="--sw:#38bdf8" title="Небесный" data-i18n-title="accent.sky"></button>
+            <button class="accent-swatch" data-accent="cyan" style="--sw:#22d3ee" title="Бирюзовый" data-i18n-title="accent.cyan"></button>
+            <button class="accent-swatch" data-accent="teal" style="--sw:#2dd4bf" title="Бирюза-зелёный" data-i18n-title="accent.teal"></button>
+            <button class="accent-swatch" data-accent="green" style="--sw:#34d399" title="Зелёный" data-i18n-title="accent.green"></button>
+            <button class="accent-swatch" data-accent="lime" style="--sw:#a3e635" title="Лаймовый" data-i18n-title="accent.lime"></button>
+            <button class="accent-swatch" data-accent="amber" style="--sw:#fbbf24" title="Янтарный" data-i18n-title="accent.amber"></button>
+            <button class="accent-swatch" data-accent="orange" style="--sw:#fb923c" title="Оранжевый" data-i18n-title="accent.orange"></button>
+            <button class="accent-swatch" data-accent="rose" style="--sw:#fb7185" title="Розово-красный" data-i18n-title="accent.rose"></button>
+            <button class="accent-swatch" data-accent="pink" style="--sw:#f472b6" title="Розовый" data-i18n-title="accent.pink"></button>
+            <button class="accent-swatch" data-accent="red" style="--sw:#f87171" title="Красный" data-i18n-title="accent.red"></button>
+            <input type="color" id="setting-accent-custom" class="accent-custom" value="#e879f9" title="Свой цвет" data-i18n-title="accent.custom" aria-label="Свой цвет акцента" data-i18n-aria="accent.customAria">
           </div>
         </div>
         <label class="setting-group">
@@ -438,8 +438,8 @@
           <form onsubmit="return false;" style="display:contents">
             <!-- Скрытое username-поле: Chrome требует его в password-формах (доступность/менеджер паролей) -->
             <input type="text" id="input-current-username" name="username" autocomplete="username" tabindex="-1" aria-hidden="true" style="display:none">
-            <input type="password" id="input-current-password" placeholder="текущий пароль" autocomplete="current-password">
-            <input type="password" id="input-new-password" placeholder="новый пароль (мин. 6)" autocomplete="new-password">
+            <input type="password" id="input-current-password" placeholder="текущий пароль" data-i18n-ph="pwd.currentPh" autocomplete="current-password">
+            <input type="password" id="input-new-password" placeholder="новый пароль (мин. 6)" data-i18n-ph="pwd.newPh" autocomplete="new-password">
           </form>
           <button id="btn-change-password" class="btn-primary btn-sm"><span data-i18n="btn.changePassword">Сменить пароль</span></button>
           <button id="btn-logout-others" class="btn-primary btn-sm"><span data-i18n="btn.logoutOthers">Выйти на остальных устройствах</span></button>
@@ -455,9 +455,9 @@
           <span class="setting-label" data-i18n="alias.title">Алиасы тегов</span>
           <span class="setting-hint" data-i18n="alias.hint">Синонимы вроде «catgirl» → «neko»: поиск и провайдеры используют канонический тег</span>
           <div class="alias-add-row">
-            <input type="text" id="alias-input" class="preset-rename" placeholder="алиас" spellcheck="false" maxlength="60">
+            <input type="text" id="alias-input" class="preset-rename" placeholder="алиас" data-i18n-ph="alias.aliasPh" spellcheck="false" maxlength="60">
             <span class="alias-arrow">в†'</span>
-            <input type="text" id="alias-target" class="preset-rename" placeholder="канон" spellcheck="false" maxlength="60">
+            <input type="text" id="alias-target" class="preset-rename" placeholder="канон" data-i18n-ph="alias.targetPh" spellcheck="false" maxlength="60">
             <button type="button" class="btn-primary btn-sm" id="btn-add-alias"><i data-lucide="plus" data-size="13"></i> <span data-i18n="btn.addAlias">Добавить</span></button>
           </div>
           <div id="tag-aliases-list" class="tag-aliases-list"></div>
@@ -478,7 +478,7 @@
         </div>
         <label class="setting-group" style="flex-direction:row;align-items:center;gap:10px;cursor:pointer">
           <input type="checkbox" id="setting-remote-follow">
-          <span class="setting-label" style="margin:0">Открывать посты, отправленные с других устройств («пульт»)</span>
+          <span class="setting-label" style="margin:0" data-i18n="set.remoteFollow">Открывать посты, отправленные с других устройств («пульт»)</span>
         </label>
         <label class="setting-group" style="flex-direction:row;align-items:center;gap:10px;cursor:pointer">
           <input type="checkbox" id="setting-dl-notify">
@@ -564,14 +564,14 @@
             <label class="auth-label" for="auth-username">Логин</label>
             <div class="auth-input has-ico">
               <i class="auth-ico" data-lucide="user"></i>
-              <input type="text" id="auth-username" autocomplete="username" maxlength="24" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="например, max_2026">
+              <input type="text" id="auth-username" autocomplete="username" maxlength="24" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="например, max_2026" data-i18n-ph="auth.userPh">
             </div>
           </div>
           <div class="auth-field">
             <label class="auth-label" for="auth-password">Пароль</label>
             <div class="auth-input">
-              <input type="password" id="auth-password" autocomplete="current-password" placeholder="минимум 6 символов">
-              <button type="button" class="auth-pw-toggle" data-target="auth-password" aria-label="Показать пароль">
+              <input type="password" id="auth-password" autocomplete="current-password" placeholder="минимум 6 символов" data-i18n-ph="auth.pwdMinPh">
+              <button type="button" class="auth-pw-toggle" data-target="auth-password" aria-label="Показать пароль" data-i18n-aria="auth.pwdShow">
                 <i data-lucide="eye"></i>
               </button>
             </div>
@@ -580,8 +580,8 @@
           <div class="auth-field" id="auth-pw2-field">
             <label class="auth-label" for="auth-password2">Повторите пароль</label>
             <div class="auth-input">
-              <input type="password" id="auth-password2" autocomplete="new-password" placeholder="повторите пароль">
-              <button type="button" class="auth-pw-toggle" data-target="auth-password2" aria-label="Показать пароль">
+              <input type="password" id="auth-password2" autocomplete="new-password" placeholder="повторите пароль" data-i18n-ph="auth.pwdRepeatPh">
+              <button type="button" class="auth-pw-toggle" data-target="auth-password2" aria-label="Показать пароль" data-i18n-aria="auth.pwdShow">
                 <i data-lucide="eye"></i>
               </button>
             </div>
@@ -604,14 +604,14 @@
     <button class="btn-primary btn-sm" id="batch-like"><i data-lucide="heart" data-size="14"></i> <span data-i18n="batch.like">Лайк</span></button>
     <button class="btn-primary btn-sm" id="batch-collect"><i data-lucide="folderPlus" data-size="14"></i> <span data-i18n="batch.collect">В коллекцию</span></button>
     <button class="btn-primary btn-sm" id="batch-hide"><i data-lucide="eyeOff" data-size="14"></i> <span data-i18n="batch.hide">Скрыть</span></button>
-    <button class="btn-icon btn-icon-sm" id="batch-clear" title="Снять выделение"><i data-lucide="x" data-size="16"></i></button>
+    <button class="btn-icon btn-icon-sm" id="batch-clear" title="Снять выделение" data-i18n-title="batch.clear"><i data-lucide="x" data-size="16"></i></button>
   </div>
 
   <footer id="footer">
     <span class="keys-hint">WASD / стрелки навигация · Enter открыть · X скачать · Q лайк · E скрыть · F полный экран · Z зум · R инверсия · L локальные · / поиск · Пробел слайдшоу · Ctrl+ЛКМ новая вкладка · ESC закрыть</span>
     <span id="status-text">готово</span>
-    <span id="build-version" title="Сборка">__VERSION__</span>
-    <div id="dl-progress" class="dl-progress hidden"><div class="dl-progress-bar" id="dl-progress-bar"></div><span id="dl-progress-text"></span><button class="btn-icon btn-icon-sm" id="dl-pause" title="Пауза"><i data-lucide="pause" data-size="12" data-solid="1"></i></button><button class="btn-icon btn-icon-sm hidden" id="dl-resume" title="Продолжить"><i data-lucide="play" data-size="12" data-solid="1"></i></button></div>
+    <span id="build-version" title="Сборка" data-i18n-title="footer.build">__VERSION__</span>
+    <div id="dl-progress" class="dl-progress hidden"><div class="dl-progress-bar" id="dl-progress-bar"></div><span id="dl-progress-text"></span><button class="btn-icon btn-icon-sm" id="dl-pause" title="Пауза" data-i18n-title="dl.pause"><i data-lucide="pause" data-size="12" data-solid="1"></i></button><button class="btn-icon btn-icon-sm hidden" id="dl-resume" title="Продолжить" data-i18n-title="dl.resume"><i data-lucide="play" data-size="12" data-solid="1"></i></button></div>
   </footer>
 </div>
 

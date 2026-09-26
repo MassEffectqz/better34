@@ -2,7 +2,7 @@
 // и вешают свои методы на него; циклических импортов нет (state тянет только utils/api).
 import { _, esc, go, icon } from './utils.js';
 import { API } from './api.js';
-import { t, getLang, setLang } from './i18n.js';
+import { t, tf, getLang, setLang } from './i18n.js';
 import { flushOfflineQueue } from './offline.js';
 
 // Пауза перед отправкой пачки отметок «просмотрено». Нужна, чтобы быстрое
@@ -151,7 +151,7 @@ export const App = {
     window.addEventListener('unhandledrejection', (e) => {
       console.error('Unhandled rejection:', e.reason);
       if (typeof App !== 'undefined' && App.showToast) {
-        App.showToast('Произошла непредвиденная ошибка', 'error');
+        App.showToast(t('err.unexpected'), 'error');
       }
     });
   },
@@ -497,21 +497,21 @@ export const App = {
       e.settingLang.value = getLang();
       e.settingLang.addEventListener('change', () => setLang(e.settingLang.value));
     }
-    e.settingTheme.addEventListener('change', () => { this.setTheme(e.settingTheme.value); this.showToast('Сохранено', 'success'); });
-        e.settingGrid.addEventListener('change', () => { this.setGridSetting(e.settingGrid.value); this.showToast('Сохранено', 'success'); });
+    e.settingTheme.addEventListener('change', () => { this.setTheme(e.settingTheme.value); this.showToast(t('set.savedShort'), 'success'); });
+        e.settingGrid.addEventListener('change', () => { this.setGridSetting(e.settingGrid.value); this.showToast(t('set.savedShort'), 'success'); });
     if (e.settingAutoRefresh) e.settingAutoRefresh.addEventListener('change', () => {
       this.state.autoRefreshFeed = e.settingAutoRefresh.checked;
       try { localStorage.setItem('briefly_auto_refresh_feed', e.settingAutoRefresh.checked ? '1' : '0'); } catch {}
-      this.showToast('Сохранено', 'success');
+      this.showToast(t('set.savedShort'), 'success');
     });
     e.settingAccent.addEventListener('click', (ev) => {
       const sw = ev.target.closest('.accent-swatch');
-      if (sw) { this.setAccent(sw.dataset.accent); this.showToast('Сохранено', 'success'); }
+      if (sw) { this.setAccent(sw.dataset.accent); this.showToast(t('set.savedShort'), 'success'); }
     });
     // Свой цвет акцента: применяется сразу при выборе в color-picker.
     document.getElementById('setting-accent-custom')?.addEventListener('input', () => {
       this.setAccent('custom');
-      this.showToast('Сохранено', 'success');
+      this.showToast(t('set.savedShort'), 'success');
     });
     e.btnAddApiKey.addEventListener('click', () => this.renderAPIKeys([...this.state.apiKeys, { name: '', api_key: '', user_id: '' }]));
     e.btnDBClean.addEventListener('click', () => go(this.cleanDB()));
@@ -704,7 +704,7 @@ export const App = {
         header.classList.remove('offline');
       } else {
         header.classList.add('offline');
-        this.showToast('Нет подключения к сети — действия будут отложены', 'info');
+        this.showToast(t('net.offline'), 'info');
       }
     };
     window.addEventListener('online', () => {
@@ -1152,7 +1152,7 @@ export const App = {
       nickname: this.els.profileNickname.value.trim() || '',
     };
     if (data.avatar && data.avatar.length > 3 * 1024 * 1024) {
-      this.showToast('Аватар слишком большой — выберите меньшее изображение', 'error');
+      this.showToast(t('profile.avatarTooBig'), 'error');
       return;
     }
     API.post('/profile/meta', data).then(() => {
@@ -1161,15 +1161,15 @@ export const App = {
         this.state.user.avatar = data.avatar;
       }
       API.invalidate('/profile');
-      this.showToast('Профиль обновлён');
-    }).catch(err => this.showToast(`Ошибка: ${err.message}`, 'error'));
+      this.showToast(t('profile.updated'));
+    }).catch(err => this.showToast(tf('err.withMsg', { msg: err.message }), 'error'));
     try { localStorage.setItem('briefly_profile_meta', JSON.stringify(data)); } catch {}
   },
 
   onAvatarChange(ev) {
     const file = ev.target.files[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) { this.showToast('Только изображения', 'error'); return; }
+    if (!file.type.startsWith('image/')) { this.showToast(t('profile.imgOnly'), 'error'); return; }
     const reader = new FileReader();
     reader.onload = (e) => {
       const src = /** @type {string} */ (/** @type {FileReader} */ (e.target).result);
@@ -1189,9 +1189,9 @@ export const App = {
         this.els.profileAvatarImg.src = dataUrl;
         this.els.profileAvatarImg.style.display = 'block';
         this.saveProfileMeta();
-        this.showToast('Аватар обновлён');
+        this.showToast(t('profile.avatarUpdated'));
       };
-      img.onerror = () => this.showToast('Не удалось прочитать изображение', 'error');
+      img.onerror = () => this.showToast(t('profile.imgReadFail'), 'error');
       img.src = src;
     };
     reader.readAsDataURL(file);
@@ -1451,9 +1451,9 @@ export const App = {
     if (!p) return;
     try {
       await API.post('/remote/push', { id: p.id });
-      this.showToast(`Пост #${p.id} отправлен на другие устройства`, 'success');
+      this.showToast(tf('remote.pushed', { id: p.id }), 'success');
     } catch (e) {
-      this.showToast('Не удалось отправить: ' + (e && e.message || 'ошибка'), 'error');
+      this.showToast(tf('remote.pushFailed', { msg: (e && e.message) || t('err.generic') }), 'error');
     }
   },
 
@@ -1606,14 +1606,14 @@ export const App = {
     try {
       const d = await API.get(`/similar/${id}`);
       const ids = (d.posts || []).map(x => x.id);
-      if (!ids.length) { this.showToast('Похожих локальных постов не найдено'); return false; }
+      if (!ids.length) { this.showToast(t('similar.noneLocal')); return false; }
       if (this.state.viewerOpen) this.closeViewer();
       await this.showGridMode('similar', ids);
       this._similarSourceId = id;
       this.pushSimilarState(id);
       return true;
     } catch (e) {
-      this.showToast('Ошибка: ' + (e && e.message || 'ошибка'), 'error');
+      this.showToast(tf('err.withMsg', { msg: (e && e.message) || t('err.generic') }), 'error');
       return false;
     }
   },
@@ -1636,14 +1636,14 @@ export const App = {
     await API.post('/download/pause');
     this.els.dlPause.classList.add('hidden');
     this.els.dlResume.classList.remove('hidden');
-    this.showToast('Загрузки приостановлены');
+    this.showToast(t('dl.paused'));
   },
 
   async resumeDownloads() {
     await API.post('/download/resume');
     this.els.dlResume.classList.add('hidden');
     this.els.dlPause.classList.remove('hidden');
-    this.showToast('Загрузки возобновлены');
+    this.showToast(t('dl.resumed'));
   },
 
   async showQueue() {
@@ -1666,9 +1666,9 @@ export const App = {
             <span class="queue-item-id">#${j.post_id}</span>
             <span class="queue-item-ext">${esc(j.file_type || '')}</span>
             <div class="queue-item-actions">
-              <button data-qact="up" data-id="${j.post_id}" title="Вверх">${icon('chevronUp', 13)}</button>
-              <button data-qact="down" data-id="${j.post_id}" title="Вниз">${icon('chevronDown', 13)}</button>
-              <button data-qact="cancel" data-id="${j.post_id}" title="Отменить" style="color:var(--error)">${icon('x', 13)}</button>
+              <button data-qact="up" data-id="${j.post_id}" title="${esc(t('jobs.up'))}">${icon('chevronUp', 13)}</button>
+              <button data-qact="down" data-id="${j.post_id}" title="${esc(t('jobs.down'))}">${icon('chevronDown', 13)}</button>
+              <button data-qact="cancel" data-id="${j.post_id}" title="${esc(t('jobs.cancel'))}" style="color:var(--error)">${icon('x', 13)}</button>
             </div>
           </div>`
         ).join('');
@@ -1739,7 +1739,7 @@ export const App = {
     this.renderModeBar();
     this.updateViewedToggle();
     this.loadPosts(true, null, true);
-    this.showToast('Собираю рекомендации по вашим лайкам...');
+    this.showToast(t('rec.building'));
   },
 
   exitRecommend() {
@@ -1748,13 +1748,13 @@ export const App = {
     this.renderModeBar();
     this.updateViewedToggle();
     this.loadPosts(true, null, true);
-    this.showToast('Вернулся к вашему запросу');
+    this.showToast(t('rec.backToQuery'));
   },
 
   refreshRecommend(silent = false) {
     if (!this.state.recommendActive) return;
     this.loadPosts(true, null, true);
-    if (!silent) this.showToast('Подборка обновлена');
+    if (!silent) this.showToast(t('rec.refreshed'));
   },
 
   _scheduleRecommendRefresh() {

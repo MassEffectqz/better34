@@ -34,6 +34,9 @@ for (const f of files) {
   const code = readFileSync(f, 'utf8');
   const rel = f.slice(root.length + 1).replace(/\\/g, '/');
   for (const m of code.matchAll(/(?:^|[^\w.$])t(?:f)?\(\s*'([\w.]+)'/g)) add(m[1], rel);
+  // T('k', fallback) — локальный алиас t() в классических скриптах
+  // (sw-register.js подключается без module и берёт словарь из window).
+  for (const m of code.matchAll(/(?:^|[^\w.$])T\(\s*'([\w.]+)'/g)) add(m[1], rel);
   for (const m of code.matchAll(/data-i18n(?:-title|-ph|-aria)?="([\w.]+)"/g)) add(m[1], rel);
 }
 function add(k, where) {
@@ -67,9 +70,62 @@ for (const [k, set] of ruPh) {
   if (a !== b) problems.push(`PLACEHOLDER MISMATCH  ${k}: ru{${a}} en{${b}}`);
 }
 
-const unused = [...ru.keys].filter(k => !used.has(k));
+// Строгий режим (по умолчанию): неиспользуемый ключ — ошибка. Ключи err.*
+// собираются динамически в API._err ('err.' + code из ответа сервера) — их
+// статический разбор не видит, поэтому они в белом списке.
+// Отключить строгость: node scripts/check-i18n.mjs --allow-unused
+const ALLOW_UNUSED = process.argv.includes('--allow-unused');
+const DYNAMIC_PREFIXES = ['err.'];
+const unused = [...ru.keys].filter((k) => !used.has(k) && !DYNAMIC_PREFIXES.some((p) => k.startsWith(p)));
 console.log(`i18n: RU=${ru.keys.size} EN=${en.keys.size} used=${used.size} unused=${unused.length}`);
-if (unused.length) console.log('not referenced (ok if dynamic): ' + unused.join(', '));
+if (unused.length) {
+  if (ALLOW_UNUSED) {
+    console.log('not referenced (ok if dynamic): ' + unused.join(', '));
+  } else {
+    console.error(`UNUSED KEYS (${unused.length}) — удалите или используйте:\n  ${unused.join('\n  ')}`);
+    process.exit(1);
+  }
+}
+// ── Пользовательские строки: русский литерал в UI — ошибка ───────────────
+// Комментарии и логи в порядке (они не в этих позициях), а вот строки,
+// которые видит пользователь, обязаны идти через t()/tf() или data-i18n-*.
+const CYR = /[А-Яа-яЁё]/;
+const UI_POS = [
+  /showToast(?:WithUndo)?\(\s*'([^']*)'/g, /title:\s*'([^']*)'/g, /aria-label:\s*'([^']*)'/g,
+  /placeholder:\s*'([^']*)'/g, /(?:textContent|innerHTML)\s*=\s*'([^']*)'/g,
+  /(?:title|aria-label|placeholder)="([^"]*)"/g,
+];
+const literals = [];
+const htmlSrc = readFileSync(join(root, 'static', 'index.html'), 'utf8');
+for (const f of files) {
+  if (!f.endsWith('.js')) continue;
+  const srcText = readFileSync(f, 'utf8');
+  srcText.split('\n').forEach((line, i) => {
+    if (line.trimStart().startsWith('//') || line.trimStart().startsWith('*')) return;
+    for (const re of UI_POS) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(line)) !== null) {
+        if (CYR.test(m[1])) literals.push(`${f.replace(root, '.')}:${i + 1}  ${m[1].slice(0, 60)}`);
+      }
+    }
+  });
+}
+// Разметка: атрибут с русским текстом обязан иметь пару data-i18n-* на строке.
+htmlSrc.split('\n').forEach((line, i) => {
+  if (!CYR.test(line)) return;
+  for (const attr of ['title', 'aria-label', 'placeholder']) {
+    const m = new RegExp(`${attr}="([^"]*[А-Яа-яЁё][^"]*)"`).exec(line);
+    if (!m) continue;
+    const dataAttr = attr === 'aria-label' ? 'data-i18n-aria' : attr === 'placeholder' ? 'data-i18n-ph' : 'data-i18n-title';
+    if (!line.includes(dataAttr)) literals.push(`index.html:${i + 1}  ${attr}="${m[1].slice(0, 60)}" (нет ${dataAttr})`);
+  }
+});
+if (literals.length) {
+  problems.push(`HARDCODED RU STRINGS (${literals.length}):\n    ${literals.join('\n    ')}`);
+}
+
+// ── Итог ────────────────────────────────────────────────────────────────
 if (problems.length) {
   console.error('i18n check FAILED:');
   for (const p of problems) console.error('  ' + p);

@@ -1060,14 +1060,22 @@ App.batchDownload = async function () {
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
 };
 
+// Русская плюрализация «пост/поста/постов» для подтверждений (как pf.tag*).
+const pluralPosts = (n) => {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return t('batch.postOne');
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return t('batch.postFew');
+  return t('batch.postMany');
+};
+
 /** @this {AppType} */
 App.batchHide = async function () {
   const ids = Array.from(this.state.selected);
   if (!ids.length) return;
   const ok = await this.confirmDialog({
-    title: 'Скрыть посты',
-    message: `Скрыть <b>${ids.length}</b> ${ids.length === 1 ? 'пост' : 'постов'}? Их можно будет вернуть кнопкой «Отмена».`,
-    okText: 'Скрыть',
+    title: t('batch.hideTitle'),
+    message: tf('batch.hideMsg', { n: ids.length, word: pluralPosts(ids.length) }),
+    okText: t('batch.hide'),
     danger: true,
   });
   if (!ok) return;
@@ -1140,7 +1148,7 @@ App.batchCollect = async function () {
     <div class="batch-collect-panel">
       <div class="batch-collect-head">
         <span>${esc(t('batch.pickCollection'))} (${ids.length})</span>
-        <button type="button" class="btn-icon btn-icon-sm bc-close" title="Закрыть">${icon('x', 15)}</button>
+        <button type="button" class="btn-icon btn-icon-sm bc-close" title="${esc(t('btn.close'))}">${icon('x', 15)}</button>
       </div>
       <div class="batch-collect-new">
         <input type="text" class="bc-new-input" placeholder="${esc(t('collections.newPh'))}" maxlength="60" spellcheck="false">

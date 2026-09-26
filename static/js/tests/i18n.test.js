@@ -32,7 +32,7 @@ check('setLang диспатчит briefly-lang', events.some(e => e.type === 'br
 
 setLang('ru');
 check('setLang(ru) переключает словарь', t('menu.search') === 'Поиск', t('menu.search'));
-check('tf: подстановка {n} (RU)', tf('grid.n', { n: 5 }) === '5 колонки', tf('grid.n', { n: 5 }));
+check('tf: подстановка {n} (RU)', tf('batch.liked', { n: 5 }) === 'Лайков: 5', tf('batch.liked', { n: 5 }));
 check('setLang пишет выбор в localStorage', localStorage.getItem('briefly_lang') === 'ru',
   localStorage.getItem('briefly_lang'));
 

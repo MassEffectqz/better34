@@ -36,7 +36,7 @@ App.renderAliases = function (aliases) {
       <span class="alias-src">${esc(a.alias)}</span>
       <span class="alias-arrow">→</span>
       <span class="alias-dst">${esc(a.target)}</span>
-      <button type="button" class="btn-icon btn-icon-sm" title="Удалить">${icon('x', 13)}</button>`;
+      <button type="button" class="btn-icon btn-icon-sm" title="${esc(t('comments.del'))}">${icon('x', 13)}</button>`;
     row.querySelector('button').addEventListener('click', () => {
       API.del(`/tag-alias/${encodeURIComponent(a.alias)}`).then(() => {
         this._aliasesCache = (this._aliasesCache || []).filter(x => x.alias !== a.alias);

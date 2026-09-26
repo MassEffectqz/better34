@@ -3,6 +3,7 @@
 import { App } from './state.js';
 import { esc, icon } from './utils.js';
 import { API } from './api.js';
+import { t, tf } from './i18n.js';
 
 const MAX_LEN = 500;
 
@@ -11,19 +12,19 @@ App.renderComments = function (postId) {
   if (!host) return;
   this._commentsPostId = postId;
   host.innerHTML =
-    '<div class="vc-head">Обсуждение <span class="vc-count" id="vc-count"></span></div>' +
+    '<div class="vc-head">' + esc(t('comments.head')) + ' <span class="vc-count" id="vc-count"></span></div>' +
     '<div class="vc-list" id="vc-list"></div>' +
     '<form class="vc-form" id="vc-form">' +
-    '<input type="text" id="vc-input" maxlength="' + MAX_LEN + '" placeholder="Написать комментарий..." autocomplete="off">' +
-    '<span class="vc-counter" id="vc-counter">Осталось: ' + MAX_LEN + '/' + MAX_LEN + '</span>' +
-    '<button type="submit" class="btn-ss" title="Отправить">' + icon('arrowUp', 14, true) + '</button>' +
+    '<input type="text" id="vc-input" maxlength="' + MAX_LEN + '" placeholder="' + esc(t('comments.inputPh')) + '" autocomplete="off">' +
+    '<span class="vc-counter" id="vc-counter">' + esc(tf('comments.left', { left: MAX_LEN, max: MAX_LEN })) + '</span>' +
+    '<button type="submit" class="btn-ss" title="' + esc(t('comments.send')) + '">' + icon('arrowUp', 14, true) + '</button>' +
     '</form>';
   const input = host.querySelector('#vc-input');
   const form = host.querySelector('#vc-form');
   const counter = host.querySelector('#vc-counter');
   const updateCounter = () => {
     const remaining = MAX_LEN - input.value.length;
-    if (counter) counter.textContent = 'Осталось: ' + remaining + '/' + MAX_LEN;
+    if (counter) counter.textContent = tf('comments.left', { left: remaining, max: MAX_LEN });
   };
   input.addEventListener('input', updateCounter);
   updateCounter();
@@ -36,7 +37,7 @@ App.renderComments = function (postId) {
     try {
       await API.post(`/comments/${postId}`, { text });
       input.value = '';
-      if (counter) counter.textContent = 'Осталось: ' + MAX_LEN + '/' + MAX_LEN;
+      if (counter) counter.textContent = tf('comments.left', { left: MAX_LEN, max: MAX_LEN });
       App.loadComments(postId);
     } catch (err) {
       App.showToast(String(err && err.message || err).slice(0, 80), 'error');
@@ -51,7 +52,7 @@ App.loadComments = function (postId) {
   const list = document.getElementById('vc-list');
   if (!list || !this.state.viewerOpen) return;
   const me = this.state.user ? (this.state.user.username || '') : '';
-  list.innerHTML = '<div class="vc-loading"><span class="pf-more-spin"></span> Загрузка комментариев…</div>';
+  list.innerHTML = `<div class="vc-loading"><span class="pf-more-spin"></span> ${esc(t('comments.loading'))}</div>`;
   API.get('/comments/' + postId, { fresh: true }).then((d) => {
     // Пока грузились — пост уже сменился.
     if (this._commentsPostId !== postId || !this.state.viewerOpen) return;
@@ -59,13 +60,13 @@ App.loadComments = function (postId) {
     const count = document.getElementById('vc-count');
     if (count) count.textContent = comments.length ? `(${comments.length})` : '';
     if (!comments.length) {
-      list.innerHTML = '<div class="vc-empty">Комментариев пока нет — будьте первым</div>';
+      list.innerHTML = `<div class="vc-empty">${esc(t('comments.empty'))}</div>`;
       return;
     }
     list.innerHTML = comments.map((cm) => {
       const mine = me && cm.username === me;
       const del = mine
-        ? `<button type="button" class="vc-del" data-cid="${cm.id}" title="Удалить">${icon('x', 11)}</button>`
+        ? `<button type="button" class="vc-del" data-cid="${cm.id}" title="${esc(t('comments.del'))}">${icon('x', 11)}</button>`
         : '';
       const author = cm.nickname && cm.nickname !== cm.username ? cm.nickname : cm.username;
       // Аватар — URL из чужого профиля: пропускаем только безопасные схемы,
@@ -82,9 +83,9 @@ App.loadComments = function (postId) {
     list.querySelectorAll('.vc-del').forEach(btn => {
       btn.addEventListener('click', async () => {
         const ok = await this.confirmDialog({
-          title: 'Удалить комментарий?',
-          message: 'Комментарий будет удалён безвозвратно.',
-          okText: 'Удалить',
+          title: t('comments.delTitle'),
+          message: t('comments.delMsg'),
+          okText: t('confirm.ok'),
           danger: true,
         });
         if (!ok) return;
@@ -92,7 +93,7 @@ App.loadComments = function (postId) {
       });
     });
   }).catch(() => {
-    if (list) list.innerHTML = '<div class="vc-empty">Не удалось загрузить комментарии</div>';
+    if (list) list.innerHTML = `<div class="vc-empty">${esc(t('comments.loadFailed'))}</div>`;
   });
 };
 

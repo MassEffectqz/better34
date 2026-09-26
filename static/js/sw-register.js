@@ -9,7 +9,11 @@
 // перезагрузки пользователь гарантированно получает новую сборку.
 // Скрипт классический (не module) — тост строим через DOM без import'ов;
 // для вёрстки переиспользуем CSS-класс .toast из toast.js.
+// Скрипт классический (не module) — тост строим через DOM без import'ов;
+// строки берём из словаря через window.__brieflyT, который публикует i18n.js
+// (модуль грузится с defer, к моменту показа тоста он уже выполнен).
 (function () {
+  const T = (key, fallback) => (typeof window !== 'undefined' && window.__brieflyT ? window.__brieflyT(key) : fallback);
   if (!('serviceWorker' in navigator)) return;
   let updateToastShown = false;
 
@@ -21,16 +25,16 @@
     el.style.transition = 'opacity .25s';
     el.style.display = 'flex';
     el.style.alignItems = 'center';
-    el.textContent = 'Доступно обновление приложения';
+    el.textContent = T('sw.updateReady', 'Update available');
     const btn = document.createElement('button');
     btn.style.cssText = 'background:var(--accent);color:#fff;border:none;border-radius:4px;padding:4px 10px;margin-left:8px;cursor:pointer;font-size:.8rem';
-    btn.textContent = 'Перезагрузить';
+    btn.textContent = T('sw.reload', 'Reload');
     btn.addEventListener('click', () => { location.reload(); });
     el.appendChild(btn);
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '\u00d7';
     closeBtn.style.cssText = 'background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer;margin-left:auto;padding:0 4px;line-height:1';
-    closeBtn.setAttribute('aria-label', 'Dismiss');
+    closeBtn.setAttribute('aria-label', T('sw.dismiss', 'Dismiss'));
     closeBtn.addEventListener('click', () => { el.remove(); });
     el.appendChild(closeBtn);
     document.body.appendChild(el);

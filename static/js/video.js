@@ -1,5 +1,6 @@
 import { App } from './state.js';
 import { icon } from './utils.js';
+import { t } from './i18n.js';
 // video.js — видео-часть вьюера: настройки (громкость/скорость), позиции
 // просмотра, autoplay-fallback, подсказка звука, ошибки загрузки, PiP.
 // Загружается после viewer.js (использует App из utils/state).
@@ -297,12 +298,12 @@ App.togglePictureInPicture = function () {
   const v = App.currentVideo();
   const doc = typeof document !== 'undefined' ? document : {};
   if (!v || !doc.pictureInPictureEnabled || !v.requestPictureInPicture) {
-    App.showToast('Картинка в картинке не поддерживается', 'error');
+    App.showToast(t('video.pipUnsupported'), 'error');
     return;
   }
   if (doc.pictureInPictureElement === v) {
     doc.exitPictureInPicture().catch(() => {});
     return;
   }
-  v.requestPictureInPicture().catch(() => App.showToast('Не удалось открыть PiP', 'error'));
+  v.requestPictureInPicture().catch(() => App.showToast(t('video.pipFailed'), 'error'));
 };
