@@ -253,7 +253,7 @@ App._bindViewerTagDelegation = function () {
     const current = this.state.query;
     const newQ = current ? `${current} +${tag}` : `+${tag}`;
     this.closeViewer({ keepUrl: true });
-    this.els.searchInput.value = newQ;
+    this.setSearchValue(newQ);
     this.search(newQ);
   };
   const inXBtn = (e) => !!(e.target.closest && e.target.closest('.tag-hide-btn'));
@@ -474,7 +474,7 @@ App._openPostById = function (id) {
   if (idx >= 0) { this._gotoViewerIndex(idx, 0); return; }
   const q = `id:${id}`;
   this.closeViewer({ keepUrl: true });
-  this.els.searchInput.value = q;
+  this.setSearchValue(q);
   this.search(q);
 };
 

@@ -40,7 +40,7 @@ App.onSearchInput = function () {
     this.updateViewedToggle();
   }
   this.state.query = q;
-  this.els.searchClear.classList.toggle('visible', q.length > 0);
+  this.syncSearchClear();
   // Подсказки — по слову под кареткой (границы запоминаем для подстановки).
   const w = this.suggestWord(this.els.searchInput);
   this._suggTailStart = w.start;
@@ -303,8 +303,8 @@ App.onSearchKeydown = function (e) {
       // Сброс только при непустом вводе; search() отменит отложенный debounce,
       // иначе «призрачный» таймер вернул бы старый запрос после очистки.
       if (this.els.searchInput.value) {
-        this.els.searchInput.value = ''; this.state.query = '';
-        this.els.searchClear.classList.remove('visible');
+        this.setSearchValue('');
+        this.state.query = '';
         this.updateQueryMeta('');
         this.renderQueryChips('');
         this.search('');
@@ -412,7 +412,7 @@ App.removeChip = function (removeIdx) {
     for (const t of toks) { if (i !== removeIdx) kept.push(t); i++; }
     return kept.join(' ');
   }).filter(s => s.length).join('|');
-  this.els.searchInput.value = next;
+  this.setSearchValue(next);
   this.onSearchInput();
 };
 
@@ -463,7 +463,7 @@ App.showHistory = function () {
 
     d.addEventListener('click', () => {
       el.classList.remove('active');
-      this.els.searchInput.value = entry.q;
+      this.setSearchValue(entry.q);
       this.onSearchInput();
       this.search(entry.q);
     });
@@ -536,7 +536,7 @@ App.search = async function (query) {
       const d = await API.get('/nl-search?q=' + encodeURIComponent(nl));
       if (!d.query) throw new Error('пустой ответ');
       query = d.query;
-      this.els.searchInput.value = query;
+      this.setSearchValue(query);
       this.onSearchInput();
       this.showToast(tf('search.nlResult', { query }), 'success');
     } catch (e) {
@@ -582,9 +582,8 @@ App.goHome = function () {
   if (this.els.btnLocal) this.els.btnLocal.innerHTML = icon('house', 18);
   if (this.state.viewerOpen) { this.closeViewer({ keepUrl: true }); }
   if (this.els.searchInput.value) {
-    this.els.searchInput.value = '';
+    this.setSearchValue('');
     this.state.query = '';
-    this.els.searchClear.classList.remove('visible');
     this.updateQueryMeta('');
     this.renderQueryChips('');
   }

@@ -10,6 +10,14 @@ import { flushOfflineQueue } from './offline.js';
 // теряет id — накопленное уходит одним POST /api/views.
 const VIEW_FLUSH_MS = 1500;
 
+// ── Поле поиска и крестик очистки ────────────────────────────────────────
+// Регрессия: класс .visible ставился только в onSearchInput, то есть только
+// при вводе с клавиатуры. Значение поля программно меняют ещё ~14 мест
+// (пресет, подсказка, история поиска, deep-link, «похожие», коллекция,
+// восстановление маршрута) — в них кнопка оставалась с opacity:0, то есть
+// текст в поле есть, а крестик не виден. Теперь единственная точка правды —
+// syncSearchClear(), а писать в поле надо через setSearchValue().
+
 export const App = {
   state: {
     /** @type {Post[]} */ posts: [], page: 1, loading: false, hasMore: true, query: '',
@@ -141,7 +149,7 @@ export const App = {
     const target = this.parseLocation(this._lastURL);
     if (target.matched) {
       this.state.query = target.query;
-      this.els.searchInput.value = target.query;
+      this.setSearchValue(target.query);
     }
     if (target.profileTab) {
       if (!this.state.profileOpen) this.toggleProfile();
@@ -224,7 +232,7 @@ export const App = {
     // из режима и подхватываем запрос из URL.
     if ((this.state.displayMode === 'likes' || this.state.displayMode === 'hides') && target.query !== this.state.query) {
       this.state.query = target.query;
-      if (this.els.searchInput) this.els.searchInput.value = target.query;
+      if (this.els.searchInput) this.setSearchValue(target.query);
       this.clearMode();
       return;
     }
@@ -240,13 +248,13 @@ export const App = {
     // режима и подхватываем запрос из URL (сетка содержит «похожие», а не выдачу).
     if (this.state.displayMode === 'similar' && target.postId == null) {
       this.state.query = target.query;
-      if (this.els.searchInput) this.els.searchInput.value = target.query;
+      if (this.els.searchInput) this.setSearchValue(target.query);
       this.clearMode();
       return;
     }
     if (target.query !== this.state.query || this.state.posts.length === 0) {
       this.state.query = target.query;
-      if (this.els.searchInput) this.els.searchInput.value = target.query;
+      if (this.els.searchInput) this.setSearchValue(target.query);
       await this.loadPosts(true);
       if (target.postId != null) await this.openViewerByPostId(target.postId);
       else if (this.state.viewerOpen) this.closeViewer();
@@ -388,7 +396,7 @@ export const App = {
     e.queueClose.addEventListener('click', () => this.hideQueue());
     e.queueModal.addEventListener('click', (ev) => { if (ev.target === e.queueModal || ev.target.classList.contains('modal-backdrop')) this.hideQueue(); });
     e.dlProgress.addEventListener('click', (ev) => { if (ev.target === e.dlPause || ev.target === e.dlResume) return; go(this.showQueue()); });
-    e.searchClear.addEventListener('click', () => { this.state.query = ''; this.els.searchInput.value = ''; this.els.searchInput.focus(); e.searchClear.classList.remove('visible'); this.search(''); });
+    e.searchClear.addEventListener('click', () => { this.state.query = ''; this.setSearchValue(''); this.els.searchInput.focus(); this.search(''); });
     e.btnHeaderMenu.addEventListener('click', (ev) => { ev.stopPropagation(); e.headerMenu.classList.toggle('hidden'); });
     e.headerMenu.addEventListener('click', (ev) => {
       const item = ev.target.closest('.header-menu-item');
@@ -414,7 +422,7 @@ export const App = {
         const kind = item.dataset.kind || 'query';
         if (kind === 'query') {
           const q = item.dataset.query || '';
-          this.els.searchInput.value = q;
+          this.setSearchValue(q);
           this.state.query = q;
           this.search(q);
         } else {
@@ -1164,6 +1172,22 @@ export const App = {
       this.showToast(t('profile.updated'));
     }).catch(err => this.showToast(tf('err.withMsg', { msg: err.message }), 'error'));
     try { localStorage.setItem('briefly_profile_meta', JSON.stringify(data)); } catch {}
+  },
+
+  /** Показать/спрятать крестик очистки по текущему значению поля поиска. */
+  syncSearchClear() {
+    const inp = this.els && this.els.searchInput;
+    const btn = this.els && this.els.searchClear;
+    if (!inp || !btn) return;
+    btn.classList.toggle('visible', inp.value.length > 0);
+  },
+
+  /** Записать запрос в поле поиска и синхронизировать крестик очистки. */
+  setSearchValue(value) {
+    const inp = this.els && this.els.searchInput;
+    if (!inp) return;
+    inp.value = value == null ? '' : String(value);
+    this.syncSearchClear();
   },
 
   onAvatarChange(ev) {

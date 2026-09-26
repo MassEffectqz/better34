@@ -27,6 +27,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #search-input::placeholder{color:var(--text-dim)}
 .search-clear{position:absolute;right:4px;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;border-radius:4px;display:flex;opacity:0;transition:opacity var(--transition)}
 .search-clear.visible{opacity:1}
+/* Страховка на случай забытого syncSearchClear(): :has() не даёт кнопке
+   остаться невидимой, когда в поле есть текст (Chrome 105+, Safari 15.4+,
+   Firefox 121+). Старые браузеры полагаются на JS-класс .visible. */
+.search-box:has(#search-input:not(:placeholder-shown)) .search-clear{opacity:1}
 .search-clear:hover{color:var(--text);background:var(--hover)}
 .suggestions,.history-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--surface2);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);max-height:200px;overflow-y:auto;display:none;z-index:200}
 .suggestions.active,.history-dropdown.active{display:block}

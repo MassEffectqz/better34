@@ -387,7 +387,7 @@ App.renderEmptyState = function (opts) {
 App.resetFilters = function () {
   const hadHiddenTags = (this.state.profile && this.state.profile.hidden_tags && this.state.profile.hidden_tags.length) > 0;
   this.state.query = '';
-  this.els.searchInput.value = '';
+  this.setSearchValue('');
   this.els.searchClear.classList.remove('visible');
   if (hadHiddenTags) {
     API.post('/hidden-tags/clear').then(() => {

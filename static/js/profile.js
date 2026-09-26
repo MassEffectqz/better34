@@ -848,7 +848,7 @@ App.renderTagList = function (elId, tags, type) {
       d.title = tf('tags.search', { tag });
       d.addEventListener('click', (ev) => {
         if (ev.target.closest('button')) return;
-        this.els.searchInput.value = tag;
+        this.setSearchValue(tag);
         this.search(tag);
         this.toggleProfile();
       });
@@ -858,7 +858,7 @@ App.renderTagList = function (elId, tags, type) {
         if (ev.target.closest('button')) return;
         const cur = this.state.query;
         const newQ = cur ? `${cur} -${tag}` : `-${tag}`;
-        this.els.searchInput.value = newQ;
+        this.setSearchValue(newQ);
         this.search(newQ);
         this.toggleProfile();
       });
@@ -927,7 +927,7 @@ App.saveTagPreset = function (kind) {
 
 App.applyPreset = function (pr) {
   if ((pr.kind || 'query') !== 'query') return;
-  this.els.searchInput.value = pr.query || '';
+  this.setSearchValue(pr.query || '');
   this.search(pr.query || '');
 };
 
