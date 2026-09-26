@@ -10,8 +10,9 @@
     "build": "esbuild static/js/app.js --bundle --minify --outfile=static/js/dist/app.js --format=esm && node scripts/precompress.mjs",
     "check:go": "node scripts/quality-gate.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
+    "check:mobile": "node scripts/check-mobile.mjs",
     "check:race": "go test -race . ./internal/...",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run check:go && npm run check:i18n",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run check:go && npm run check:i18n && npm run check:mobile",
     "check:ci": "npm run check && npm run check:race"
   },
   "devDependencies": {

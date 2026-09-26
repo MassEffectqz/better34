@@ -2,14 +2,40 @@ package internal
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 )
+
+// setupProfileTestRouterWithLikes — роутер с POST /api/like/:id и /api/hide/:id
+// в изолированной data/ (та же схема, что и setupProfileTestRouter).
+func setupProfileTestRouterWithLikes(t *testing.T) *httptest.Server {
+	t.Helper()
+	dir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(oldWd) })
+	os.MkdirAll("data", 0o755)
+	resetGlobalTestState(t)
+
+	gin.SetMode(gin.TestMode)
+	h := NewHandler()
+	r := gin.New()
+	api := r.Group("/api")
+	{
+		api.POST("/like/:id", h.ToggleLike)
+		api.POST("/hide/:id", h.ToggleHide)
+	}
+	ts := httptest.NewServer(r)
+	t.Cleanup(ts.Close)
+	return ts
+}
 
 // setupProfileTestRouter поднимает роутер с GET /api/profile в изолированной
 // data/ (та же схема, что и setupBatchTestRouter).
@@ -136,7 +162,110 @@ func setupPostsByIDsRouter(t *testing.T) *httptest.Server {
 	return ts
 }
 
-// TestGetPostsByIDsViewedFlag — /posts-by-ids отдаёт флаг viewed по данным
+// TestToggleLikeExplicitStateIsIdempotent — переигровка одного и того же
+// запроса (оффлайн-очередь на мобильной сети теряет ответ и повторяет POST)
+// не должна переключать лайк/скрытие обратно. Без тела — старая toggle-семантика.
+func TestToggleLikeExplicitStateIsIdempotent(t *testing.T) {
+	ts := setupProfileTestRouterWithLikes(t)
+
+	post := func(url, body string) map[string]any {
+		t.Helper()
+		var rdr io.Reader
+		if body != "" {
+			rdr = strings.NewReader(body)
+		}
+		resp, err := http.Post(ts.URL+url, "application/json", rdr)
+		if err != nil {
+			t.Fatalf("post %s: %v", url, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("post %s: status=%d", url, resp.StatusCode)
+		}
+		var out map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+	liked := func() bool {
+		t.Helper()
+		p := GetProfile()
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		return p.LikedPosts[10]
+	}
+
+	// Без тела — toggle: 10 → on, 11 → off.
+	if r := post("/api/like/10", ""); r["liked"] != true {
+		t.Fatalf("toggle #1: liked=%v", r["liked"])
+	}
+	if r := post("/api/like/10", ""); r["liked"] != false {
+		t.Fatalf("toggle #2: liked=%v", r["liked"])
+	}
+
+	// С явным состоянием повтор безопасен: on, on, on → всё время on.
+	for i := 0; i < 3; i++ {
+		if r := post("/api/like/10", `{"liked":true}`); r["liked"] != true || !liked() {
+			t.Fatalf("explicit like #%d: resp=%v профиль=%v", i, r["liked"], liked())
+		}
+	}
+	// И с false: off, off, off → всё время off (иначе офлайн-очередь вернула бы лайк).
+	for i := 0; i < 3; i++ {
+		if r := post("/api/like/10", `{"liked":false}`); r["liked"] != false || liked() {
+			t.Fatalf("explicit unlike #%d: resp=%v профиль=%v", i, r["liked"], liked())
+		}
+	}
+
+	// То же для скрытия.
+	hidden := func() bool {
+		t.Helper()
+		p := GetProfile()
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		return p.HiddenPosts[8]
+	}
+	for i := 0; i < 3; i++ {
+		post("/api/hide/8", `{"hidden":true}`)
+	}
+	if !hidden() {
+		t.Fatalf("повтор hide:true оставил пост видимым")
+	}
+	for i := 0; i < 3; i++ {
+		post("/api/hide/8", `{"hidden":false}`)
+	}
+	if hidden() {
+		t.Fatalf("повтор hide:false оставил пост скрытым")
+	}
+	// Лайк снимает скрытие (общее правило) и наоборот — hide:false это не отменяет.
+	post("/api/like/8", `{"liked":true}`)
+	post("/api/hide/8", `{"hidden":true}`)
+	post("/api/like/8", `{"liked":false}`)
+	if !hidden() {
+		t.Fatalf("скрытие должно было остаться: снятие лайка не показывает пост")
+	}
+}
+
+// TestToggleLikeBadBodyFallsBackToToggle — битое тело не должно ломать
+// запрос: клиент без явного состояния работает по-прежнему.
+func TestToggleLikeBadBodyFallsBackToToggle(t *testing.T) {
+	ts := setupProfileTestRouterWithLikes(t)
+	resp, err := http.Post(ts.URL+"/api/like/12", "application/json", strings.NewReader("{не json"))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	p := GetProfile()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if !p.LikedPosts[12] {
+		t.Fatalf("битое тело должно приводить к toggle, а не к отказу")
+	}
+}
+
 // view_history: 501 помечен просмотренным, 502 — нет. Нужен вкладкам
 // «Лайки/Скрытые»: по нему клиент помечает пост «новым» и фильтрует непросмотренное.
 func TestGetPostsByIDsViewedFlag(t *testing.T) {

@@ -893,7 +893,8 @@ App.createPostCard = function (post) {
     e.stopPropagation();
     const liked = this.optimisticLike(post.id);
     likeBtn.classList.toggle('liked', liked);
-    API.post(`/like/${post.id}`).catch(() => {
+    // Явное состояние — см. комментарий в App._hideWithUndo.
+    API.post(`/like/${post.id}`, { liked }).catch(() => {
       this.optimisticLike(post.id, !liked);
       likeBtn.classList.toggle('liked', !liked);
     });
@@ -941,7 +942,7 @@ App._feedDoubleTapLike = function (post, card) {  const liked = this.optimisticL
   burst.innerHTML = icon('heart', 40, true);
   card.appendChild(burst);
   setTimeout(() => { try { burst.remove(); } catch {} }, 750);
-  API.post(`/like/${post.id}`).catch(() => {
+  API.post(`/like/${post.id}`, { liked }).catch(() => {
     this.optimisticLike(post.id, !liked);
     if (btn) btn.classList.toggle('liked', !liked);
   });
@@ -1080,7 +1081,7 @@ App.batchHide = async function () {
   const worker = async () => {
     while (cursor < ids.length) {
       const id = ids[cursor++];
-      try { results.set(id, await API.post(`/hide/${id}`)); } catch { results.set(id, null); }
+      try { results.set(id, await API.post(`/hide/${id}`, { hidden: true })); } catch { results.set(id, null); }
     }
   };
   const all = Promise.all(Array.from({ length: Math.min(6, ids.length) }, worker));
@@ -1094,7 +1095,7 @@ App.batchHide = async function () {
       let ui = 0;
       const undoWorker = async () => {
         while (ui < needUndo.length) {
-          await API.post(`/hide/${needUndo[ui++]}`).catch(() => {});
+          await API.post(`/hide/${needUndo[ui++]}`, { hidden: false }).catch(() => {});
         }
       };
       return Promise.all(Array.from({ length: Math.min(6, needUndo.length) }, undoWorker));

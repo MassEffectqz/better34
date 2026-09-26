@@ -626,7 +626,10 @@ App.onThumbAction = function (type, post, act, tile) {
     // Во вкладке «Лайки» кнопка снимает отметку, в «Скрытых» — ставит.
     const liked = this.optimisticLike(id, type !== 'likes');
     this.showToast(liked ? t('pf.likedBack') : t('pf.unliked'));
-    API.post(`/like/${id}`).then(() => {
+    // Явное состояние, а не toggle: запрос может попасть в оффлайн-очередь
+    // и переиграться при восстановлении связи (типично для мобильных) —
+    // переключение вернуло бы лайк обратно.
+    API.post(`/like/${id}`, { liked }).then(() => {
       API.invalidate('/profile');
       if (!liked) this._removeThumb(type, id);
     }).catch(err => { this.optimisticLike(id, !liked); fail(err); });
@@ -636,7 +639,7 @@ App.onThumbAction = function (type, post, act, tile) {
     // Во вкладке «Скрытые» кнопка возвращает пост, в «Лайках» — скрывает.
     const hidden = this.optimisticHide(id, type !== 'hides');
     this.showToast(hidden ? t('pf.hiddenNow') : t('pf.unhidden'));
-    API.post(`/hide/${id}`).then(() => {
+    API.post(`/hide/${id}`, { hidden }).then(() => {
       API.invalidate('/profile');
       if (type === 'hides' && !hidden) this._removeThumb(type, id);
     }).catch(err => { this.optimisticHide(id, !hidden); fail(err); });
@@ -759,7 +762,8 @@ App.thumbSelAction = async function (type, act) {
   // дали бы заметную паузу. Отметки снимаем сразу (оптимистично), неудачные
   // возвращаем в выделение, чтобы пользователь их увидел.
   const results = await Promise.all(ids.map(id =>
-    (like ? API.post(`/like/${id}`) : API.post(`/hide/${id}`)).then(() => true).catch(() => false)));
+    (like ? API.post(`/like/${id}`, { liked: false }) : API.post(`/hide/${id}`, { hidden: false }))
+      .then(() => true).catch(() => false)));
   let done = 0;
   results.forEach((ok, i) => {
     if (!ok) { set.add(ids[i]); return; }

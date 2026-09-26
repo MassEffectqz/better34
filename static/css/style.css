@@ -219,6 +219,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .profile-avatar:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .profile-avatar-overlay{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:#fff;opacity:0;transition:opacity var(--transition)}
 .profile-avatar:hover .profile-avatar-overlay{opacity:1}
+/* Тач: наведения нет, а аватар кликабельный (открывает выбор файла) —
+   без подсказки пользователь не знает, что его можно нажать. */
+@media(hover:none){.profile-avatar .profile-avatar-overlay{opacity:.9}}
 #profile-nickname{width:100%;max-width:360px;background:transparent;border:none;border-bottom:1px solid transparent;text-align:center;color:var(--text-bright);font-size:1.05rem;font-weight:600;outline:none;transition:border-color var(--transition);padding:2px 4px;min-width:0}
 #profile-nickname::placeholder{color:var(--text-dim);font-weight:400}
 #profile-nickname:hover,#profile-nickname:focus{border-bottom-color:var(--accent)}
@@ -779,6 +782,30 @@ select.ss-rate option{color:#111;background:#fff}
 .pf-thumb.pf-checked{outline:2px solid var(--accent);outline-offset:-2px}
 .pf-thumb.pf-checked .pf-sel{background:var(--accent);border-color:var(--accent)}
 .pf-thumb.pf-hidden{display:none}
+/* Мобильный тач: hover не существует, поэтому hover-only элементы (полоса
+   действий, подпись с id) на тач-устройствах просто невидимы. Показываем их
+   всегда, а полосу действий уводим вниз плитки — в углу она спорила бы с
+   меткой «НОВОЕ» и не влезала в узкую колонку (3 кнопки по 36px). */
+@media(hover:none){
+  .pf-thumb .pf-acts{top:auto;bottom:0;left:0;right:0;display:flex;justify-content:center;gap:10px;padding:7px 4px;background:linear-gradient(transparent,rgba(0,0,0,.72))}
+  /* Сброс общего «крупные тапы» правила .panel-content button на оверлеях плитки:
+     иначе три кнопки по 44px не помещаются в плитку шириной ~105px. */
+  .pf-thumb .pf-act{width:36px;height:36px;min-height:0;min-width:0;border-radius:10px}
+  .pf-thumb .pf-act svg{width:17px;height:17px}
+  .pf-thumb .pf-sel{width:30px;height:30px;min-height:0;min-width:0;left:6px;top:6px}
+  .pf-thumb .pf-sel svg{width:15px;height:15px}
+  .pf-thumb .pf-bar{display:none}
+  .pf-thumb .pf-new{top:6px;right:6px}
+  .profile-thumbs.pf-selecting .pf-sel{width:34px;height:34px}
+}
+@media(max-width:600px){
+  /* Ряд чипов не должен съедать пол-экрана: горизонтальная прокрутка. */
+  .pf-tools-row:not(:last-child){flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+  .pf-tools-row:not(:last-child)::-webkit-scrollbar{display:none}
+  .pf-tools-row .pf-chip{flex:0 0 auto}
+  .pf-selbar{padding:8px;gap:8px}
+  .pf-selbar .btn-sm{flex:1 1 auto}
+}
 .profile-tag-item{box-shadow:0 1px 3px rgba(0,0,0,.16)}
 .profile-tag-item.fav{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,transparent),color-mix(in srgb,var(--accent) 5%,transparent));border-color:var(--accent-dim)}
 .profile-tag-item.hidden{background:linear-gradient(135deg,rgba(239,68,68,.16),rgba(239,68,68,.04));border-color:var(--error)}

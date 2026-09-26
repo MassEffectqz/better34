@@ -326,7 +326,7 @@ func webSecurityMiddleware() gin.HandlerFunc {
 				return
 			}
 			c.Header("Access-Control-Allow-Origin", origin)
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Briefly-Token")
 		}
 		if c.Request.Method == "OPTIONS" {

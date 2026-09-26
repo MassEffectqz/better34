@@ -1330,7 +1330,9 @@ App.toggleLikeCurrent = function () {
   const liked = this.optimisticLike(post.id);
   this._syncLikeIcons(liked);
   this.showToast(liked ? 'Лайкнут' : 'Лайк убран');
-  API.post(`/like/${post.id}`).catch(() => {
+  // Явное состояние: переигровка оффлайн-очереди (потерянный ответ на
+  // мобильной сети) не должна переключить лайк обратно.
+  API.post(`/like/${post.id}`, { liked }).catch(() => {
     this.optimisticLike(post.id, !liked);
     this._syncLikeIcons(!liked);
     this.showToast('Ошибка', 'error');
@@ -1347,18 +1349,20 @@ App._syncLikeIcons = function (liked) {
 
 // Скрытие/показ поста с серверной синхронизацией и кнопкой «Отмена».
 // Undo гарантированно снимает hide на сервере: ждём завершения исходного
-// toggle и по фактическому ответу решаем, нужен ли компенсирующий POST
+// запроса и по фактическому ответу решаем, нужен ли компенсирующий POST
 // (раньше undo до ответа сервера оставлял пост скрытым навсегда).
+// Запросы идут с ЯВНЫМ состоянием (hidden: true/false), а не toggle'ом:
+// оффлайн-очередь на мобильной сети переиграла бы переключение.
 App._hideWithUndo = function (postId) {
   const hidden = this.optimisticHide(postId);
-  const req = API.post(`/hide/${postId}`).catch(() => null);
+  const req = API.post(`/hide/${postId}`, { hidden }).catch(() => null);
   if (hidden) {
     this.removeHiddenFromFeed(postId);
     this.showToastWithUndo('Пост скрыт', () => {
       this.optimisticHide(postId, false);
       this.restoreHiddenPost(postId);
       req.then(res => {
-        if (res && res.hidden) return API.post(`/hide/${postId}`);
+        if (res && res.hidden) return API.post(`/hide/${postId}`, { hidden: false });
         return null;
       }).then(() => { API.invalidate('/profile'); this.loadProfile(); }).catch(() => {});
     });
@@ -1386,7 +1390,7 @@ App.toggleHideCurrent = function () {
 
 App.feedToggleLike = function (post) {
   const liked = this.optimisticLike(post.id);
-  API.post(`/like/${post.id}`).catch(() => {
+  API.post(`/like/${post.id}`, { liked }).catch(() => {
     this.optimisticLike(post.id, !liked);
     this.showToast('Ошибка', 'error');
   });

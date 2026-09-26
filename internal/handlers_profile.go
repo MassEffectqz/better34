@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -9,6 +11,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// explicitState читает из тела запроса желаемое итоговое состояние флага
+// ({liked:true|false} / {hidden:true|false}). Нужно для оффлайн-очереди:
+// переигровка toggle-запроса (потеряли ответ на мобильной сети, запрос
+// ушёл в очередь и повторился) переключил бы лайк обратно. С явным
+// состоянием повтор безопасен. Пустое/битое тело — обычный toggle.
+func explicitState(c *gin.Context, key string) (bool, bool) {
+	if c.Request == nil || c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return false, false
+	}
+	req := map[string]any{}
+	if err := json.NewDecoder(io.LimitReader(c.Request.Body, 1<<16)).Decode(&req); err != nil {
+		return false, false
+	}
+	v, ok := req[key].(bool)
+	return v, ok
+}
+
+// POST /api/like/:id — лайкнуть/снять. Без тела — toggle (обратная
+// совместимость), с {liked:true|false} — выставить состояние (идемпотентно).
 func (h *Handler) ToggleLike(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -16,11 +37,19 @@ func (h *Handler) ToggleLike(c *gin.Context) {
 		return
 	}
 	p := ProfileFor(c)
-	liked := p.ToggleLike(id)
+	want, explicit := explicitState(c, "liked")
+	var liked bool
+	if explicit {
+		p.SetLiked([]int{id}, want)
+		liked = want
+	} else {
+		liked = p.ToggleLike(id)
+	}
 	p.Save()
 	c.JSON(http.StatusOK, gin.H{"liked": liked})
 }
 
+// POST /api/hide/:id — скрыть/показать. Семантика как у ToggleLike.
 func (h *Handler) ToggleHide(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -28,7 +57,14 @@ func (h *Handler) ToggleHide(c *gin.Context) {
 		return
 	}
 	p := ProfileFor(c)
-	hidden := p.ToggleHide(id)
+	want, explicit := explicitState(c, "hidden")
+	var hidden bool
+	if explicit {
+		p.SetHidden([]int{id}, want)
+		hidden = want
+	} else {
+		hidden = p.ToggleHide(id)
+	}
 	p.Save()
 	c.JSON(http.StatusOK, gin.H{"hidden": hidden})
 }

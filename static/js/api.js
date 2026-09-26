@@ -8,6 +8,15 @@ export const API = {
   _inflightAborts: {},
   _cacheTTL: 60000,
   _cacheMax: 200,
+  // Дедлайны сетевых запросов. Мобильная сеть (LTE/5G, переключение
+  // Wi-Fi↔сотовая, сворачивание приложения) часто не отказывает, а подвешивает
+  // соединение: без таймаута спиннер в UI остаётся навсегда. Мутации живут
+  // дольше — там же по истечении дедлайна запрос НЕ уходит в оффлайн-очередь
+  // (см. post/del/patch): сервер мог его уже применить.
+  timeoutMs: 20000,
+  mutationTimeoutMs: 30000,
+  retryDelayMs: 500,
+  maxRetries: 1,
   /** @type {string | null} */ _token: null,
   _err(r) {
     return r.text().then((raw) => {
@@ -32,6 +41,50 @@ export const API = {
     }
     if (this._token) h['X-Briefly-Token'] = this._token;
     return h;
+  },
+  // Дедлайн запроса: по истечении прерываем fetch. Флаг timedOut отличает
+  // наш таймаут от отмены вызывающим (см. _fetchGet/post/del/patch).
+  _deadline(controller, ms) {
+    // timer — any: setTimeout в браузере даёт number, в Node-типах Timeout.
+    const st = { timedOut: false, timer: /** @type {any} */ (0) };
+    st.timer = setTimeout(() => { st.timedOut = true; controller.abort(); }, ms);
+    return st;
+  },
+  _timeoutError() {
+    // Помечаем таймаут: оффлайн-очередь не должна переигрывать такой запрос.
+    const e = /** @type {any} */ (new Error(t('err.timeout')));
+    e.timeout = true;
+    return e;
+  },
+  _sleep(ms) { return new Promise((r) => setTimeout(r, ms)); },
+  /**
+   * Общая часть мутаций: дедлайн + оффлайн-очередь при сетевом отказе.
+   * queueBody — исходный объект (doFlush сам сериализует его при доставке).
+   * Таймаут в очередь НЕ кладём: запрос мог дойти до сервера и примениться,
+   * а повтор переключил бы лайк/скрытие обратно (см. /api/like/:id).
+   * @param {string} method @param {string} url @param {Object} init @param {any} [queueBody]
+   */
+  async _mutate(method, url, init, queueBody) {
+    const ctl = new AbortController();
+    const dl = this._deadline(ctl, this.mutationTimeoutMs);
+    try {
+      const r = await fetch(`/api${url}`, { method, signal: ctl.signal, ...init });
+      if (!r.ok) throw new Error(await this._err(r));
+      const ct = r.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        console.error(`[API.${method}] Non-JSON response`, { url: `/api${url}`, status: r.status, contentType: ct });
+        throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`);
+      }
+      return r.json();
+    } catch (err) {
+      if (err && err.name === 'AbortError' && dl.timedOut) throw this._timeoutError();
+      if (err && err.name !== 'AbortError' && !err.timeout && await enqueueMutation(method, url, queueBody)) {
+        return { ok: true, offline: true };
+      }
+      throw err;
+    } finally {
+      clearTimeout(dl.timer);
+    }
   },
   // Дедуп + разделяемая отмена: общий fetch прерывается ТОЛЬКО когда
   // отменились все вызывающие. Один abort не роняет остальных.
@@ -72,20 +125,36 @@ export const API = {
     return promise;
   },
   async _fetchGet(key, e, controller, useCache) {
-    try {
-      const r = await fetch(`/api${e}`, { signal: controller.signal, headers: this._headers() });
-      if (!r.ok) throw new Error(await this._err(r));
-      const ct = r.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) {
-        console.error('[API.get] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct });
-        throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`);
+    // Мобильная сеть: соединение может «зависнуть» вместо отказа (LTE, смена
+    // Wi-Fi↔LTE, спящий экран). Без дедлайна спиннер в UI висел бы вечно, а
+    // одиночный сетевой сбой (TypeError) оставлял бы битую плитку навсегда.
+    // Поэтому: дедлайн + один повтор, но только если сервер не ответил —
+    // повторять 4xx/5xx и не-JSON бессмысленно.
+    let attempt = 0;
+    for (;;) {
+      const dl = this._deadline(controller, this.timeoutMs);
+      let answered = false;
+      try {
+        const r = await fetch(`/api${e}`, { signal: controller.signal, headers: this._headers() });
+        answered = true;
+        if (!r.ok) throw new Error(await this._err(r));
+        const ct = r.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) {
+          console.error('[API.get] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct });
+          throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`);
+        }
+        const data = await r.json();
+        if (useCache !== false) this._setCache(key, data);
+        return data;
+      } catch (err) {
+        if (dl.timedOut) throw this._timeoutError();
+        if (err && err.name === 'AbortError') return;
+        if (answered) throw err;
+        if (attempt++ >= this.maxRetries) throw err;
+        await this._sleep(this.retryDelayMs);
+      } finally {
+        clearTimeout(dl.timer);
       }
-      const data = await r.json();
-      if (useCache !== false) this._setCache(key, data);
-      return data;
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      throw err;
     }
   },
   _setCache(key, data) {
@@ -99,44 +168,20 @@ export const API = {
     keys.sort((a, b) => (this._cache[a].ts || 0) - (this._cache[b].ts || 0));
     while (Object.keys(this._cache).length > this._cacheMax) delete this._cache[keys.shift()];
   },
-  async post(e, b, extraHeaders) {
-    try {
-      const r = await fetch(`/api${e}`, { method:'POST', headers:{'Content-Type':'application/json', ...this._headers(), ...(extraHeaders || {})}, body:JSON.stringify(b) });
-      if (!r.ok) throw new Error(await this._err(r));
-      const ct = r.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) { console.error('[API.post] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct }); throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`); }
-      return r.json();
-    } catch (err) {
-      // Оффлайн (задача 1): честные мутации не теряем, а ставим в очередь.
-      if (err && err.name !== 'AbortError' && await enqueueMutation('POST', e, b)) {
-        return { ok: true, offline: true };
-      }
-      throw err;
-    }
+  post(e, b, extraHeaders) {
+    return this._mutate('POST', e, {
+      headers: { 'Content-Type': 'application/json', ...this._headers(), ...(extraHeaders || {}) },
+      body: JSON.stringify(b),
+    }, b);
   },
-  async del(e) {
-    try {
-      const r = await fetch(`/api${e}`, { method:'DELETE', headers:this._headers() });
-      if (!r.ok) throw new Error(await this._err(r));
-      const ct = r.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) { console.error('[API.del] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct }); throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`); }
-      return r.json();
-    } catch (err) {
-      if (err && err.name !== 'AbortError' && await enqueueMutation('DELETE', e)) return { ok: true, offline: true };
-      throw err;
-    }
+  del(e) {
+    return this._mutate('DELETE', e, { headers: this._headers() });
   },
-  async patch(e, b) {
-    try {
-      const r = await fetch(`/api${e}`, { method:'PATCH', headers:{'Content-Type':'application/json', ...this._headers()}, body:JSON.stringify(b) });
-      if (!r.ok) throw new Error(await this._err(r));
-      const ct = r.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) { console.error('[API.patch] Non-JSON response', { url: `/api${e}`, status: r.status, contentType: ct }); throw new Error(`Expected JSON response but got ${ct || 'unknown content type'} (${r.status})`); }
-      return r.json();
-    } catch (err) {
-      if (err && err.name !== 'AbortError' && await enqueueMutation('PATCH', e, b)) return { ok: true, offline: true };
-      throw err;
-    }
+  patch(e, b) {
+    return this._mutate('PATCH', e, {
+      headers: { 'Content-Type': 'application/json', ...this._headers() },
+      body: JSON.stringify(b),
+    }, b);
   },
   invalidate(pattern) { Object.keys(this._cache).forEach(k => { if (k.includes(pattern)) delete this._cache[k]; }); },
 };
