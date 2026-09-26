@@ -42,16 +42,32 @@ setLang('fr');
 check('setLang игнорирует неизвестный язык', getLang() === 'ru', 'getLang=' + getLang());
 
 // applyI18n: data-i18n → textContent, data-i18n-ph → placeholder,
-// data-i18n-title → title.
+// data-i18n-title → title, data-i18n-aria → aria-label.
 const fakes = [
   { dataset: { i18n: 'menu.search' }, textContent: '' },
   { dataset: { i18nPh: 'search.placeholder' }, placeholder: '' },
   { dataset: { i18nTitle: 'search.clear' }, title: '' },
+  { dataset: { i18nAria: 'pf.closeAria' }, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } },
 ];
-applyI18n({ querySelectorAll: () => fakes });
+// Селектор → ключ dataset. Стаб отдаёт только те элементы, у которых он есть
+// (как настоящий querySelectorAll), иначе applyI18n вызвал бы setAttribute на
+// element'ах без этого атрибута.
+const SEL_KEYS = {
+  '[data-i18n]': 'i18n',
+  '[data-i18n-ph]': 'i18nPh',
+  '[data-i18n-title]': 'i18nTitle',
+  '[data-i18n-aria]': 'i18nAria',
+};
+const root = { querySelectorAll: sel => fakes.filter(f => SEL_KEYS[sel] && f.dataset[SEL_KEYS[sel]] != null) };
+applyI18n(root);
 check('applyI18n: data-i18n → textContent', fakes[0].textContent === 'Поиск', fakes[0].textContent);
 check('applyI18n: data-i18n-ph → placeholder', fakes[1].placeholder === 'Поиск тегов...', fakes[1].placeholder);
 check('applyI18n: data-i18n-title → title', fakes[2].title === 'Очистить', fakes[2].title);
+check('applyI18n: data-i18n-aria → aria-label', fakes[3].attrs['aria-label'] === 'Закрыть профиль (Esc)',
+  JSON.stringify(fakes[3].attrs));
+check('applyI18n: не трогает элементы без своего атрибута',
+  fakes[3].placeholder === undefined && fakes[3].title === undefined && fakes[0].attrs === undefined,
+  JSON.stringify(fakes[3]));
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 if (failed) throw new Error(`${failed} checks failed`);

@@ -416,6 +416,40 @@ func (p *Profile) RenameCollection(id, name string) bool {
 	return true
 }
 
+// ReorderCollections задаёт новый порядок коллекций по списку id. Неизвестные
+// id игнорируются; коллекции, не попавшие в ids, остаются в конце в прежнем
+// взаимном порядке. Возвращает false, если ни один id не найден (иначе клиент
+// молча получил бы 200 и не сдвинул ничего).
+func (p *Profile) ReorderCollections(ids []string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	byID := make(map[string]Collection, len(p.Collections))
+	rest := make([]Collection, 0, len(p.Collections))
+	for _, c := range p.Collections {
+		byID[c.ID] = c
+	}
+	ordered := make([]Collection, 0, len(p.Collections))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		c, ok := byID[id]
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ordered = append(ordered, c)
+	}
+	if len(ordered) == 0 {
+		return false
+	}
+	for _, c := range p.Collections {
+		if !seen[c.ID] {
+			rest = append(rest, c)
+		}
+	}
+	p.Collections = append(ordered, rest...)
+	return true
+}
+
 func (p *Profile) DeleteCollection(id string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()

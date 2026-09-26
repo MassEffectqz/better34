@@ -162,6 +162,7 @@ interface AppElements {
   btnClearHiddenTags: HTMLElement;
   profileAvatar: HTMLElement;
   profileAvatarImg: HTMLImageElement;
+  profileAvatarInitials: HTMLElement;
   profileAvatarFile: HTMLInputElement;
   profileNickname: HTMLInputElement;
   btnDBClean: HTMLElement;

@@ -164,27 +164,28 @@
 
   <div id="panel-backdrop" class="panel-backdrop"></div>
 
-  <aside id="profile-panel" class="panel-layout profile-panel hidden" aria-label="Профиль" aria-hidden="true">
+  <aside id="profile-panel" class="panel-layout profile-panel hidden" aria-label="Профиль" data-i18n-aria="pf.title" aria-hidden="true">
     <div class="panel-resize" aria-hidden="true"></div>
     <div class="panel-header profile-hero">
       <div class="profile-hero-glow" aria-hidden="true"></div>
       <div class="profile-hero-top">
         <span class="profile-panel-title" data-i18n="pf.title">Профиль</span>
         <div class="profile-hero-actions">
-          <button class="btn-icon" id="profile-quick-stats" data-quick="stats" title="Статистика" aria-label="Открыть статистику"><i data-lucide="chart" data-size="16"></i></button>
-          <button class="btn-icon" id="profile-quick-settings" data-quick="settings" title="Настройки" aria-label="Открыть настройки"><i data-lucide="settings" data-size="16"></i></button>
-          <button class="btn-icon" id="profile-close" title="Закрыть (Esc)" aria-label="Закрыть профиль (Esc)"><i data-lucide="x" data-size="18"></i></button>
+          <button class="btn-icon" id="profile-quick-stats" data-quick="stats" title="Статистика" data-i18n-title="menu.stats" aria-label="Открыть статистику" data-i18n-aria="pf.openStats"><i data-lucide="chart" data-size="16"></i></button>
+          <button class="btn-icon" id="profile-quick-settings" data-quick="settings" title="Настройки" data-i18n-title="menu.settings" aria-label="Открыть настройки" data-i18n-aria="pf.openSettings"><i data-lucide="settings" data-size="16"></i></button>
+          <button class="btn-icon" id="profile-close" title="Закрыть (Esc)" data-i18n-title="pf.close" aria-label="Закрыть профиль (Esc)" data-i18n-aria="pf.closeAria"><i data-lucide="x" data-size="18"></i></button>
         </div>
       </div>
       <div class="profile-identity">
-        <div class="profile-avatar" id="profile-avatar" title="Загрузить аватар">
-          <img id="profile-avatar-img" src="" alt="avatar">
+        <div class="profile-avatar" id="profile-avatar" role="button" tabindex="0" data-i18n-title="pf.avatarUpload" data-i18n-aria="pf.avatarUpload">
+          <img id="profile-avatar-img" alt="">
+          <span class="profile-avatar-initials" id="profile-avatar-initials" aria-hidden="true"></span>
           <div class="profile-avatar-overlay"><i data-lucide="camera" data-size="22"></i></div>
           <input type="file" id="profile-avatar-file" accept="image/*" hidden>
         </div>
-        <input type="text" id="profile-nickname" placeholder="Ваш ник" maxlength="30" spellcheck="false">
+        <input type="text" id="profile-nickname" placeholder="Ваш ник" data-i18n-ph="pf.nickname" maxlength="30" spellcheck="false">
       </div>
-      <div class="profile-stats" data-panel-tablist aria-label="Разделы профиля">
+      <div class="profile-stats" data-panel-tablist aria-label="Разделы профиля" data-i18n-aria="pf.sectionsAria">
         <button class="stat" type="button" data-panel-tab="presets" aria-controls="tab-presets" aria-selected="true"><span class="stat-icon"><i data-lucide="bookmark"></i></span><span class="stat-num" id="st-presets">0</span><span class="stat-label" data-i18n="stat.presets">Пресеты</span></button>
         <button class="stat" type="button" data-panel-tab="likes" aria-controls="tab-likes" aria-selected="false"><span class="stat-icon"><i data-lucide="heart"></i></span><span class="stat-num" id="st-likes">0</span><span class="stat-label" data-i18n="stat.likes">Лайки</span></button>
         <button class="stat" type="button" data-panel-tab="hides" aria-controls="tab-hides" aria-selected="false"><span class="stat-icon"><i data-lucide="eyeOff"></i></span><span class="stat-num" id="st-hides">0</span><span class="stat-label" data-i18n="stat.hides">Скрыто</span></button>
@@ -196,13 +197,13 @@
       <div class="panel-content profile-body">
       <div class="panel-tab-content profile-tab-content active" role="tabpanel" id="tab-presets">
         <div class="preset-form">
-          <input type="text" id="preset-name" placeholder="Название пресета" maxlength="60">
+          <input type="text" id="preset-name" placeholder="Название пресета" data-i18n-ph="preset.namePh" maxlength="60">
           <button id="btn-save-preset" class="btn-primary btn-sm"><i data-lucide="save" data-size="14"></i> <span data-i18n="btn.save">Сохранить</span></button>
         </div>
         <div id="preset-current" class="preset-current"></div>
         <div class="preset-tag-row">
-          <button id="btn-save-hidden-preset" class="btn-sm preset-tag-btn preset-tag-hidden" title="Сохранить текущие скрытые теги как пресет"><i data-lucide="eyeOff" data-size="13"></i> <span data-i18n="preset.hiddenToPreset">Скрытые теги → пресет</span></button>
-          <button id="btn-save-fav-preset" class="btn-sm preset-tag-btn preset-tag-fav" title="Сохранить текущие избранные теги как пресет"><i data-lucide="star" data-size="13"></i> <span data-i18n="preset.favToPreset">Избранные теги → пресет</span></button>
+          <button id="btn-save-hidden-preset" class="btn-sm preset-tag-btn preset-tag-hidden" title="Сохранить текущие скрытые теги как пресет" data-i18n-title="preset.hiddenToPresetHint"><i data-lucide="eyeOff" data-size="13"></i> <span data-i18n="preset.hiddenToPreset">Скрытые теги → пресет</span></button>
+          <button id="btn-save-fav-preset" class="btn-sm preset-tag-btn preset-tag-fav" title="Сохранить текущие избранные теги как пресет" data-i18n-title="preset.favToPresetHint"><i data-lucide="star" data-size="13"></i> <span data-i18n="preset.favToPreset">Избранные теги → пресет</span></button>
         </div>
         <div id="presets-list" class="presets-list"></div>
         <div class="preset-export-row">
@@ -212,53 +213,98 @@
         </div>
       </div>
       <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-likes">
+        <div class="pf-tools" id="likes-tools" role="group" aria-label="Сортировка и фильтр лайков" data-i18n-aria="pf.likesToolsAria">
+          <div class="pf-tools-row">
+            <button class="pf-chip" data-sort="new" data-i18n="pf.sortNew">Сначала новые</button>
+            <button class="pf-chip" data-sort="old" data-i18n="pf.sortOld">Сначала старые</button>
+            <button class="pf-chip" data-filter="all" data-i18n="pf.filterAll">Все</button>
+            <button class="pf-chip" data-filter="downloaded" data-i18n="pf.filterDownloaded">Скачанные</button>
+            <button class="pf-chip" data-filter="unviewed" data-i18n="pf.filterUnviewed">Невиденные</button>
+            <button class="pf-chip" data-filter="video" data-i18n="pf.filterVideo">Видео</button>
+            <button class="pf-chip" data-filter="unavailable" data-i18n="pf.filterUnavailable">Недоступные</button>
+          </div>
+          <div class="pf-tools-row">
+            <span class="pf-shown-count" id="likes-shown-count"></span>
+            <button class="btn-sm pf-tool-btn" data-act="selectMode" aria-pressed="false"><span class="pf-tool-label" data-i18n="pf.select">Выбрать</span></button>
+          </div>
+        </div>
+        <div class="pf-selbar" id="likes-selbar" hidden>
+          <span class="pf-selbar-count">Выбрано: 0</span>
+          <button class="btn-sm" data-selact="selectAll" data-i18n="pf.selectAll">Выбрать все</button>
+          <button class="btn-sm" data-selact="download" data-i18n="pf.download">Скачать</button>
+          <button class="btn-sm" data-selact="unlike" data-i18n="pf.unlikeAll">Снять лайки</button>
+          <button class="btn-sm" data-selact="clearUnavailable" data-i18n="pf.clearUnavailableN">Убрать недоступные</button>
+        </div>
         <p class="profile-empty" id="likes-empty"><span class="empty-icon"><i data-lucide="heart" data-size="26"></i></span><br><span data-i18n="likes.empty">Нет лайков</span></p>
         <div id="likes-list" class="profile-thumbs"></div>
       </div>
       <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-hides">
+        <div class="pf-tools" id="hides-tools" role="group" aria-label="Сортировка и фильтр скрытых" data-i18n-aria="pf.hidesToolsAria">
+          <div class="pf-tools-row">
+            <button class="pf-chip" data-sort="new" data-i18n="pf.sortNew">Сначала новые</button>
+            <button class="pf-chip" data-sort="old" data-i18n="pf.sortOld">Сначала старые</button>
+            <button class="pf-chip" data-filter="all" data-i18n="pf.filterAll">Все</button>
+            <button class="pf-chip" data-filter="downloaded" data-i18n="pf.filterDownloaded">Скачанные</button>
+            <button class="pf-chip" data-filter="unviewed" data-i18n="pf.filterUnviewed">Невиденные</button>
+            <button class="pf-chip" data-filter="video" data-i18n="pf.filterVideo">Видео</button>
+            <button class="pf-chip" data-filter="unavailable" data-i18n="pf.filterUnavailable">Недоступные</button>
+          </div>
+          <div class="pf-tools-row">
+            <span class="pf-shown-count" id="hides-shown-count"></span>
+            <button class="btn-sm pf-tool-btn" data-act="selectMode" aria-pressed="false"><span class="pf-tool-label" data-i18n="pf.select">Выбрать</span></button>
+          </div>
+        </div>
+        <div class="pf-selbar" id="hides-selbar" hidden>
+          <span class="pf-selbar-count">Выбрано: 0</span>
+          <button class="btn-sm" data-selact="selectAll" data-i18n="pf.selectAll">Выбрать все</button>
+          <button class="btn-sm" data-selact="download" data-i18n="pf.download">Скачать</button>
+          <button class="btn-sm" data-selact="unhide" data-i18n="pf.unhideAll">Вернуть из скрытых</button>
+          <button class="btn-sm" data-selact="clearUnavailable" data-i18n="pf.clearUnavailableN">Убрать недоступные</button>
+        </div>
         <p class="profile-empty" id="hides-empty"><span class="empty-icon"><i data-lucide="eyeOff" data-size="26"></i></span><br><span data-i18n="hides.empty">Нет скрытых</span></p>
         <div id="hides-list" class="profile-thumbs"></div>
       </div>
       <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-collections">
         <div class="collection-form">
-          <input type="text" id="collection-name" placeholder="Новая коллекция…" maxlength="60">
+          <input type="text" id="collection-name" placeholder="Новая коллекция…" data-i18n-ph="collections.namePh" maxlength="60">
           <button id="btn-create-collection" class="btn-primary btn-sm"><i data-lucide="plus" data-size="14"></i> <span data-i18n="btn.create">Создать</span></button>
+          <button id="btn-collections-zip-all" class="btn-sm" title="Скачать ZIP из всех коллекций" data-i18n="collections.downloadAll">Скачать всё</button>
         </div>
         <div id="collections-list" class="collections-list"></div>
       </div>
       <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-tags">
         <div class="tag-filter-row">
-          <input type="text" id="tag-filter" placeholder="Поиск по тегам..." spellcheck="false">
+          <input type="text" id="tag-filter" placeholder="Поиск по тегам..." data-i18n-ph="tags.filterPh" spellcheck="false">
           <span id="tag-filter-count" class="tag-filter-count"></span>
         </div>
         <div class="tag-mgmt">
           <div class="tag-mgmt-head">
-            <h3><span data-i18n="tags.favHead">Избранные теги</span> <span class="hint">(+) в поиске</span></h3>
+            <h3><span data-i18n="tags.favHead">Избранные теги</span> <span class="hint" data-i18n="tags.plusHint">(+) в поиске</span></h3>
             <button class="btn-clear-tags" id="btn-clear-fav-tags" data-i18n="btn.clear">Очистить</button>
           </div>
           <div class="tag-preset-row">
-            <span class="tag-preset-label">Избр:</span>
-            <select class="tag-preset-select" id="fav-preset-select" title="Заменить избранные теги набором из пресета"><option value="">Станд. (текущие)</option></select>
+            <span class="tag-preset-label" data-i18n="tags.favShort">Избр:</span>
+            <select class="tag-preset-select" id="fav-preset-select" title="Заменить избранные теги набором из пресета" data-i18n-title="tags.favPresetHint"><option value="" data-i18n="preset.standCurrent">Станд. (текущие)</option></select>
           </div>
           <div class="tag-input-row">
-            <input type="text" id="fav-tag-input" placeholder="Добавить избранный тег..." spellcheck="false">
-            <button id="btn-add-fav-tag" class="btn-primary btn-sm" title="Добавить"><i data-lucide="plus" data-size="13"></i></button>
+            <input type="text" id="fav-tag-input" placeholder="Добавить избранный тег..." data-i18n-ph="tags.addFavPh" spellcheck="false">
+            <button id="btn-add-fav-tag" class="btn-primary btn-sm" title="Добавить" data-i18n-title="btn.add"><i data-lucide="plus" data-size="13"></i></button>
             <div id="fav-suggestions" class="suggestions"></div>
           </div>
           <div id="fav-tags-list" class="profile-tag-list"></div>
         </div>
         <div class="tag-mgmt">
           <div class="tag-mgmt-head">
-            <h3><span data-i18n="tags.hiddenHead">Скрытые теги</span> <span class="hint">(-) в поиске</span></h3>
+            <h3><span data-i18n="tags.hiddenHead">Скрытые теги</span> <span class="hint" data-i18n="tags.minusHint">(-) в поиске</span></h3>
             <button class="btn-clear-tags" id="btn-clear-hidden-tags" data-i18n="btn.clear">Очистить</button>
           </div>
           <div class="tag-preset-row">
-            <span class="tag-preset-label">Скрыт:</span>
-            <select class="tag-preset-select" id="hidden-preset-select" title="Заменить скрытые теги набором из пресета"><option value="">Станд. (текущие)</option></select>
+            <span class="tag-preset-label" data-i18n="tags.hiddenShort">Скрыт:</span>
+            <select class="tag-preset-select" id="hidden-preset-select" title="Заменить скрытые теги набором из пресета" data-i18n-title="tags.hiddenPresetHint"><option value="" data-i18n="preset.standCurrent">Станд. (текущие)</option></select>
           </div>
           <div class="tag-input-row">
-            <input type="text" id="hidden-tag-input" placeholder="Добавить скрытый тег..." spellcheck="false">
-            <button id="btn-add-hidden-tag" class="btn-primary btn-sm" title="Добавить"><i data-lucide="plus" data-size="13"></i></button>
+            <input type="text" id="hidden-tag-input" placeholder="Добавить скрытый тег..." data-i18n-ph="tags.addHiddenPh" spellcheck="false">
+            <button id="btn-add-hidden-tag" class="btn-primary btn-sm" title="Добавить" data-i18n-title="btn.add"><i data-lucide="plus" data-size="13"></i></button>
             <div id="profile-suggestions" class="suggestions"></div>
           </div>
           <div id="hidden-tags-list" class="profile-tag-list"></div>

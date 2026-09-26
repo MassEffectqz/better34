@@ -79,6 +79,7 @@ export const App = {
       tagFilter: _('tag-filter'), tagFilterCount: _('tag-filter-count'),
       btnClearFavTags: _('btn-clear-fav-tags'), btnClearHiddenTags: _('btn-clear-hidden-tags'),
       profileAvatar: _('profile-avatar'), profileAvatarImg: _('profile-avatar-img'),
+      profileAvatarInitials: _('profile-avatar-initials'),
       profileAvatarFile: _('profile-avatar-file'), profileNickname: _('profile-nickname'),
       btnDBClean: _('btn-clean-db'),
       inputCurrentPassword: _('input-current-password'), inputNewPassword: _('input-new-password'),
@@ -100,6 +101,7 @@ export const App = {
       btnFindDups: _('btn-find-dups'), btnCleanDups: _('btn-clean-dups'), btnMergeDups: _('btn-merge-dups'), dupsInfo: _('dups-info'),
       viewerCollect: _('viewer-collect'), collectMenu: _('collect-menu'),
       collectionName: _('collection-name'), btnCreateCollection: _('btn-create-collection'), collectionsList: _('collections-list'), tbCollections: _('tb-collections'),
+      btnCollectionsZipAll: _('btn-collections-zip-all'),
       batchZip: _('batch-zip'),
       btnExportProfile: _('btn-export-profile'), btnImportProfile: _('btn-import-profile'), profileImportFile: _('profile-import-file'),
       btnQRLogin: _('btn-qr-login'), btnRemotePush: _('btn-remote-push'), viewerSimilar: _('viewer-similar'),
@@ -588,6 +590,10 @@ export const App = {
         if (ev.key === 'Enter') { ev.preventDefault(); go(this.createCollection()); }
       });
     }
+    // Один ZIP по всем коллекциям сразу (скачанные файлы, id дедуплицируются).
+    if (e.btnCollectionsZipAll) {
+      e.btnCollectionsZipAll.addEventListener('click', () => this.downloadAllCollectionsZip());
+    }
     if (e.btnExportProfile) e.btnExportProfile.addEventListener('click', () => this.exportProfile());
     if (e.btnImportProfile) e.btnImportProfile.addEventListener('click', () => e.profileImportFile.click());
     if (e.profileImportFile) e.profileImportFile.addEventListener('change', (ev) => go(this.importProfile(ev)));
@@ -642,9 +648,47 @@ export const App = {
     e.btnClearFavTags.addEventListener('click', () => this.clearTagList('fav'));
     e.btnClearHiddenTags.addEventListener('click', () => this.clearTagList('hidden'));
     e.profileAvatar.addEventListener('click', () => e.profileAvatarFile.click());
+    // Аватар — кнопка: с клавиатуры (Enter/Пробел) тоже открывает выбор файла.
+    e.profileAvatar.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      e.profileAvatarFile.click();
+    });
     e.profileAvatarFile.addEventListener('change', (ev) => this.onAvatarChange(ev));
     e.profileNickname.addEventListener('blur', () => this.saveProfileMeta());
     e.profileNickname.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); this.saveProfileMeta(); e.profileNickname.blur(); } });
+    // Вкладки «Лайки»/«Скрытые»: чипы сортировки и фильтра, режим выбора,
+    // панель пакетных действий. Делегирование на контейнеры — сами плитки
+    // перерисовываются, а тулбары статичны, поэтому bind достаточно один раз.
+    ['likes', 'hides'].forEach(type => {
+      const tools = document.getElementById(type + '-tools');
+      if (tools) {
+        tools.addEventListener('click', (ev) => {
+          // target — EventTarget: приводим к any, чтобы дотянуться до closest().
+          const tgt = /** @type {any} */ (ev.target);
+          const btn = tgt && tgt.closest ? tgt.closest('[data-sort], [data-filter], [data-act]') : null;
+          if (!btn) return;
+          if (btn.dataset.sort) { this.setThumbSort(type, btn.dataset.sort); return; }
+          if (btn.dataset.filter) { this.setThumbFilter(type, btn.dataset.filter); return; }
+          if (btn.dataset.act === 'selectMode') this.setThumbSelectMode(type, !this._thumbSelMode[type]);
+        });
+      }
+      const bar = document.getElementById(type + '-selbar');
+      if (bar) {
+        bar.addEventListener('click', (ev) => {
+          const tgt = /** @type {any} */ (ev.target);
+          const btn = tgt && tgt.closest ? tgt.closest('[data-selact]') : null;
+          if (!btn) return;
+          if (btn.dataset.selact === 'selectAll') {
+            const on = btn.dataset.on !== '1';
+            btn.dataset.on = on ? '1' : '0';
+            this.selectAllThumbs(type, on);
+            return;
+          }
+          this.thumbSelAction(type, btn.dataset.selact);
+        });
+      }
+    });
     document.addEventListener('keydown', (ev) => this.onKeydown(ev));
     document.addEventListener('keyup', (ev) => this.onKeyup(ev));
     window.addEventListener('popstate', () => this.onPopState());

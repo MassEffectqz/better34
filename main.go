@@ -143,6 +143,7 @@ func main() {
 		api.POST("/dups/clean", handler.CleanDuplicates)
 		api.POST("/dups/merge", handler.MergeDuplicates)
 		api.GET("/collections", handler.ListCollections)
+		api.POST("/collections/reorder", handler.ReorderCollections)
 		api.POST("/collection", handler.CreateCollection)
 		api.PATCH("/collection/:id", handler.RenameCollection)
 		api.DELETE("/collection/:id", handler.DeleteCollection)

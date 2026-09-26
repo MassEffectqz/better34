@@ -215,6 +215,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .profile-avatar>*{position:relative;z-index:1}
 .profile-avatar:hover{transform:scale(1.06);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 22%,transparent),0 12px 30px rgba(0,0,0,.55)}
 .profile-avatar img{width:100%;height:100%;object-fit:cover;display:block;border-radius:50%}
+.profile-avatar .profile-avatar-initials{position:absolute;inset:4px;z-index:1;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:700;color:var(--text-dim);background:var(--surface2);user-select:none}
+.profile-avatar:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .profile-avatar-overlay{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:#fff;opacity:0;transition:opacity var(--transition)}
 .profile-avatar:hover .profile-avatar-overlay{opacity:1}
 #profile-nickname{width:100%;max-width:360px;background:transparent;border:none;border-bottom:1px solid transparent;text-align:center;color:var(--text-bright);font-size:1.05rem;font-weight:600;outline:none;transition:border-color var(--transition);padding:2px 4px;min-width:0}
@@ -283,6 +285,19 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .profile-thumbs{columns:var(--pf-cols,3);column-gap:10px;margin-bottom:4px}
 .pf-grid-btn{width:100%;margin-top:6px}
 .pf-more{width:100%;margin-top:6px}
+/* Тулбар вкладок «Лайки»/«Скрытые»: сортировка, фильтры, счётчик, выбор */
+.pf-tools{margin-bottom:8px}
+.pf-tools-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px}
+.pf-tools-row:last-child{margin-bottom:0;justify-content:space-between}
+.pf-chip{padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);color:var(--text-dim);font-size:.72rem;cursor:pointer;transition:background var(--transition),color var(--transition),border-color var(--transition)}
+.pf-chip:hover{color:var(--text);border-color:var(--accent-dim)}
+.pf-chip.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.pf-chip:focus-visible,.pf-act:focus-visible,.pf-sel:focus-visible,.pf-tool-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pf-shown-count{font-size:.7rem;color:var(--text-dim)}
+.pf-tool-btn{white-space:nowrap}
+.pf-selbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);margin-bottom:8px}
+.pf-selbar[hidden]{display:none}
+.pf-selbar-count{font-size:.72rem;color:var(--text-dim);margin-right:auto}
 .pf-thumb-skeleton{position:relative;border-radius:8px;overflow:hidden;background:var(--surface2);border:1px solid var(--border);break-inside:avoid;margin:0 0 8px;width:100%;aspect-ratio:3/4}
 .pf-thumb-skeleton::after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.09),transparent);animation:thumbShimmer 1.2s infinite}
 @keyframes thumbShimmer{to{transform:translateX(100%)}}
@@ -750,6 +765,20 @@ select.ss-rate option{color:#111;background:#fff}
 .pf-open-icon svg{width:15px;height:15px}
 .pf-thumb .pf-dl{position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;border-radius:50%;background:var(--success);color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4)}
 .pf-thumb .pf-dl svg{width:10px;height:10px}
+/* Метка «новое», быстрые действия и выбор на плитке */
+.pf-thumb .pf-new{position:absolute;top:4px;right:24px;z-index:2;background:var(--accent);color:#fff;font-size:.55rem;font-weight:700;letter-spacing:.04em;padding:2px 5px;border-radius:6px;pointer-events:none}
+.pf-thumb .pf-acts{position:absolute;top:4px;right:4px;z-index:4;display:none;gap:4px}
+.pf-thumb:hover .pf-acts,.pf-thumb:focus-within .pf-acts{display:flex}
+.pf-thumb .pf-act{width:22px;height:22px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(3px)}
+.pf-thumb .pf-act:hover{background:var(--accent);border-color:var(--accent)}
+.pf-thumb .pf-act svg{width:12px;height:12px}
+.pf-thumb .pf-sel{position:absolute;top:4px;left:4px;z-index:4;width:20px;height:20px;padding:0;border-radius:6px;border:1px solid rgba(255,255,255,.35);background:rgba(0,0,0,.5);color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer}
+.pf-thumb .pf-sel svg{width:12px;height:12px}
+.profile-thumbs.pf-selecting .pf-sel{display:flex}
+.profile-thumbs.pf-selecting .pf-dl{display:none}
+.pf-thumb.pf-checked{outline:2px solid var(--accent);outline-offset:-2px}
+.pf-thumb.pf-checked .pf-sel{background:var(--accent);border-color:var(--accent)}
+.pf-thumb.pf-hidden{display:none}
 .profile-tag-item{box-shadow:0 1px 3px rgba(0,0,0,.16)}
 .profile-tag-item.fav{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,transparent),color-mix(in srgb,var(--accent) 5%,transparent));border-color:var(--accent-dim)}
 .profile-tag-item.hidden{background:linear-gradient(135deg,rgba(239,68,68,.16),rgba(239,68,68,.04));border-color:var(--error)}
@@ -876,6 +905,12 @@ button,a{-webkit-tap-highlight-color:transparent}
 .collection-item:hover .btn-icon-sm,.collection-item:focus-within .btn-icon-sm{opacity:1}
 @media(hover:none){.collection-item .btn-icon-sm{opacity:1}}
 .collection-item .col-del:hover{color:var(--error);border-color:var(--error)}
+/* Мозаика обложек коллекции: сетка 2×2, одна обложка — во всю плитку */
+.collection-item .col-mosaic{width:38px;height:38px;flex-shrink:0;border-radius:7px;overflow:hidden;display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;gap:1px;background:var(--surface3);border:1px solid var(--border)}
+.collection-item .col-mosaic:only-child{grid-column:1/-1;grid-row:1/-1}
+.collection-item .col-mosaic img{width:100%;height:100%;object-fit:cover;display:block}
+.collection-item .btn-icon-sm[disabled]{opacity:.25;pointer-events:none}
+.collection-item .btn-icon-sm[disabled]:hover{color:inherit;border-color:inherit}
 
 /* --- меню «в коллекцию» во вьюере --- */
 .collect-control{position:relative;display:flex;flex-shrink:0}

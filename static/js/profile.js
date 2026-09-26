@@ -1,6 +1,7 @@
 import { App } from './state.js';
 import { icon, esc } from './utils.js';
 import { API } from './api.js';
+import { t, tf } from './i18n.js';
 App._thumbs = App._thumbs || {};
 
 // Превью помечаются kind=preview: immutable Cache-Control + cache-first
@@ -23,9 +24,19 @@ const pfCandidatesFor = post => {
 
 App.renderProfile = function () {
   const p = this.state.profile;
-  this.els.profileAvatarImg.src = p.avatar || '';
-  this.els.profileAvatarImg.style.display = p.avatar ? 'block' : 'none';
+  const img = this.els.profileAvatarImg;
+  if (p.avatar) {
+    img.src = p.avatar;
+    img.style.display = 'block';
+  } else {
+    // Пустой src="" заставляет браузер запросить саму страницу, а .src при
+    // чтении отдаёт URL документа — атрибут просто убираем.
+    img.removeAttribute('src');
+    img.style.display = 'none';
+  }
   this.els.profileNickname.value = p.nickname || '';
+  this._syncAvatarInitials(p.nickname);
+  this._lastProfileMeta = { nickname: p.nickname || '', avatar: p.avatar || '' };
   this.updateAuthUI();
   this.renderPresets(p.presets);
   this.renderPresetMenu();
@@ -35,6 +46,22 @@ App.renderProfile = function () {
   this.renderTagLists();
   this._updateTagFilterCount();
   this.updateStats(p);
+};
+
+// Инициал вместо пустого тёмного круга, когда аватар не задан.
+App._syncAvatarInitials = function (nickname) {
+  const el = this.els.profileAvatarInitials;
+  if (!el) return;
+  const hasAvatar = !!(this.els.profileAvatarImg && this.els.profileAvatarImg.getAttribute('src'));
+  if (hasAvatar) {
+    el.textContent = '';
+    el.style.display = 'none';
+    return;
+  }
+  const u = this.state.user || {};
+  const name = (nickname || u.nickname || u.username || '?').trim();
+  el.textContent = (name.charAt(0) || '?').toUpperCase();
+  el.style.display = '';
 };
 
 App.renderTagLists = function () {
@@ -62,10 +89,10 @@ App.renderTagPresetSelects = function () {
   };
   [['fav', this.els.favPresetSelect], ['hidden', this.els.hiddenPresetSelect]].forEach(([type, el]) => {
     if (!el) return;
-    el.innerHTML = '<option value="">Станд. (текущие)</option>' + presets.map(pr => {
+    el.innerHTML = `<option value="">${esc(t('preset.standCurrent'))}</option>` + presets.map(pr => {
       const lists = this._tagPresetLists(pr);
       const n = type === 'fav' ? lists.fav.length : lists.hidden.length;
-      return `<option value="${esc(pr.id)}">${esc(pr.name)} — ${n} ${plural(n, 'тег', 'тега', 'тегов')}</option>`;
+      return `<option value="${esc(pr.id)}">${esc(pr.name)} — ${n} ${plural(n, t('pf.tagOne'), t('pf.tagFew'), t('pf.tagMany'))}</option>`;
     }).join('');
     el.onchange = () => {
       const id = el.value;
@@ -90,11 +117,11 @@ App._updateTagFilterCount = function () {
   if (!el) return;
   const p = this.state.profile || {};
   const q = this._tagFilter || '';
-  const fav = (p.fav_tags || []).filter(t => !q || t.toLowerCase().includes(q));
-  const hid = (p.hidden_tags || []).filter(t => !q || t.toLowerCase().includes(q));
+  const fav = (p.fav_tags || []).filter(tag => !q || tag.toLowerCase().includes(q));
+  const hid = (p.hidden_tags || []).filter(tag => !q || tag.toLowerCase().includes(q));
   const total = (p.fav_tags || []).length + (p.hidden_tags || []).length;
   const shown = fav.length + hid.length;
-  el.textContent = total ? (q ? `${shown} из ${total}` : `${total}`) : '';
+  el.textContent = total ? (q ? tf('pf.filterCount', { shown, total }) : `${total}`) : '';
 };
 
 App.updateStats = function (p) {
@@ -109,13 +136,14 @@ App.updateStats = function (p) {
   const hideN = (p.hidden_posts || []).length;
   const tagN = (p.fav_tags || []).length + (p.hidden_tags || []).length;
   const colN = (p.collections || []).length;
-  setNum('st-presets', presetN); setNum('tb-presets', presetN);
-  setNum('st-likes', likeN); setNum('tb-likes', likeN);
-  setNum('st-hides', hideN); setNum('tb-hides', hideN);
-  setNum('st-tags', tagN); setNum('tb-tags', tagN);
+  setNum('st-presets', presetN);
+  setNum('st-likes', likeN);
+  setNum('st-hides', hideN);
+  setNum('st-tags', tagN);
   setNum('st-collections', colN);
-  const tbCol = document.getElementById('tb-collections');
-  if (tbCol) tbCol.textContent = colN;
+  // «Скачать все лайки» бессмыслен при пустом списке.
+  const dlBtn = this.els.btnLikesDownload;
+  if (dlBtn) dlBtn.style.display = likeN ? '' : 'none';
 };
 
 App.renderPresets = function (presets) {
@@ -125,12 +153,12 @@ App.renderPresets = function (presets) {
   const hint = this.els.presetCurrent;
   if (hint) {
     hint.innerHTML = cur
-      ? `Сохраняется текущий поиск: <b>${esc(cur)}</b>`
-      : 'Установите поиск и сохраните его как пресет';
+      ? `${esc(t('preset.savingCurrent'))} <b>${esc(cur)}</b>`
+      : esc(t('preset.saveHint'));
   }
   presets = (presets || []).filter(pr => (pr.kind || 'query') === 'query');
   if (!presets.length) {
-    pl.innerHTML = '<p class="profile-empty">Нет пресетов поиска. Наборы тегов сохраняются и применяются во вкладке «Теги»</p>';
+    pl.innerHTML = `<p class="profile-empty">${esc(t('preset.empty'))}</p>`;
     return;
   }
   presets.forEach((pr, i) => {
@@ -140,11 +168,11 @@ App.renderPresets = function (presets) {
     d.innerHTML = `
       <span class="preset-kind preset-kind-query">${icon('search', 13)}</span>
       <span class="preset-name">${esc(pr.name)}</span>
-      <span class="preset-query">${esc(pr.query || 'главная')}</span>
-      <button class="btn-icon btn-icon-sm pf-up" title="Переместить выше">${icon('arrowUp', 14)}</button>
-      <button class="btn-icon btn-icon-sm pf-down" title="Переместить ниже">${icon('arrowDown', 14)}</button>
-      <button class="btn-icon btn-icon-sm pf-edit" title="Переименовать">${icon('pencil', 14)}</button>
-      <button class="btn-icon btn-icon-sm pf-del" title="Удалить пресет">${icon('x', 14)}</button>`;
+      <span class="preset-query">${esc(pr.query || t('preset.main'))}</span>
+      <button class="btn-icon btn-icon-sm pf-up" title="${esc(t('preset.moveUp'))}">${icon('arrowUp', 14)}</button>
+      <button class="btn-icon btn-icon-sm pf-down" title="${esc(t('preset.moveDown'))}">${icon('arrowDown', 14)}</button>
+      <button class="btn-icon btn-icon-sm pf-edit" title="${esc(t('preset.rename'))}">${icon('pencil', 14)}</button>
+      <button class="btn-icon btn-icon-sm pf-del" title="${esc(t('preset.delete'))}">${icon('x', 14)}</button>`;
     d.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
       this.applyPreset(pr);
@@ -160,13 +188,13 @@ App.renderPresets = function (presets) {
     d.querySelector('.pf-del').addEventListener('click', async (e) => {
       e.stopPropagation();
       const ok = await this.confirmDialog({
-        title: 'Удалить пресет',
-        message: `Удалить пресет <b>«${esc(pr.name)}»</b>?`,
-        okText: 'Удалить',
+        title: t('preset.delete'),
+        message: tf('preset.deleteConfirm', { name: esc(pr.name) }),
+        okText: t('btn.delete'),
         danger: true,
       });
       if (!ok) return;
-      API.del(`/preset/${pr.id}`).then(() => { API.invalidate('/profile'); this.loadProfile(); this.showToast(`Пресет «${pr.name}» удалён`); }).catch(() => {});
+      API.del(`/preset/${pr.id}`).then(() => { API.invalidate('/profile'); this.loadProfile(); this.showToast(tf('preset.deleted', { name: pr.name })); }).catch(() => {});
     });
     pl.appendChild(d);
   });
@@ -191,9 +219,9 @@ App.editPreset = function (d, pr) {
       API.patch(`/preset/${pr.id}`, { name }).then(() => {
         API.invalidate('/profile');
         this.loadProfile();
-        this.showToast('Пресет переименован');
+        this.showToast(t('preset.renamed'));
       }).catch(err => {
-        this.showToast(`Ошибка: ${err.message}`, 'error');
+        this.showToast(tf('err.withMsg', { msg: err.message }), 'error');
         nameEl.textContent = pr.name;
         input.replaceWith(nameEl);
       });
@@ -219,12 +247,132 @@ App.movePreset = function (id, dir) {
 
 App._thumbsBatch = 100;
 
+// ── Опции вкладок «Лайки»/«Скрытые»: сортировка и фильтр плиток ───────────
+// Фильтры считаются по полям ответа /posts-by-ids: viewed (view_history),
+// downloaded, file_type, плюс заглушки «недоступен». Сортировка лайков — по
+// liked_at (карта из /api/profile), скрытых — по id (бэкенд отдаёт по убыванию).
+// Настройка переживает перезагрузку: хранится в localStorage.
+const THUMB_OPTS_KEY = 'briefly_thumb_opts';
+const THUMB_FILTERS = ['all', 'downloaded', 'unviewed', 'video', 'unavailable'];
+const THUMB_SORTS = ['new', 'old'];
+
+App._thumbOpts = { likes: { sort: 'new', filter: 'all' }, hides: { sort: 'new', filter: 'all' } };
+App._thumbOptsLoaded = false;
+
+App.loadThumbOpts = function () {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(THUMB_OPTS_KEY) || 'null'); } catch { saved = null; }
+  ['likes', 'hides'].forEach(k => {
+    const s = (saved && saved[k]) || {};
+    const o = this._thumbOpts[k];
+    if (THUMB_SORTS.includes(s.sort)) o.sort = s.sort;
+    if (THUMB_FILTERS.includes(s.filter)) o.filter = s.filter;
+  });
+  this._thumbOptsLoaded = true;
+  return this._thumbOpts;
+};
+
+App._saveThumbOpts = function () {
+  try { localStorage.setItem(THUMB_OPTS_KEY, JSON.stringify(this._thumbOpts)); } catch { /* приватный режим */ }
+};
+
+App.setThumbSort = function (type, sort) {
+  if (!THUMB_SORTS.includes(sort) || !this._thumbOpts[type]) return;
+  this._thumbOpts[type].sort = sort;
+  this._saveThumbOpts();
+  this._syncThumbTools(type);
+  this._applyThumbOpts(type);
+};
+
+App.setThumbFilter = function (type, filter) {
+  if (!THUMB_FILTERS.includes(filter) || !this._thumbOpts[type]) return;
+  this._thumbOpts[type].filter = filter;
+  this._saveThumbOpts();
+  this._syncThumbTools(type);
+  this._applyThumbOpts(type);
+};
+
+// Предикаты фильтра — чистые функции: их удобно тестировать без DOM.
+App._thumbIsDownloaded = post => !!(post && (post.downloaded || post.downloadedAt));
+App._thumbIsVideo = post => !!(post && (post.file_type === 'video' || post.file_type === 'gif'));
+App._thumbMatchesFilter = function (post, filter) {
+  switch (filter) {
+    case 'downloaded': return this._thumbIsDownloaded(post);
+    case 'unviewed': return !(post && post.viewed);
+    case 'video': return this._thumbIsVideo(post);
+    case 'unavailable': return !!(post && post.missing);
+    default: return true;
+  }
+};
+// Ключ сортировки: у лайков приоритет у времени лайка, у скрытых — у id.
+App._thumbSortKey = function (type, post) {
+  const likedAt = ((this.state.profile || {}).liked_at || {})[post && post.id];
+  if (type === 'likes' && likedAt) return Number(likedAt);
+  return Number(post && post.id) || 0;
+};
+
+// Пересчёт видимости и порядка уже отрисованных плиток. Работает поверх DOM,
+// поэтому не трогает постепенную подгрузку: недогруженные плитки применят
+// текущие опции при добавлении.
+App._applyThumbOpts = function (type) {
+  const s = this._thumbs && this._thumbs[type];
+  if (!s || !s.tiles) return;
+  const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
+  if (!el) return;
+  if (!this._thumbOptsLoaded) this.loadThumbOpts();
+  const filter = this._thumbOpts[type].filter;
+  const dir = this._thumbOpts[type].sort === 'old' ? -1 : 1;
+  s.tiles.forEach(tile => {
+    const on = this._thumbMatchesFilter(tile._pfPost, filter);
+    tile.hidden = !on;
+    if (tile.classList) tile.classList.toggle('pf-hidden', !on);
+  });
+  const sorted = s.tiles.slice().sort((a, b) =>
+    (this._thumbSortKey(type, a._pfPost) - this._thumbSortKey(type, b._pfPost)) * dir);
+  sorted.forEach(tile => el.appendChild(tile));
+  this._updateThumbCount(type);
+};
+
+App._updateThumbCount = function (type) {
+  const counter = document.getElementById(type === 'likes' ? 'likes-shown-count' : 'hides-shown-count');
+  if (!counter) return;
+  const s = this._thumbs && this._thumbs[type];
+  if (!s || !s.tiles) { counter.textContent = ''; return; }
+  const total = (s.ids || []).length;
+  const shown = s.tiles.filter(tl => !tl.hidden).length;
+  counter.textContent = total ? tf('pf.shownOf', { shown, total }) : '';
+};
+
+// Подсветка активных чипов/кнопок сортировки после смены опций (в т.ч. при
+// восстановлении из localStorage и переключении языка).
+App._syncThumbTools = function (type) {
+  const o = this._thumbOpts[type];
+  if (!o) return;
+  const box = document.getElementById(type === 'likes' ? 'likes-tools' : 'hides-tools');
+  if (!box) return;
+  box.querySelectorAll('[data-sort]').forEach(b => {
+    const on = b.dataset.sort === o.sort;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  box.querySelectorAll('[data-filter]').forEach(b => {
+    const on = b.dataset.filter === o.filter;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+};
+
 App.renderThumbs = function (type, ids) {
   if (!this._thumbs) this._thumbs = {};
   const el = this.els[type === 'likes' ? 'likesList' : 'hidesList'];
   const empty = this.els[type === 'likes' ? 'likesEmpty' : 'hidesEmpty'];
   const gridBtn = type === 'likes' ? this.els.btnLikesGrid : this.els.btnHidesGrid;
   const list = ids || [];
+  // Тулбар (чипы, счётчик, панель выбора) приводим к сохранённым опциям: они
+  // восстанавливаются из localStorage и не зависят от порядка отрисовки плиток.
+  if (!this._thumbOptsLoaded) this.loadThumbOpts();
+  this._syncThumbTools(type);
+  this._syncThumbSelBar(type);
 
 
   if (!list.length) {
@@ -232,7 +380,7 @@ App.renderThumbs = function (type, ids) {
     if (empty) empty.style.display = '';
     if (gridBtn) gridBtn.style.display = 'none';
     this._hideThumbMore(type);
-    this._thumbs[type] = { key: '', ids: [], posts: [], loaded: 0, token: 0, missing: [] };
+    this._thumbs[type] = { key: '', ids: [], posts: [], loaded: 0, token: 0, missing: [], tiles: [] };
     return;
   }
   if (empty) empty.style.display = 'none';
@@ -246,15 +394,19 @@ App.renderThumbs = function (type, ids) {
   if (ex && ex.key === key) {
     if (ex.loaded > 0 && tabActive) {
       el.innerHTML = '';
-      this._appendThumbs(el, ex.posts);
-      if (ex.missing && ex.missing.length) this._appendMissingThumbs(el, ex.missing);
+      // Пересоздаём DOM плиток, поэтому список узлов тоже с нуля — иначе
+      // новые плитки добавились бы к старым и в сортировке/выборе каждая
+      // учитывалась бы дважды.
+      ex.tiles = [];
+      this._appendThumbs(el, ex.posts, type);
+      if (ex.missing && ex.missing.length) this._appendMissingThumbs(el, ex.missing, type);
       this._updateThumbMore(type);
       return;
     }
     if (!tabActive) { el.innerHTML = ''; return; }
   }
 
-  this._thumbs[type] = { key, ids: list, posts: [], loaded: 0, token: 0, missing: [] };
+  this._thumbs[type] = { key, ids: list, posts: [], loaded: 0, token: 0, missing: [], tiles: [] };
   el.innerHTML = '';
   const n = Math.min(6, list.length);
   for (let i = 0; i < n; i++) {
@@ -272,7 +424,7 @@ App.loadMoreThumbs = async function (type) {
   if (s.loaded >= total) { this._updateThumbMore(type); return; }
   const moreBtn = type === 'likes' ? this.els.btnLikesMore : this.els.btnHidesMore;
   const token = ++s.token;
-  if (moreBtn) { moreBtn.disabled = true; moreBtn.style.display = ''; moreBtn.innerHTML = '<span class="pf-more-spin"></span>Загрузка…'; }
+  if (moreBtn) { moreBtn.disabled = true; moreBtn.style.display = ''; moreBtn.innerHTML = `<span class="pf-more-spin"></span>${esc(t('pf.loading'))}`; }
   const next = Math.min(s.loaded + this._thumbsBatch, total);
   const ids = s.ids.slice(s.loaded, next);
   try {
@@ -283,7 +435,7 @@ App.loadMoreThumbs = async function (type) {
     posts.forEach(p => s.posts.push(p));
     s.loaded = next;
     const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
-    this._appendThumbs(el, posts);
+    this._appendThumbs(el, posts, type);
     el.querySelectorAll('.pf-thumb-skeleton').forEach(s => s.remove());
     // Старые лайки, которых уже нет ни в локальной БД, ни на источнике:
     // показываем заглушку «недоступен», чтобы было видно, что id учитывался.
@@ -291,11 +443,11 @@ App.loadMoreThumbs = async function (type) {
     const missing = ids.filter(id => !found.has(id) && !already.has(id));
     if (missing.length) {
       s.missing = [...(s.missing || []), ...missing];
-      this._appendMissingThumbs(el, missing);
+      this._appendMissingThumbs(el, missing, type);
     }
     this._updateThumbMore(type);
   } catch (err) {
-    if (s.token === token && moreBtn) { moreBtn.disabled = false; moreBtn.textContent = 'Ошибка — повторить'; }
+    if (s.token === token && moreBtn) { moreBtn.disabled = false; moreBtn.textContent = t('pf.retry'); }
   }
 };
 
@@ -312,13 +464,15 @@ App._updateThumbMore = function (type) {
   if (s.loaded <= 0 || left <= 0) { more.style.display = 'none'; more.disabled = false; return; }
   more.style.display = '';
   more.disabled = false;
-  more.textContent = `Показать ещё (${left})`;
+  more.textContent = tf('pf.showMore', { n: left });
 };
 
-App._buildThumbTile = function (post, i) {
+App._buildThumbTile = function (post, i, type) {
   const tile = document.createElement('div');
   tile.className = 'pf-thumb';
   tile.style.setProperty('--d', `${Math.min(i, 14) * 26}ms`);
+  tile._pfPost = post;
+  tile.dataset.pfId = String(post.id);
   if (post.width && post.height) tile.style.aspectRatio = String(Math.min(post.width / post.height, 1.4));
   const srcs = pfCandidatesFor(post);
   const play = post.file_type === 'video'
@@ -327,10 +481,26 @@ App._buildThumbTile = function (post, i) {
       ? '<span class="pf-gif">GIF</span>'
       : '';
   const dl = (post.downloadedAt || post.downloaded)
-    ? `<span class="pf-dl" title="Скачано">${icon('check', null, true)}</span>`
+    ? `<span class="pf-dl" title="${esc(t('pf.downloaded'))}">${icon('check', null, true)}</span>`
     : '';
   const score = post.score ? `<span class="pf-score">${icon('star', null, true)}${post.score}</span>` : '';
-  tile.innerHTML = `<img src="" alt="" loading="lazy" decoding="async"><div class="pf-fallback">#${post.id}<span class="pf-err"></span></div>${play}${dl}<div class="pf-open"><span class="pf-open-icon">${icon('externalLink')}</span></div><div class="pf-bar"><span>#${post.id}</span>${score}</div>`;
+  // Метка «новое»: пост помечен liked/hidden, но ни разу не открыт (view_history).
+  const fresh = !post.viewed ? `<span class="pf-new" title="${esc(t('pf.filterUnviewed'))}">${esc(t('pf.newBadge'))}</span>` : '';
+  // Быстрые действия: в списке лайков «лайк» снимает отметку, в списке скрытых
+  // «глаз» возвращает пост. Подписи зависят от вкладки.
+  const likeTitle = type === 'likes' ? t('pf.unlike') : t('pf.like');
+  const hideTitle = type === 'hides' ? t('pf.unhide') : t('pf.hide');
+  const acts = `<div class="pf-acts">
+    <button class="pf-act" data-act="like" title="${esc(likeTitle)}" aria-label="${esc(likeTitle)}">${icon('heart', 14, type === 'likes')}</button>
+    <button class="pf-act" data-act="hide" title="${esc(hideTitle)}" aria-label="${esc(hideTitle)}">${icon(type === 'hides' ? 'eye' : 'eyeOff', 14)}</button>
+    <button class="pf-act" data-act="download" title="${esc(t('pf.downloadPost'))}" aria-label="${esc(t('pf.downloadPost'))}">${icon('download', 14)}</button>
+  </div>`;
+  const sel = `<button class="pf-sel" data-act="select" title="${esc(t('pf.select'))}" aria-label="${esc(t('pf.select'))}" aria-pressed="false">${icon('check', 14, true)}</button>`;
+  tile.innerHTML = `<img src="" alt="" loading="lazy" decoding="async"><div class="pf-fallback">#${post.id}<span class="pf-err"></span></div>${play}${dl}${fresh}${acts}${sel}<div class="pf-open"><span class="pf-open-icon">${icon('externalLink')}</span></div><div class="pf-bar"><span>#${post.id}</span>${score}</div>`;
+  // Клавиатурная доступность: плитка как кнопка (Enter/Пробел — открыть).
+  tile.setAttribute('role', 'button');
+  tile.setAttribute('tabindex', '0');
+  tile.setAttribute('aria-label', tf('pf.openPost', { id: post.id }));
   const img = tile.querySelector('img');
   const errEl = tile.querySelector('.pf-err');
   if (img) {
@@ -344,7 +514,7 @@ App._buildThumbTile = function (post, i) {
       if (done) return;
       if (attempt >= srcs.length) {
         tile.classList.add('pf-broken');
-        if (errEl) errEl.textContent = 'недоступно';
+        if (errEl) errEl.textContent = t('pf.unavailable');
         return;
       }
       img.dataset.attempt = String(++attempt);
@@ -364,46 +534,242 @@ App._buildThumbTile = function (post, i) {
     tryNext();
   }
   tile.addEventListener('click', (e) => {
+    // Кнопки быстрых действий и чекбокс выбора живут внутри плитки, но ведут
+    // себя как отдельные элементы: клик по ним не открывает пост.
+    const btn = e.target && e.target.closest ? e.target.closest('.pf-act, .pf-sel') : null;
+    if (btn) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.onThumbAction(type, post, btn.dataset.act, tile);
+      return;
+    }
     // Ctrl/Cmd+ЛКМ — как у ссылки: пост открывается в новой вкладке.
     if (this.isOpenInNewTabClick(e)) {
       e.preventDefault();
       this.openInNewTab(this.postUrl(this.state.query, post.id));
       return;
     }
+    // В режиме выбора клик по плитке (и Enter/Пробел) выделяет, а не открывает.
+    if (this._thumbSelMode && this._thumbSelMode[type]) {
+      this.toggleThumbSelect(type, post.id, tile);
+      return;
+    }
     this.openPostFromProfile(post);
+  });
+  tile.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    tile.click();
   });
   return tile;
 };
 
 // Заглушки для лайков/скрытий, которых нет ни локально, ни на источнике
 // (пост удалён/CDN отдаёт 404): пользователь видит, что id учтён в профиле.
-App._appendMissingThumbs = function (el, ids) {
+App._appendMissingThumbs = function (el, ids, type) {
   if (!el || !ids || !ids.length) return;
+  const s = this._thumbs && this._thumbs[type];
   const frag = document.createDocumentFragment();
   ids.forEach(id => {
     const tile = document.createElement('div');
     tile.className = 'pf-thumb pf-broken pf-missing';
-    tile.title = `Пост #${id} недоступен на источнике`;
+    tile.title = tf('pf.postUnavailable', { id });
+    tile._pfPost = { id, missing: true };
+    tile.dataset.pfId = String(id);
     tile.textContent = '';
     tile.appendChild((() => {
       const fb = document.createElement('div');
       fb.className = 'pf-fallback';
-      fb.textContent = `#${id} · недоступен`;
+      fb.textContent = tf('pf.missingTile', { id });
       return fb;
     })());
+    if (s && s.tiles) s.tiles.push(tile);
     frag.appendChild(tile);
   });
   el.appendChild(frag);
+  if (s) this._applyThumbOpts(type);
 };
 
-App._appendThumbs = function (el, posts) {
+App._appendThumbs = function (el, posts, type) {
   if (!el) return;
+  const s = this._thumbs && this._thumbs[type];
   const frag = document.createDocumentFragment();
   posts.forEach((post, i) => {
     if (!post || post.id == null) return;
-    frag.appendChild(this._buildThumbTile(post, i));
+    const tile = this._buildThumbTile(post, i, type);
+    if (s && s.tiles) s.tiles.push(tile);
+    frag.appendChild(tile);
   });
   el.appendChild(frag);
+  if (s) this._applyThumbOpts(type);
+};
+
+App._thumbSel = { likes: new Set(), hides: new Set() };
+App._thumbSelMode = { likes: false, hides: false };
+
+// ── Быстрые действия на плитке ────────────────────────────────────────────
+// Лайк/скрытие идут через оптимистичные хелперы ленты: список профиля меняется
+// сразу, при ошибке запроса состояние откатывается.
+App.onThumbAction = function (type, post, act, tile) {
+  const id = post && post.id;
+  if (id == null || !act) return;
+  if (act === 'select') { this.toggleThumbSelect(type, id, tile); return; }
+  if (act === 'download') {
+    if (typeof this.downloadPost !== 'function') return;
+    this.downloadPost(post);
+    this.showToast(t('pf.queuedOne'));
+    return;
+  }
+  const fail = (err) => this.showToast(
+    err && err.message ? tf('err.withMsg', { msg: err.message }) : t('err.generic'), 'error');
+  if (act === 'like') {
+    // Во вкладке «Лайки» кнопка снимает отметку, в «Скрытых» — ставит.
+    const liked = this.optimisticLike(id, type !== 'likes');
+    this.showToast(liked ? t('pf.likedBack') : t('pf.unliked'));
+    API.post(`/like/${id}`).then(() => {
+      API.invalidate('/profile');
+      if (!liked) this._removeThumb(type, id);
+    }).catch(err => { this.optimisticLike(id, !liked); fail(err); });
+    return;
+  }
+  if (act === 'hide') {
+    // Во вкладке «Скрытые» кнопка возвращает пост, в «Лайках» — скрывает.
+    const hidden = this.optimisticHide(id, type !== 'hides');
+    this.showToast(hidden ? t('pf.hiddenNow') : t('pf.unhidden'));
+    API.post(`/hide/${id}`).then(() => {
+      API.invalidate('/profile');
+      if (type === 'hides' && !hidden) this._removeThumb(type, id);
+    }).catch(err => { this.optimisticHide(id, !hidden); fail(err); });
+  }
+};
+
+// Плитка уходит из вкладки, когда отметка снята: id выбрасывается и из кэша
+// вкладки, и из s.ids — иначе следующий renderThumbs вернул бы её обратно.
+App._removeThumb = function (type, id) {
+  const s = this._thumbs && this._thumbs[type];
+  if (!s) return;
+  const num = Number(id);
+  const idOf = tile => Number(tile && tile.dataset && tile.dataset.pfId);
+  if (s.tiles) {
+    s.tiles.filter(tile => idOf(tile) === num).forEach(tile => { if (tile.remove) tile.remove(); });
+    s.tiles = s.tiles.filter(tile => idOf(tile) !== num);
+  }
+  if (s.ids) s.ids = s.ids.filter(x => Number(x) !== num);
+  if (s.posts) s.posts = s.posts.filter(p => Number(p.id) !== num);
+  if (s.missing) s.missing = s.missing.filter(x => Number(x) !== num);
+  const set = this._thumbSel && this._thumbSel[type];
+  if (set) set.delete(num);
+  this._updateThumbCount(type);
+  this._syncThumbSelBar(type);
+};
+
+// ── Мульти-выбор ─────────────────────────────────────────────────────────
+App.toggleThumbSelect = function (type, id, tile) {
+  const set = this._thumbSel[type] || (this._thumbSel[type] = new Set());
+  const num = Number(id);
+  if (set.has(num)) set.delete(num); else set.add(num);
+  if (tile && tile.classList) tile.classList.toggle('pf-checked', set.has(num));
+  this._syncThumbSelBar(type);
+};
+
+App.setThumbSelectMode = function (type, on) {
+  this._thumbSelMode[type] = !!on;
+  const set = this._thumbSel[type] || (this._thumbSel[type] = new Set());
+  if (!this._thumbSelMode[type]) set.clear();
+  const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
+  if (el && el.classList) el.classList.toggle('pf-selecting', this._thumbSelMode[type]);
+  const s = this._thumbs && this._thumbs[type];
+  if (s && s.tiles) s.tiles.forEach(tile => {
+    if (tile.classList) tile.classList.toggle('pf-checked', set.has(Number(tile.dataset && tile.dataset.pfId)));
+  });
+  this._syncThumbSelBar(type);
+};
+
+// «Выбрать все» берёт только видимые плитки: под активным фильтром скрытые
+// недоступны для выделения, иначе действие «снять лайк» затронет невидимое.
+App.selectAllThumbs = function (type, on) {
+  const s = this._thumbs && this._thumbs[type];
+  if (!s) return;
+  const set = this._thumbSel[type] || (this._thumbSel[type] = new Set());
+  s.tiles.forEach(tile => {
+    if (tile.hidden) return;
+    const id = Number(tile.dataset && tile.dataset.pfId);
+    if (on) set.add(id); else set.delete(id);
+    if (tile.classList) tile.classList.toggle('pf-checked', on);
+  });
+  this._syncThumbSelBar(type);
+};
+
+App._syncThumbSelBar = function (type) {
+  const bar = document.getElementById(type === 'likes' ? 'likes-selbar' : 'hides-selbar');
+  const n = ((this._thumbSel && this._thumbSel[type]) || new Set()).size;
+  const on = !!(this._thumbSelMode && this._thumbSelMode[type]);
+  if (bar) {
+    bar.hidden = !on;
+    const count = bar.querySelector('.pf-selbar-count');
+    if (count) count.textContent = tf('batch.selected', { n });
+    bar.querySelectorAll('[data-selact]').forEach(b => { b.disabled = n === 0; });
+  }
+  const tools = document.getElementById(type === 'likes' ? 'likes-tools' : 'hides-tools');
+  const btn = tools && tools.querySelector('[data-act="selectMode"]');
+  if (btn) {
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const lbl = btn.querySelector('.pf-tool-label');
+    if (lbl) lbl.textContent = on ? t('pf.selectDone') : t('pf.select');
+  }
+};
+
+// Действия над выделенными плитками: скачать, снять лайк, вернуть из скрытых,
+// убрать недоступные из списка.
+App.thumbSelAction = async function (type, act) {
+  const s = this._thumbs && this._thumbs[type];
+  if (!s) return;
+  const set = this._thumbSel[type] || (this._thumbSel[type] = new Set());
+  if (act === 'clearUnavailable') {
+    const gone = (s.tiles || []).filter(tile => tile._pfPost && tile._pfPost.missing)
+      .map(tile => Number(tile.dataset && tile.dataset.pfId)).filter(Number.isFinite);
+    if (!gone.length) return;
+    const ok = typeof this.confirmDialog === 'function'
+      ? await this.confirmDialog({
+        message: tf('pf.clearUnavailableConfirm', { n: gone.length }),
+        okText: t('confirm.ok'),
+        danger: true,
+      })
+      : true;
+    if (!ok) return;
+    gone.forEach(id => this._removeThumb(type, id));
+    this._updateThumbMore(type);
+    this.showToast(tf('pf.unavailableRemoved', { n: gone.length }));
+    return;
+  }
+  const ids = Array.from(set).map(Number).filter(Number.isFinite);
+  if (!ids.length) return;
+  if (act === 'download') {
+    const posts = (s.posts || []).filter(p => ids.includes(Number(p.id)));
+    posts.forEach(p => this.downloadPost(p));
+    if (posts.length) this.showToast(tf('pf.queuedN', { n: posts.length }));
+    return;
+  }
+  if (act !== 'unlike' && act !== 'unhide') return;
+  const like = act === 'unlike';
+  set.clear();
+  this._syncThumbSelBar(type);
+  // Запросы параллельно: список бывает на сотни постов, последовательные POST
+  // дали бы заметную паузу. Отметки снимаем сразу (оптимистично), неудачные
+  // возвращаем в выделение, чтобы пользователь их увидел.
+  const results = await Promise.all(ids.map(id =>
+    (like ? API.post(`/like/${id}`) : API.post(`/hide/${id}`)).then(() => true).catch(() => false)));
+  let done = 0;
+  results.forEach((ok, i) => {
+    if (!ok) { set.add(ids[i]); return; }
+    if (like) this.optimisticLike(ids[i], false); else this.optimisticHide(ids[i], false);
+    this._removeThumb(type, ids[i]);
+    done++;
+  });
+  API.invalidate('/profile');
+  this._syncThumbSelBar(type);
+  if (done) this.showToast(like ? t('pf.unliked') : t('pf.unhidden'));
 };
 
 App.openPostFromProfile = async function (post) {
@@ -434,11 +800,11 @@ App.openPostFromProfile = async function (post) {
   this._enterContext(ordered, { related: false, index: idx });
 };
 
-App._matchTag = function (t) {
+App._matchTag = function (tag) {
   const q = this._tagFilter || '';
-  const idx = q ? t.toLowerCase().indexOf(q.toLowerCase()) : -1;
-  if (idx < 0) return esc(t);
-  return esc(t.slice(0, idx)) + '<mark>' + esc(t.slice(idx, idx + q.length)) + '</mark>' + esc(t.slice(idx + q.length));
+  const idx = q ? tag.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (idx < 0) return esc(tag);
+  return esc(tag.slice(0, idx)) + '<mark>' + esc(tag.slice(idx, idx + q.length)) + '</mark>' + esc(tag.slice(idx + q.length));
 };
 
 App.renderTagList = function (elId, tags, type) {
@@ -446,28 +812,28 @@ App.renderTagList = function (elId, tags, type) {
   if (!el) return;
   el.innerHTML = '';
   const q = this._tagFilter || '';
-  if (q) tags = (tags || []).filter(t => t.toLowerCase().includes(q));
+  if (q) tags = (tags || []).filter(tag => tag.toLowerCase().includes(q));
   if (!tags || !tags.length) {
-    el.innerHTML = '<p class="profile-empty">Нет тегов</p>';
+    el.innerHTML = `<p class="profile-empty">${esc(t('tags.none'))}</p>`;
     return;
   }
   const isFav = type === 'fav';
   const activeCls = isFav ? 'fav' : 'hidden';
-  tags.forEach(t => {
+  tags.forEach(tag => {
     const d = document.createElement('div');
     d.className = 'profile-tag-item ' + activeCls;
-    d.title = t;
+    d.title = tag;
     let count = '';
-    if (this._tagCounts && this._tagCounts[t]) count = `<span class="tg-count">${this._tagCounts[t]}</span>`;
+    if (this._tagCounts && this._tagCounts[tag]) count = `<span class="tg-count">${this._tagCounts[tag]}</span>`;
     const ico = isFav ? icon('bookmark', 11) : icon('eye', 11);
-    d.innerHTML = `${ico}<span>${this._matchTag(t)}</span>${count}`;
+    d.innerHTML = `${ico}<span>${this._matchTag(tag)}</span>${count}`;
     const btn = document.createElement('button');
     btn.className = isFav ? 'tg-unfav' : 'tg-unhide';
     btn.innerHTML = icon('x', 11);
-    btn.title = isFav ? 'Убрать из избранных' : 'Показать тег';
+    btn.title = isFav ? t('tags.unfav') : t('tags.unhide');
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      API.post(`/${isFav ? 'fav-tag' : 'hidden-tag'}`, { tag: t }).then(() => {
+      API.post(`/${isFav ? 'fav-tag' : 'hidden-tag'}`, { tag }).then(() => {
         API.invalidate('/profile');
         if (!isFav) { this.invalidateFeedCache(); this.loadPosts(true); }
         this.loadProfile();
@@ -475,19 +841,19 @@ App.renderTagList = function (elId, tags, type) {
     });
     d.appendChild(btn);
     if (isFav) {
-      d.title = `Поиск: ${t}`;
+      d.title = tf('tags.search', { tag });
       d.addEventListener('click', (ev) => {
         if (ev.target.closest('button')) return;
-        this.els.searchInput.value = t;
-        this.search(t);
+        this.els.searchInput.value = tag;
+        this.search(tag);
         this.toggleProfile();
       });
     } else {
-      d.title = `Поиск без тега: -${t}`;
+      d.title = tf('tags.searchAvoid', { tag });
       d.addEventListener('click', (ev) => {
         if (ev.target.closest('button')) return;
         const cur = this.state.query;
-        const newQ = cur ? `${cur} -${t}` : `-${t}`;
+        const newQ = cur ? `${cur} -${tag}` : `-${tag}`;
         this.els.searchInput.value = newQ;
         this.search(newQ);
         this.toggleProfile();
@@ -499,16 +865,16 @@ App.renderTagList = function (elId, tags, type) {
 
 App.clearTagList = async function (type) {
   const key = type === 'fav' ? 'fav_tags' : 'hidden_tags';
-  const label = type === 'fav' ? 'избранные' : 'скрытые';
+  const label = type === 'fav' ? t('tags.favLabel') : t('tags.hiddenLabel');
   const tags = (this.state.profile && (this.state.profile[key] || [])) || [];
   if (!tags.length) {
-    this.showToast('Нет тегов для очистки', 'error');
+    this.showToast(t('tags.nothingToClear'), 'error');
     return;
   }
   const ok = await this.confirmDialog({
-    title: 'Очистка тегов',
-    message: `Удалить все <b>${label}</b> теги (${tags.length})?`,
-    okText: 'Удалить',
+    title: t('tags.clearTitle'),
+    message: tf('tags.clearConfirm', { label, n: tags.length }),
+    okText: t('btn.delete'),
     danger: true,
   });
   if (!ok) return;
@@ -518,9 +884,9 @@ App.clearTagList = async function (type) {
     if (type === 'hidden') this.invalidateFeedCache();
     await this.loadProfile();
     if (type === 'hidden') this.loadPosts(true);
-    this.showToast(`Удалено: ${tags.length} ${label} тегов`);
+    this.showToast(tf('tags.cleared', { n: tags.length, label }));
   } catch (err) {
-    this.showToast(`Ошибка: ${err.message}`, 'error');
+    this.showToast(tf('err.withMsg', { msg: err.message }), 'error');
   }
 };
 
@@ -528,13 +894,13 @@ App.savePreset = function () {
   const name = this.els.presetName.value.trim();
   if (!name) return;
   const query = this.state.query || '';
-  if (!query) { this.showToast('Сначала установите поиск', 'error'); return; }
+  if (!query) { this.showToast(t('preset.needSearch'), 'error'); return; }
   API.post('/preset', { name, query }).then(() => {
     this.els.presetName.value = '';
     API.invalidate('/profile');
     this.loadProfile();
-    this.showToast(`Пресет «${name}» сохранён`);
-  }).catch(err => this.showToast(`Ошибка: ${err.message}`, 'error'));
+    this.showToast(tf('preset.saved', { name }));
+  }).catch(err => this.showToast(tf('err.withMsg', { msg: err.message }), 'error'));
 };
 
 App.saveTagPreset = function (kind) {
@@ -543,16 +909,16 @@ App.saveTagPreset = function (kind) {
   const hidden = p.hidden_tags || [];
   const list = kind === 'fav' ? fav : hidden;
   if (!list.length) {
-    this.showToast(kind === 'fav' ? 'Нет избранных тегов' : 'Нет скрытых тегов', 'error');
+    this.showToast(kind === 'fav' ? t('tags.noFav') : t('tags.noHidden'), 'error');
     return;
   }
-  const label = kind === 'fav' ? 'Избранные' : 'Скрытые';
-  const name = `${label} теги (${list.length})`;
+  const label = kind === 'fav' ? t('tags.favHead') : t('tags.hiddenHead');
+  const name = `${label} (${list.length})`;
   API.post('/preset', { name, kind: 'tags', hidden_tags: hidden, fav_tags: fav }).then(() => {
     API.invalidate('/profile');
     this.loadProfile();
-    this.showToast(`Пресет «${name}» сохранён`);
-  }).catch(err => this.showToast(`Ошибка: ${err.message}`, 'error'));
+    this.showToast(tf('preset.saved', { name }));
+  }).catch(err => this.showToast(tf('err.withMsg', { msg: err.message }), 'error'));
 };
 
 App.applyPreset = function (pr) {
@@ -568,9 +934,9 @@ App.applyPresetById = function (id, type) {
     if (type === 'hidden') { this.invalidateFeedCache(); }
     this.loadProfile();
     if (type === 'hidden') this.loadPosts(true);
-    const label = type === 'fav' ? 'избранных' : 'скрытых';
-    this.showToast(r.applied > 0 ? `Применено: ${r.applied} ${label} тегов` : 'Набор очищен');
-  }).catch(err => this.showToast(`Ошибка: ${err.message}`, 'error'));
+    const label = type === 'fav' ? 'tags.appliedFav' : 'tags.appliedHidden';
+    this.showToast(r.applied > 0 ? tf(label, { n: r.applied }) : t('tags.setCleared'));
+  }).catch(err => this.showToast(tf('err.withMsg', { msg: err.message }), 'error'));
 };
 
 App.addTag = function (type) {
@@ -583,9 +949,9 @@ App.addTag = function (type) {
     API.invalidate('/profile');
     if (type === 'hidden') this.invalidateFeedCache();
     this.loadProfile();
-    this.showToast(r.liked || r.hidden ? `Тег «${tag}» добавлен` : `Тег «${tag}» удалён`);
+    this.showToast(r.liked || r.hidden ? tf('tags.added', { tag }) : tf('tags.removed', { tag }));
     this.loadPosts(true);
-  }).catch(err => this.showToast(`Ошибка: ${err.message}`, 'error'));
+  }).catch(err => this.showToast(tf('err.withMsg', { msg: err.message }), 'error'));
 };
 
 App.exportPresets = function () {
@@ -593,7 +959,7 @@ App.exportPresets = function () {
   a.href = '/api/presets/export';
   a.download = 'briefly-presets.json';
   a.click();
-  this.showToast('Пресеты экспортированы');
+  this.showToast(t('preset.exported'));
 };
 
 App.importPresets = async function (ev) {
@@ -602,11 +968,11 @@ App.importPresets = async function (ev) {
   try {
     const text = await file.text();
     const data = JSON.parse(text);
-    if (!data.presets || !Array.isArray(data.presets)) { throw new Error('Неверный формат файла'); }
+    if (!data.presets || !Array.isArray(data.presets)) { throw new Error(t('err.badFormat')); }
     const r = await API.post('/presets/import', { presets: data.presets });
     this.loadProfile();
-    this.showToast(`Импортировано пресетов: ${r.imported}`);
-  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+    this.showToast(tf('preset.imported', { n: r.imported }));
+  } catch (err) { this.showToast(tf('err.withMsg', { msg: err.message }), 'error'); }
   ev.target.value = '';
 };
 
@@ -631,9 +997,9 @@ App.randomPost = async function () {
   try {
     const data = await API.get('/random');
     const p = (data && data.posts && data.posts[0]);
-    if (!p) { this.showToast('Случайный пост не найден', 'error'); return; }
+    if (!p) { this.showToast(t('pf.noRandom'), 'error'); return; }
     this._enterContext([{ ...p, _index: 0 }], { related: false });
-  } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
+  } catch (err) { this.showToast(tf('err.withMsg', { msg: err.message }), 'error'); }
 };
 
 App.renderPresetMenu = function () {
@@ -642,27 +1008,27 @@ App.renderPresetMenu = function () {
   const presets = ((this.state.profile && this.state.profile.presets) || [])
     .filter(pr => (pr.kind || 'query') === 'query');
   if (!presets.length) {
-    list.innerHTML = '<div class="preset-menu-empty">Нет пресетов поиска</div>';
+    list.innerHTML = `<div class="preset-menu-empty">${esc(t('preset.none'))}</div>`;
     return;
   }
   const cur = this.state.query || '';
   list.innerHTML = presets.map(pr =>
-    `<button class="preset-menu-item${(pr.query || '') === cur ? ' active' : ''}" data-query="${esc(pr.query || '')}"><span class="pm-name">${esc(pr.name)}</span><span class="pm-query">${esc(pr.query || 'главная')}</span></button>`
+    `<button class="preset-menu-item${(pr.query || '') === cur ? ' active' : ''}" data-query="${esc(pr.query || '')}"><span class="pm-name">${esc(pr.name)}</span><span class="pm-query">${esc(pr.query || t('preset.main'))}</span></button>`
   ).join('');
 };
 
 App.downloadAllLikes = async function () {
   const ids = (this.state.profile && this.state.profile.liked_posts) || [];
-  if (!ids.length) { this.showToast('Нет лайков', 'error'); return; }
+  if (!ids.length) { this.showToast(t('pf.noLikes'), 'error'); return; }
   const btn = this.els.btnLikesDownload;
-  if (btn) { btn.disabled = true; btn.textContent = 'Ставлю в очередь…'; }
+  if (btn) { btn.disabled = true; btn.textContent = t('pf.queuing'); }
   try {
     const r = await API.post('/download-liked');
-    this.showToast(`В очередь: ${r.queued} из ${r.total} лайков`, 'success');
-    if (btn) btn.textContent = 'Скачать все лайки';
+    this.showToast(tf('pf.queued', { done: r.queued, total: r.total }), 'success');
+    if (btn) btn.textContent = t('btn.downloadLikes');
   } catch (err) {
-    this.showToast(`Ошибка: ${err.message}`, 'error');
-    if (btn) btn.textContent = 'Скачать все лайки';
+    this.showToast(tf('err.withMsg', { msg: err.message }), 'error');
+    if (btn) btn.textContent = t('btn.downloadLikes');
   }
   if (btn) btn.disabled = false;
 };

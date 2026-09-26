@@ -11,6 +11,7 @@ const browserGlobals = {
   setTimeout: 'readonly', clearTimeout: 'readonly', setInterval: 'readonly', clearInterval: 'readonly',
   performance: 'readonly', CustomEvent: 'readonly', DOMParser: 'readonly', console: 'readonly',
   queueMicrotask: 'readonly', BarcodeDetector: 'readonly', Notification: 'readonly',
+  Blob: 'readonly', File: 'readonly',
 };
 
 const rules = {

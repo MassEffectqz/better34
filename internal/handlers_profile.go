@@ -2,6 +2,7 @@ package internal
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -74,22 +75,38 @@ func (h *Handler) GetProfileData(c *gin.Context) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
+	// Карта порядка лайков нужна клиенту для сортировки «новые первыми».
+	likedAt := copyI64Map(p.LikedAt)
+	// Лайки: по дате лайка (новые первыми); у старых лайков LikedAt может
+	// отсутствовать — тогда id по убыванию. Без этого порядок зависел от
+	// итерации по map и «прыгал» при каждой загрузке профиля.
 	likes := make([]int, 0, len(p.LikedPosts))
 	for id := range p.LikedPosts {
 		likes = append(likes, id)
 	}
+	sort.Slice(likes, func(i, j int) bool {
+		ti, tj := likedAt[likes[i]], likedAt[likes[j]]
+		if ti != tj {
+			return ti > tj
+		}
+		return likes[i] > likes[j]
+	})
+	// Скрытые постов без метки времени — детерминированный порядок по id.
 	hides := make([]int, 0, len(p.HiddenPosts))
 	for id := range p.HiddenPosts {
 		hides = append(hides, id)
 	}
+	sort.Sort(sort.Reverse(sort.IntSlice(hides)))
 	favTags := make([]string, 0, len(p.FavTags))
 	for t := range p.FavTags {
 		favTags = append(favTags, t)
 	}
+	sort.Strings(favTags)
 	hiddenTags := make([]string, 0, len(p.HiddenTags))
 	for t := range p.HiddenTags {
 		hiddenTags = append(hiddenTags, t)
 	}
+	sort.Strings(hiddenTags)
 
 	nickname := ""
 	avatar := ""
@@ -110,6 +127,7 @@ func (h *Handler) GetProfileData(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"liked_posts":  likes,
+		"liked_at":     likedAt,
 		"hidden_posts": hides,
 		"presets":      p.Presets,
 		"fav_tags":     favTags,

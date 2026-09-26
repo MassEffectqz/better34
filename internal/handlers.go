@@ -561,6 +561,11 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 	db := GetDB()
 	enriched := make([]gin.H, 0)
 
+	// Флаг «просмотренный» нужен вкладкам лайков/скрываемых: по нему клиент
+	// помечает непросмотренные посты как «новые» и фильтрует их. Батч одним
+	// SELECT вместо N IsViewed (те же id, что и выше — до 2000).
+	viewedMap := db.ViewedIDs(ids)
+
 	// Обогащение мета батчем: один SELECT ... WHERE id IN (...) вместо до 2000
 	// одиночных db.Get(id), запись — батчевой UpsertMetaMany вместо ~2000
 	// отдельных UpsertMeta (P1-3). GetMany/UpsertMetaMany внутри чанкируют,
@@ -587,6 +592,7 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				"score":       existing.Score,
 				"rating":      existing.Rating,
 				"downloaded":  existing.Downloaded,
+				"viewed":      viewedMap[existing.ID],
 			}
 			if existing.Source != "" {
 				entry["source"] = existing.Source
@@ -629,6 +635,7 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				"score":       p.Score,
 				"rating":      p.Rating,
 				"downloaded":  false,
+				"viewed":      viewedMap[p.ID],
 			})
 		}
 

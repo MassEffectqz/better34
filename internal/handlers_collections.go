@@ -10,6 +10,8 @@ import (
 
 // GET /api/collections[?post_id=N] — список коллекций с количеством постов.
 // С post_id дополнительно возвращается признак has — пост уже в коллекции.
+// covers — до 4 id для мозаики обложек (/api/thumb/:id), ids — все посты
+// коллекции (кап 2000, как у /api/download-zip) для экспорта архива.
 func (h *Handler) ListCollections(c *gin.Context) {
 	p := ProfileFor(c)
 	postID := 0
@@ -21,10 +23,20 @@ func (h *Handler) ListCollections(c *gin.Context) {
 	p.mu.RLock()
 	out := make([]gin.H, 0, len(p.Collections))
 	for _, col := range p.Collections {
+		ids := col.Posts
+		if len(ids) > 2000 {
+			ids = ids[:2000]
+		}
+		covers := ids
+		if len(covers) > 4 {
+			covers = covers[:4]
+		}
 		item := gin.H{
-			"id":    col.ID,
-			"name":  col.Name,
-			"count": len(col.Posts),
+			"id":     col.ID,
+			"name":   col.Name,
+			"count":  len(col.Posts),
+			"ids":    ids,
+			"covers": covers,
 		}
 		if postID > 0 {
 			has := false
@@ -128,6 +140,26 @@ func (h *Handler) CollectionAddMany(c *gin.Context) {
 	}
 	p.Save()
 	c.JSON(http.StatusOK, gin.H{"added": added})
+}
+
+// POST /api/collections/reorder {ids:[id1,id2,…]} — задать порядок коллекций
+// в профиле (перетаскивание/кнопки ↑↓ в интерфейсе). Неизвестные id
+// игнорируются, отсутствующие в списке остаются в конце в прежнем порядке.
+func (h *Handler) ReorderCollections(c *gin.Context) {
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ids required"})
+		return
+	}
+	p := ProfileFor(c)
+	if !p.ReorderCollections(req.IDs) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no known collections"})
+		return
+	}
+	p.Save()
+	c.JSON(http.StatusOK, gin.H{"message": "reordered"})
 }
 
 // GET /api/collection/:id/posts — посты коллекции через общий posts-by-ids формат.
