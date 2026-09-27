@@ -146,6 +146,40 @@ func TestGetSourceCommentsUnsupportedIsNotAnError(t *testing.T) {
 	}
 }
 
+// cached=1 (открытие поста) не должен ходить на источник, даже если кэша нет:
+// иначе каждый просмотр стоил бы запроса чужому сайту.
+func TestGetSourceCommentsCachedOnlyNeverHitsSource(t *testing.T) {
+	prov := &stubCommentsProvider{name: "hypnohub", reply: []*SourceComment{{ID: 1, Author: "a", Body: "x"}}}
+	ts := setupSourceCommentsRouter(t, prov)
+	GetDB().UpsertMeta(&Post{ID: 21, FileURL: "https://hypnohub.net/img/x/21.jpg"})
+
+	resp, code := fetchSourceComments(t, ts, "/api/posts/21/source-comments?site=hypnohub&cached=1")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d", code)
+	}
+	if prov.calls != 0 {
+		t.Fatalf("cached=1 must not call the source, calls=%d", prov.calls)
+	}
+	// Промах кэша — это не «источник не поддерживает»: о нём мы ещё не знаем.
+	if resp.Unsupported {
+		t.Error("cache miss must not be reported as unsupported")
+	}
+	if len(resp.Comments) != 0 || resp.Count != 0 {
+		t.Fatalf("cache miss should be empty: %+v", resp)
+	}
+
+	// С явной кнопкой (без cached=1) источник опрашивается и кэш наполняется.
+	resp, _ = fetchSourceComments(t, ts, "/api/posts/21/source-comments?site=hypnohub")
+	if prov.calls != 1 || resp.Count != 1 {
+		t.Fatalf("explicit fetch: calls=%d count=%d", prov.calls, resp.Count)
+	}
+	// Теперь cached=1 отдаёт из кэша, не трогая источник.
+	resp, _ = fetchSourceComments(t, ts, "/api/posts/21/source-comments?site=hypnohub&cached=1")
+	if prov.calls != 1 || resp.Count != 1 {
+		t.Fatalf("cached read after fetch: calls=%d count=%d", prov.calls, resp.Count)
+	}
+}
+
 func TestGetSourceCommentsUnknownSite(t *testing.T) {
 	prov := &stubCommentsProvider{name: "hypnohub"}
 	ts := setupSourceCommentsRouter(t, prov)

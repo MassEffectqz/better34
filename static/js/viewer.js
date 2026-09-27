@@ -758,8 +758,7 @@ App.renderViewer = function (force) {
 
   viewerProgress.textContent = post.downloaded ? t('viewer.downloaded') : t('viewer.pressX');
   this.updateNavButtons();
-  if (typeof this.renderComments === 'function') this.renderComments(post.id);
-  if (typeof this.renderSourceComments === 'function') this.renderSourceComments(post);
+  if (typeof this.renderComments === 'function') this.renderComments(post);
   if (typeof this.renderCollectMenu === 'function') {
     const menu = this.els.collectMenu;
     if (menu && !menu.classList.contains('hidden')) menu.classList.add('hidden');

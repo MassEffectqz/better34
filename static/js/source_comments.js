@@ -1,12 +1,15 @@
 // source_comments.js — комментарии поста, подтянутые с бура-источника
-// (dapi s=comment). Локальные комментарии (social.js) — отдельная сущность:
-// здесь всё read-only, кэшируется на сервере, по кнопке.
+// (dapi s=comment). Рендерит их social.js: там же они сливаются с локальными
+// в один список. Здесь только загрузка/кэш — без DOM.
 import { App } from './state.js';
-import { esc } from './utils.js';
 import { API } from './api.js';
-import { t, tf } from './i18n.js';
 
 const MAX_SRC_BODY = 2000;
+App.SRC_COMMENT_MAX = MAX_SRC_BODY;
+
+// Сайты, которые уже ответили «комментариев нет / сервис выключен»: кнопку
+// загрузки для них больше не показываем, чтобы не спрашивать вхолостую.
+App._srcUnsupported = new Set();
 
 // sourceSiteOf вытаскивает имя сайта-источника из поста. У постов из выдачи
 // поле source пустое (заполняется при скачивании), поэтому сайт определяем по
@@ -32,87 +35,38 @@ App.hasSourceComments = function (post) {
   return !!(post && (post.has_comments || (post.comment_count || 0) > 0));
 };
 
-App.renderSourceComments = function (post) {
-  const host = this.els.viewerSourceComments;
-  if (!host) return;
-  this._srcCommentsPostId = post.id;
-  const site = this.sourceSiteOf(post);
-  const count = post.comment_count || 0;
-  const title = site ? tf('srcComments.title', { site }) : t('srcComments.titlePlain');
-  const badge = this.hasSourceComments(post)
-    ? ' <span class="vc-count" title="' + esc(t('srcComments.badge')) + '">' + (count ? '(' + count + ')' : '•') + '</span>'
-    : '';
-  host.className = 'viewer-comments src-comments';
-  host.innerHTML =
-    '<div class="vc-head">' + esc(title) + badge + '</div>' +
-    '<div class="vc-list" id="vc-src-list"></div>' +
-    '<div class="vc-src-actions">' +
-    '<button type="button" class="btn-ss" id="vc-src-load">' + esc(t('srcComments.load')) + '</button>' +
-    '<button type="button" class="btn-ss hidden" id="vc-src-refresh">' + esc(t('srcComments.refresh')) + '</button>' +
-    '</div>';
-  const list = host.querySelector('#vc-src-list');
-  const loadBtn = host.querySelector('#vc-src-load');
-  const refreshBtn = host.querySelector('#vc-src-refresh');
-  const run = (refresh) => this.loadSourceComments(post.id, site, { refresh, list, refreshBtn });
-  if (loadBtn) loadBtn.addEventListener('click', () => run(false));
-  if (refreshBtn) refreshBtn.addEventListener('click', () => run(true));
-  if (!site) {
-    if (list) list.innerHTML = '<div class="vc-empty">' + esc(t('srcComments.noSource')) + '</div>';
-    if (loadBtn) loadBtn.classList.add('hidden');
-    return;
-  }
-  // Первичная проверка идёт из кэша (refresh=0) — источник не трогаем,
-  // пока пользователь не нажмёт кнопку.
-  this.loadSourceComments(post.id, site, { list, refreshBtn, passive: true });
-};
-
+// loadSourceComments — комментарии источника для поста. Возвращает промис с
+// {site, comments, count, cached, unsupported}; DOM не трогает.
+//
+// opts.refresh — только по явной кнопке «обновить»; иначе сервер отдаёт кэш,
+// а если его нет — сам сходит на источник (обычный клик по «загрузить»).
+// opts.cachedOnly — строго кэш (cached=1): при открытии поста. Сервер в этом
+// режиме не ходит на бур даже при промахе — иначе каждый просмотр стоил бы
+// запроса к чужому сайту.
 App.loadSourceComments = function (postId, site, opts) {
   const o = opts || {};
-  const list = o.list || document.getElementById('vc-src-list');
-  if (!list) return;
-  if (this._srcCommentsPostId !== postId || !this.state.viewerOpen) return;
+  if (!site) return Promise.resolve({ site: '', comments: [], count: 0, unsupported: true });
+  if (o.cachedOnly && this._srcUnsupported.has(site)) {
+    return Promise.resolve({ site, comments: [], count: 0, unsupported: true });
+  }
   const q = new URLSearchParams();
-  if (site) q.set('site', site);
+  q.set('site', site);
   q.set('source_id', String(postId));
-  // refresh=1 — только явное нажатие «обновить»; иначе берём кэш.
   if (o.refresh) q.set('refresh', '1');
-  if (list) list.innerHTML = '<div class="vc-loading"><span class="pf-more-spin"></span> ' + esc(t('srcComments.loading')) + '</div>';
-  const buttons = Array.from((list.parentElement || document).querySelectorAll('.vc-src-actions .btn-ss'));
-  buttons.forEach((b) => { b.disabled = true; b.setAttribute('aria-busy', 'true'); });
+  if (o.cachedOnly) q.set('cached', '1');
   // this.API — точка подмены для тестов, по умолчанию реальный клиент.
   const api = this.API || API;
-  api.get('/posts/' + postId + '/source-comments?' + q.toString(), { fresh: true })
+  return api.get('/posts/' + postId + '/source-comments?' + q.toString(), { fresh: true })
     .then((d) => {
-      if (this._srcCommentsPostId !== postId || !this.state.viewerOpen) return;
       const data = d || {};
-      if (data.unsupported) {
-        list.innerHTML = '<div class="vc-empty">' + esc(t('srcComments.unsupported')) + '</div>';
-        if (o.refreshBtn) o.refreshBtn.classList.add('hidden');
-        return;
-      }
-      const comments = data.comments || [];
-      if (o.refreshBtn) o.refreshBtn.classList.remove('hidden');
-      if (!comments.length) {
-        list.innerHTML = '<div class="vc-empty">' + esc(t('srcComments.empty')) + '</div>';
-        return;
-      }
-      list.innerHTML = comments.map((c) => {
-        // Текст с чужого сайта: экранируем всё, внешние ссылки не рендерим.
-        const body = String(c.body || '');
-        const shown = body.length > MAX_SRC_BODY
-          ? esc(body.slice(0, MAX_SRC_BODY)) + '…'
-          : esc(body);
-        const when = String(c.created_at || '').slice(0, 16).replace('T', ' ');
-        return '<div class="vc-item"><div class="vc-body">' +
-          '<div class="vc-meta">' + esc(c.author || '?') + (when ? ' · <time>' + esc(when) + '</time>' : '') + '</div>' +
-          '<div class="vc-text">' + shown + '</div></div></div>';
-      }).join('');
+      if (data.unsupported) this._srcUnsupported.add(site);
+      return {
+        site: data.site || site,
+        comments: data.comments || [],
+        count: data.count || 0,
+        cached: !!data.cached,
+        unsupported: !!data.unsupported,
+      };
     })
-    .catch(() => {
-      if (this._srcCommentsPostId !== postId) return;
-      list.innerHTML = '<div class="vc-empty">' + esc(t('srcComments.failed')) + '</div>';
-    })
-    .finally(() => {
-      buttons.forEach((b) => { b.disabled = false; b.removeAttribute('aria-busy'); });
-    });
+    .catch(() => ({ site, comments: [], count: 0, unsupported: false, error: true }));
 };

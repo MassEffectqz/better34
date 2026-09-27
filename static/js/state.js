@@ -47,7 +47,6 @@ export const App = {
       viewerTags: _('viewer-tags'), viewerProgress: _('viewer-progress'),
       relations: _('viewer-relations'),
       viewerComments: _('viewer-comments'),
-    viewerSourceComments: _('viewer-source-comments'),
       viewerDownload: _('viewer-download'), viewerFullscreen: _('viewer-fullscreen'),
       viewerMobileActions: _('viewer-mobile-actions'), viewerMobileToggle: _('viewer-mobile-toggle'),
       zoomIn: _('zoom-in'), zoomOut: _('zoom-out'), zoomFit: _('zoom-fit'), zoomLabel: _('zoom-label'),

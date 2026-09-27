@@ -618,10 +618,16 @@ select.ss-rate option{color:#111;background:#fff}
 .viewer-comments .vc-head{font-size:.78rem;font-weight:600;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
 .viewer-comments .vc-count{color:var(--accent)}
 .vc-list{display:flex;flex-direction:column;gap:8px;max-height:180px;overflow-y:auto;margin-bottom:8px}
-/* Комментарии источника: отдельная секция под локальным «Обсуждением». */
-.src-comments .vc-list:empty{display:none}
-.src-comments .vc-list{max-height:150px}
-.vc-src-actions{display:flex;gap:8px;flex-wrap:wrap}
+/* Комментарии источника слиты с локальными в один список: метка сайта
+   отличает чужие сообщения, кнопки загрузки живут в шапке панели. */
+.vc-src-actions{display:inline-flex;gap:6px;margin-left:8px;vertical-align:middle}
+.vc-note{font-size:.72rem;color:var(--text-dim);margin:2px 0 6px}
+.vc-item.src .vc-meta .vc-src-tag{
+  display:inline-flex;align-items:center;padding:0 5px;border-radius:7px;
+  background:var(--surface3);color:var(--text-dim);font-size:.62rem;
+  text-transform:uppercase;letter-spacing:.03em;cursor:help;
+}
+.vc-item.src .vc-text{color:var(--text-dim)}
 .src-comments-badge{display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 6px;border-radius:8px;background:rgba(0,0,0,.35);color:var(--accent);font-weight:600}
 .vc-empty{font-size:.8rem;color:var(--text-dim)}
 .vc-item{display:flex;gap:8px;align-items:flex-start}

@@ -147,12 +147,13 @@
       </div>
     </div>
     <div class="viewer-foot" id="viewer-foot">
-      <div id="viewer-comments" class="viewer-comments"></div>
-      <div id="viewer-source-comments" class="viewer-comments src-comments"></div>
       <div id="viewer-tags" class="viewer-tags"></div>
       <div id="viewer-related" class="viewer-related hidden"></div>
 
       <div id="viewer-progress" class="viewer-progress"></div>
+      <!-- Обсуждение (локальные + комментарии источника) — самым низом,
+           чтобы не вытеснять теги и связанные посты вверх по панели. -->
+      <div id="viewer-comments" class="viewer-comments"></div>
     </div>
     <div class="viewer-mobile-actions" id="viewer-mobile-actions">
       <button class="viewer-mobile-toggle" id="viewer-mobile-toggle" title="Свернуть панель" data-i18n-title="viewer.mobileToggle" aria-label="Свернуть/развернуть панель" data-i18n-aria="viewer.mobileToggleAria"><i data-lucide="chevronDown" data-size="12"></i></button>

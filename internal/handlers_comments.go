@@ -91,14 +91,19 @@ func (h *Handler) GetSourceComments(c *gin.Context) {
 		return
 	}
 	refresh := c.Query("refresh") == "1"
+	// cached=1 — строго из кэша: клиент открывает пост и не хочет стучаться
+	// к бору за каждым просмотром. Ответ без кэша — пустой, но не «unsupported»:
+	// о том, поддерживает ли сайт комментарии, мы узнаём только сходив.
+	cachedOnly := c.Query("cached") == "1"
 
 	// 1) Кэш.
 	if !refresh {
 		comments, count, fetchedAt, ready := db.SourceCommentState(postID, site)
-		if ready {
+		if ready || cachedOnly {
 			c.JSON(http.StatusOK, gin.H{
 				"site": site, "comments": comments, "count": count,
 				"fetched_at": fetchedAt, "cached": true, "unsupported": false,
+				"has_cache": ready,
 			})
 			return
 		}

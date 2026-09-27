@@ -1,10 +1,12 @@
 // source_comments_ui.test.js — комментарии источника (dapi s=comment):
 //  * определение сайта по хосту медиа (у постов из ленты post.source пуст);
 //  * условие показа бейджа (has_comments из выдачи / счётчик из кэша);
-//  * состояния вьюера: неизвестный источник, unsupported, пусто, список;
-//  * текст с чужого сайта экранируется (XSS) и обрезается.
+//  * слой загрузки отдаёт данные и не трогает DOM;
+//  * слияние с локальными комментариями в один список, сортировка по времени,
+//    XSS-экранирование и обрезка текста с чужого сайта.
 import { App } from '../state.js';
 import '../source_comments.js';
+import '../social.js';
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
@@ -92,76 +94,120 @@ check('без бейджа: ни флага, ни счётчика', a.hasSource
 check('без бейджа: пост пустой', a.hasSourceComments({}) === false);
 check('без бейджа: null', a.hasSourceComments(null) === false);
 
-// ── 3. Неизвестный источник ────────────────────────────────────────────────
-const host = node();
-a.els = { viewerSourceComments: host };
-a.state = { viewerOpen: true };
-a.renderSourceComments({ id: 5, file_url: 'https://example.org/5.jpg' });
-// Сообщение «источник неизвестен» живёт в списке секции, а не в её шапке.
-const noSrcList = host.querySelector('#vc-src-list');
-check('неизвестный источник: понятный текст',
-  /неизвестен источник|Unknown post source/i.test(noSrcList.innerHTML), noSrcList.innerHTML.slice(0, 140));
-check('неизвестный источник: кнопка загрузки скрыта',
-  host.querySelector('#vc-src-load').classList.contains('hidden'),
-  [...host.querySelector('#vc-src-load').cls].join(','));
+// ── 3. Слой загрузки: данные, а не DOM ─────────────────────────────────────
+(async () => {
+const api = { get: () => Promise.resolve({ site: 'hypnohub', count: 1, cached: true,
+  comments: [{ id: 1, author: 'a', body: 'b', created_at: '2026-09-27 00:08' }] }) };
+a.API = api;
+let d = await a.loadSourceComments(5, 'hypnohub', {});
+check('слой загрузки отдаёт комментарии', d.comments.length === 1 && d.count === 1, JSON.stringify(d));
+check('слой загрузки не трогает DOM', typeof d.html === 'undefined');
 
-// ── 4. Загрузка: URL, unsupported, пусто, список, XSS, обрезка ────────────
-function withList(response) {
-  const box = node();
-  const l = node();
-  l.parentElement = box;
-  const calls = [];
-  a.state = { viewerOpen: true };
-  a._srcCommentsPostId = 5;
-  a.API = { get: (u) => { calls.push(u); return Promise.resolve(response); } };
-  return { box, l, calls, done: a.loadSourceComments.call(a, 5, 'hypnohub', { list: l }) };
+// Пустой сайт — сразу unsupported, без похода в сеть.
+let hit = 0;
+a.API = { get: () => { hit++; return Promise.resolve({}); } };
+d = await a.loadSourceComments(5, '', {});
+check('пустой сайт: unsupported без запроса', d.unsupported === true && hit === 0, 'hit=' + hit);
+
+// Сайт ответил «не поддерживает» — запоминаем и второй раз не идём на него.
+a._srcUnsupported = new Set();
+a.API = { get: () => { hit++; return Promise.resolve({ unsupported: true }); } };
+hit = 0;
+d = await a.loadSourceComments(5, 'gelbooru', {});
+check('unsupported: помечен в ответе', d.unsupported === true, JSON.stringify(d));
+check('unsupported: сайт запомнен', a._srcUnsupported.has('gelbooru'), [...a._srcUnsupported].join(','));
+hit = 0;
+d = await a.loadSourceComments(5, 'gelbooru', { cachedOnly: true });
+check('unsupported: повторно не опрашиваем', hit === 0, 'hit=' + hit);
+
+// Сбой сети не должен ронять панель: возвращаем error, а не исключение.
+a._srcUnsupported = new Set();
+a.API = { get: () => Promise.reject(new Error('offline')) };
+d = await a.loadSourceComments(5, 'hypnohub', {});
+check('ошибка сети: error вместо исключения', d.error === true && d.comments.length === 0, JSON.stringify(d));
+
+// Явный refresh помечается в URL — иначе «обновить» ничего не делал бы.
+const urls = [];
+a.API = { get: (u) => { urls.push(u); return Promise.resolve({ site: 'hypnohub', comments: [] }); } };
+await a.loadSourceComments(5, 'hypnohub', {});
+await a.loadSourceComments(5, 'hypnohub', { refresh: true });
+check('refresh=1 только по кнопке «обновить»',
+  !/refresh=1/.test(urls[0]) && /refresh=1/.test(urls[1]), urls.join(' | '));
+check('в запросе есть site и source_id',
+  /site=hypnohub/.test(urls[0]) && /source_id=5/.test(urls[0]), urls[0]);
+// Пассивная загрузка при открытии поста просит только кэш.
+await a.loadSourceComments(5, 'hypnohub', { cachedOnly: true });
+check('cached=1 при открытии поста', /cached=1/.test(urls[2]), urls[2]);
+
+// ── 4. Слияние локальных и комментариев источника в один список ────────────
+// renderMergedComments рисует в #vc-list; собираем узлы-приёмники заранее.
+function mergeView(local, src, site) {
+  const list = node();
+  const count = node();
+  const note = node();
+  note.classList = { toggle() {}, add() {}, remove() {} };
+  document.getElementById = (id) => ({ 'vc-list': list, 'vc-count': count, 'vc-src-note': note }[id] || null);
+  a.state = { viewerOpen: true, user: { username: 'me' } };
+  a._commentsSite = site;
+  a._localComments = local;
+  a._sourceComments = src;
+  a._sourceNote = '';
+  a.confirmDialog = () => Promise.resolve(true);
+  a.renderMergedComments();
+  return { list, count, note };
 }
 
-(async () => {
-  const r1 = withList({ unsupported: true, site: 'gelbooru', comments: [] });
-  await r1.done;
-  check('unsupported: понятный текст, без списка',
-    /не отдаёт комментарии|does not expose comments/i.test(r1.l.innerHTML), r1.l.innerHTML.slice(0, 140));
-  check('URL содержит site и source_id',
-    /site=hypnohub/.test(r1.calls[0]) && /source_id=5/.test(r1.calls[0]), r1.calls[0]);
-  check('без refresh по умолчанию', !/refresh=1/.test(r1.calls[0]), r1.calls[0]);
+let v = mergeView(
+  [{ id: 1, username: 'me', text: 'мой локальный', created_at: '2026-09-27T10:00:00Z' }],
+  [{ id: 2, author: 'bob', body: 'с бура', created_at: '2026-09-27 09:00' }],
+  'hypnohub'
+);
+check('слияние: оба комментария в одном списке',
+  (v.list.innerHTML.match(/vc-item/g) || []).length === 2, v.list.innerHTML.slice(0, 200));
+check('слияние: счётчик суммарный', v.count.textContent === '(2)', v.count.textContent);
+check('слияние: сортировка по времени (сначала ранний)',
+  v.list.innerHTML.indexOf('с бура') < v.list.innerHTML.indexOf('мой локальный'),
+  v.list.innerHTML.slice(0, 240));
+check('слияние: у комментария источника есть метка сайта',
+  /vc-src-tag[^>]*>hypnohub</.test(v.list.innerHTML), v.list.innerHTML.slice(0, 240));
+check('слияние: у своего комментария есть кнопка удаления',
+  v.list.innerHTML.includes('data-cid="1"'), v.list.innerHTML.slice(0, 240));
+check('слияние: у чужого комментария удаления нет',
+  !v.list.innerHTML.includes('data-cid="2"'), v.list.innerHTML.slice(0, 240));
 
-  const r2 = withList({ site: 'hypnohub', count: 0, comments: [] });
-  await r2.done;
-  check('пусто: сообщение «нет комментариев»',
-    /комментариев нет|No comments/i.test(r2.l.innerHTML), r2.l.innerHTML.slice(0, 140));
+// Порядок при равных метках времени не должен прыгать между вызовами.
+const local2 = [
+  { id: 1, username: 'a', text: 'first', created_at: '2026-09-27T10:00:00Z' },
+  { id: 2, username: 'b', text: 'second', created_at: '2026-09-27T10:00:00Z' },
+];
+const same1 = mergeView(local2, [], 'hypnohub').list.innerHTML;
+const same2 = mergeView(local2, [], 'hypnohub').list.innerHTML;
+check('стабильный порядок при равных датах', same1 === same2);
 
-  const r3 = withList({
-    site: 'hypnohub',
-    count: 2,
-    comments: [
-      { id: 1, author: '<img src=x onerror=alert(1)>', body: 'ok', created_at: '2026-09-27 00:08' },
-      { id: 2, author: 'bob', body: 'y'.repeat(5000), created_at: '2026-09-27 00:09' },
-    ],
-  });
-  await r3.done;
-  check('список отрисован', (r3.l.innerHTML.match(/vc-item/g) || []).length === 2, r3.l.innerHTML.slice(0, 160));
-  check('XSS: тег не попал в DOM', !r3.l.innerHTML.includes('<img'), r3.l.innerHTML.slice(0, 200));
-  check('XSS: автор экранирован', r3.l.innerHTML.includes('&lt;img'), r3.l.innerHTML.slice(0, 200));
-  check('длинный текст обрезан', r3.l.innerHTML.includes('…') && !r3.l.innerHTML.includes('y'.repeat(2001)));
-  check('дата показана', r3.l.innerHTML.includes('2026-09-27 00:08'));
+// Только комментарии источника — список не должен считаться пустым.
+v = mergeView([], [{ id: 9, author: 'bob', body: 'только бур', created_at: '2026-09-27 09:00' }], 'hypnohub');
+check('только источник: список не пустой', /только бур/.test(v.list.innerHTML), v.list.innerHTML.slice(0, 200));
+check('только источник: счётчик 1', v.count.textContent === '(1)', v.count.textContent);
 
-  // refresh=1 уходит только по явной кнопке.
-  const r4 = withList({ site: 'hypnohub', count: 0, comments: [] });
-  const l4 = r4.l;
-  a.state = { viewerOpen: true };
-  a._srcCommentsPostId = 5;
-  a.API = { get: (u) => { r4.calls.push(u); return Promise.resolve({ site: 'hypnohub', comments: [] }); } };
-  await a.loadSourceComments.call(a, 5, 'hypnohub', { list: l4, refresh: true });
-  const last = r4.calls[r4.calls.length - 1];
-  check('refresh=1 по кнопке «обновить»', /refresh=1/.test(last), last);
+// Пусто везде — приглашение написать первый комментарий.
+v = mergeView([], [], 'hypnohub');
+check('пусто: приглашение написать', /будьте первым|be the first/i.test(v.list.innerHTML), v.list.innerHTML.slice(0, 140));
 
-  // Переключили пост — поздний ответ не должен перерисовывать панель.
-  const r5 = withList({ site: 'hypnohub', count: 1, comments: [{ id: 1, author: 'a', body: 'b' }] });
-  a._srcCommentsPostId = 6; // юзер ушёл на другой пост
-  await r5.done;
-  check('ответ для устаревшего поста игнорируется', !/vc-item/.test(r5.l.innerHTML), r5.l.innerHTML.slice(0, 120));
+// XSS и обрезка — на данных с чужого сайта.
+v = mergeView([], [
+  { id: 1, author: '<img src=x onerror=alert(1)>', body: 'ok', created_at: '2026-09-27 00:08' },
+  { id: 2, author: 'bob', body: 'y'.repeat(5000), created_at: '2026-09-27 00:09' },
+], 'hypnohub');
+check('XSS: тег автора не попал в DOM', !v.list.innerHTML.includes('<img'), v.list.innerHTML.slice(0, 200));
+check('XSS: автор эскапирован', v.list.innerHTML.includes('&lt;img'), v.list.innerHTML.slice(0, 200));
+check('длинный текст обрезан до лимита',
+  v.list.innerHTML.includes('…') && !v.list.innerHTML.includes('y'.repeat(2001)));
 
-  console.log(`\nИтог: ${passed} ok, ${failed} fail`);
-  if (failed) process.exit(1);
+// Заметка «источник не поддерживает» показывается только когда есть что сказать.
+a._sourceNote = '';
+v = mergeView([], [], 'hypnohub');
+check('без заметки note пуст', v.note.textContent === '');
+
+console.log(`\nИтог: ${passed} ok, ${failed} fail`);
+if (failed) process.exit(1);
 })();
