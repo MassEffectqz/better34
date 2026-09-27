@@ -11,9 +11,27 @@ const HIDE_DELAY = 260;    // даём время навестись на сам
 const CACHE_MAX = 60;      // сколько тегов держим в памяти
 
 App._tagCache = new Map();
+App._tagSourceCache = new Map();
+
+// _tagCachePut кладёт ответ в кэш, выкидывая самый старый: Map хранит ключи в
+// порядке вставки.
+App._tagCachePut = function (cache, key, val) {
+  cache.set(key, val);
+  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+  return val;
+};
+
+// tagRatingParam — тот же фильтр рейтинга, что у обычного поиска: превью с
+// бору не должно показывать то, что пользователь запретил показывать.
+const tagRatingParam = (app) =>
+  (app.state && app.state.ratingFilter) ? '&rating=' + encodeURIComponent(app.state.ratingFilter) : '';
 
 // fetchTagPreview с кэшем в памяти: повторные наведения на один тег (список
 // тегов поста, подсказки) не должны снова идти в сервер.
+//
+// Запрос строго локальный и быстрый. Превью с бору едет отдельным запросом
+// (fetchTagSourcePreview): раньше поиск в сети был частью этого ответа, и
+// наведение на любой тег без скачанных постов висело на нем секундами.
 App.fetchTagPreview = function (tag) {
   const key = String(tag || '').toLowerCase();
   if (!key) return Promise.resolve(null);
@@ -21,24 +39,27 @@ App.fetchTagPreview = function (tag) {
   if (hit) return Promise.resolve(hit);
   // this.API — точка подмены для тестов.
   const api = this.API || API;
+  const url = '/tags/' + encodeURIComponent(key) + '/preview?limit=6&related=8' + tagRatingParam(this);
+  return api.get(url, { fresh: true })
+    .then((d) => this._tagCachePut(this._tagCache, key, d))
+    .catch(() => null);
+};
+
+// fetchTagSourcePreview — превью с активного бору по тегу. Медленный сетевой
+// запрос, поэтому всплывашка не ждёт его: показывает локальную часть сразу и
+// доклеивает этот блок, когда он придёт.
+App.fetchTagSourcePreview = function (tag) {
+  const key = String(tag || '').toLowerCase();
+  if (!key) return Promise.resolve(null);
+  const hit = this._tagSourceCache.get(key);
+  if (hit) return Promise.resolve(hit);
   // Офлайн идти на бор бессмысленно: сервер всё равно ничего не достанет, а
   // лишний запрос только отложит пустую всплывашку.
-  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
-  // rating — тот же фильтр, что у обычного поиска: превью с бору не должно
-  // показывать то, что пользователь запретил показывать.
-  const rp = (this.state && this.state.ratingFilter) ? '&rating=' + encodeURIComponent(this.state.ratingFilter) : '';
-  const url = '/tags/' + encodeURIComponent(key) + '/preview?limit=6&related=8&source=' +
-    (online ? '1' : '0') + rp;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve(null);
+  const api = this.API || API;
+  const url = '/tags/' + encodeURIComponent(key) + '/source-preview?limit=6' + tagRatingParam(this);
   return api.get(url, { fresh: true })
-    .then((d) => {
-      this._tagCache.set(key, d);
-      if (this._tagCache.size > CACHE_MAX) {
-        // Map хранит ключи в порядке вставки — выкидаем самый старый.
-        const first = this._tagCache.keys().next().value;
-        this._tagCache.delete(first);
-      }
-      return d;
-    })
+    .then((d) => this._tagCachePut(this._tagSourceCache, key, d))
     .catch(() => null);
 };
 
@@ -52,8 +73,13 @@ App.ensureTagPopover = function () {
   document.body.appendChild(el);
   this._tagPop = el;
   el.addEventListener('click', (ev) => this.onTagPopoverClick(ev));
-  // Наведение на саму всплывашку отменяет отсроченное скрытие.
-  el.addEventListener('mouseenter', () => this._tagPopHideTimer && clearTimeout(this._tagPopHideTimer));
+  // Пока pointer над самой всплывашкой, уход с тега её не закрывает: курсор
+  // часто успевает уйти с тега раньше, чем всплывашка появится, и без этого
+  // подсказка мигала. Вернулся на тег — гасим отложенное скрытие.
+  el.addEventListener('mouseenter', () => {
+    this._tagPopHideTimer && clearTimeout(this._tagPopHideTimer);
+    this._tagPopHideTimer = null;
+  });
   el.addEventListener('mouseleave', () => this.scheduleHideTagPopover());
   return el;
 };
@@ -94,14 +120,36 @@ App.showTagPopover = function (tag, anchor) {
   el.classList.remove('hidden');
   el.innerHTML = '<div class="tag-pop-head">' + esc(String(tag)) + '…</div>';
   this._placeTagPopover(anchor);
-  this.fetchTagPreview(tag).then((d) => {
+  const paint = (d) => {
     // Пока грузили, могли навестись на другой тег или закрыть.
-    if (!d || this._tagPopAnchor !== anchor || !el.isConnected) return;
+    if (this._tagPopAnchor !== anchor || !el.isConnected) return;
     el.innerHTML = this.renderTagPopoverBody(d);
     // Обязательно пересчитываем позицию: заглушка «тег…» занимала ~30px, а
     // реальное содержимое с обложками и смежными тегами — в разы выше. Без
     // этого всплывашка уезжала за нижний край экрана.
     this._placeTagPopover(anchor);
+  };
+  this.fetchTagPreview(tag).then((d) => {
+    if (!d) {
+      // Ответ не пришёл (сеть, 500) — рисуем честную пустоту. Раньше здесь
+      // просто ничего не рисовалось, и подсказка навсегда оставалась «tag…».
+      paint({ tag: tag, count: 0, posts: [], related: [] });
+      return;
+    }
+    // Копия: d лежит в общем кэше, а пометка __searching — наша, личная.
+    const data = Object.assign({}, d);
+    const empty = !(data.posts || []).length;
+    data.__searching = empty;
+    paint(data);
+    if (!empty) return;
+    // На бор идём только там, где показывать нечего, и отдельным запросом:
+    // он занимает секунды, и в общем ответе он задерживал бы всю всплывашку.
+    this.fetchTagSourcePreview(tag).then((s) => {
+      if (!s || this._tagPopAnchor !== anchor) return;
+      data.__searching = false;
+      data.source = (s.posts || []).length ? s : { site: s.site, posts: [] };
+      paint(data);
+    });
   });
 };
 
@@ -138,7 +186,11 @@ App.renderTagPopoverBody = function (d) {
         ' <span class="tag-pop-src-note">' + esc(t('tagPreview.sourceNote')) + '</span></div>' +
         tagPopoverGrid(srcPosts, true)
       : '<div class="vc-empty">' + esc(
-        src ? tf('tagPreview.sourceEmpty', { site: src.site }) : t('tagPreview.noCovers')) + '</div>';
+        // Пока летит запрос на бор, пустое место занимает честная надпись:
+        // тишина выглядит как зависшая подсказка.
+        d.__searching ? t('tagPreview.searching')
+          : src ? tf('tagPreview.sourceEmpty', { site: src.site })
+            : t('tagPreview.noCovers')) + '</div>';
   const rel = (d.related || []).length
     ? '<div class="tag-pop-related-row"><span class="tag-pop-related-title">' +
       esc(t('tagPreview.related')) + '</span>' +
@@ -200,7 +252,14 @@ App.bindTagPopover = function () {
     this._tagPopTimer = setTimeout(() => this.showTagPopover(tag, el), HOVER_DELAY);
   };
   const leave = (ev) => {
-    const el = ev.target && ev.target.closest ? ev.target.closest('[data-tag]') : null;
+    const from = ev.target;
+    // Уход МЫШИ с самого тега — только если мы уходим наружу. Если цель или
+    // relatedTarget лежит внутри всплывашки, закрывать её рано: пользователь
+    // просто перевёл курсор с тега на обложку, и подсказка гасла у него под
+    // носом. Наружу от неё мы уходим через её собственный mouseleave.
+    const inPop = (n) => !!(n && n.closest && n.closest('.tag-popover'));
+    if (inPop(from) || inPop(ev.relatedTarget)) return;
+    const el = from && from.closest ? from.closest('[data-tag]') : null;
     if (!el) return;
     const to = ev.relatedTarget;
     if (to && el.contains && el.contains(to)) return;
@@ -219,8 +278,13 @@ App.bindTagPopover = function () {
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') this.hideTagPopover();
   });
-  // Скролл и ресайз ломают позицию — прячем, а не пересчитываем.
-  window.addEventListener('scroll', () => this.hideTagPopover(), true);
+  // Скролл и ресайз ломают позицию — прячем, а не пересчитываем. Скролл
+  // ВНУТРИ всплывашки (сетка обложек прокручивается) её не закрывает: событие
+  // всплывает до window, и раньше подсказка гасла ровно при долистывании.
+  window.addEventListener('scroll', (ev) => {
+    if (ev.target && ev.target.closest && ev.target.closest('.tag-popover')) return;
+    this.hideTagPopover();
+  }, true);
   window.addEventListener('resize', () => this.hideTagPopover());
 };
 

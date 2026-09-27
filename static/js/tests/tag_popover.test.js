@@ -41,12 +41,20 @@ console.log('Всплывашка тега: превью и смежные\n');
 
 const a = Object.create(App);
 a._tagCache = new Map();
+a._tagSourceCache = new Map();
 a._tagPop = null;
 const urls = [];
 a.API = { get: (u) => {
   urls.push(u);
+  const isSrc = /source-preview\?/.test(u);
   const tag = decodeURIComponent(/preview\?/.test(u) ? /\/tags\/([^/]+)\//.exec(u)[1] : '');
   if (tag === 'broken') return Promise.reject(new Error('offline'));
+  if (isSrc) {
+    return Promise.resolve({
+      site: 'rule34', query: tag, count: 1,
+      posts: [{ id: 91, thumb: '/api/proxy?url=x&kind=preview', width: 100, height: 100, site: 'rule34' }],
+    });
+  }
   return Promise.resolve({
     tag,
     count: 128,
@@ -63,12 +71,25 @@ a.API = { get: (u) => {
   check('счётчик и обложки получены', d.count === 128 && d.posts.length === 2, JSON.stringify(d && d.count));
   check('URL содержит тег, limit и related',
     /tags\/blue_hair\/preview/.test(urls[0]) && /limit=6/.test(urls[0]) && /related=8/.test(urls[0]), urls[0]);
-  check('URL просит превью с источника', /source=1/.test(urls[0]), urls[0]);
+  // Быстрый запрос не должен ходить на бор: иначе наведение на тег без
+  // скачанных постов висело бы на сетевом поиске.
+  check('быстрый запрос не трогает источник', !/source-preview/.test(urls[0]), urls[0]);
 
-  // Повторный запрос того же тега — из кэша, без похода в сервер.
+  // Превью с бору — отдельный запрос и отдельный кэш.
+  const src = await a.fetchTagSourcePreview('blue_hair');
+  check('источник: свой эндпоинт и обложки с сайта',
+    /source-preview/.test(urls[1]) && src.site === 'rule34' && src.posts.length === 1, urls[1]);
+  await a.fetchTagSourcePreview('BLUE_HAIR');
+  check('кэш источника: повторов нет', urls.filter((u) => /source-preview/.test(u)).length === 1,
+    'calls=' + urls.length);
+  check('сбой источника → null', (await a.fetchTagSourcePreview('broken')) === null);
+
+  // Повторный запрос того же тега — из кэша, без похода в сервер. Считаем
+  // именно быстрые запросы: источник проверяется отдельно.
+  const localCalls = () => urls.filter((u) => !/source-preview/.test(u)).length;
   await a.fetchTagPreview('blue_hair');
   await a.fetchTagPreview('BLUE_HAIR');
-  check('кэш: регистр не важен, повторов нет', urls.length === 1, 'calls=' + urls.length);
+  check('кэш: регистр не важен, повторов нет', localCalls() === 1, 'calls=' + localCalls());
 
   // Сбой сети не должен ломать наведение — просто null.
   d = await a.fetchTagPreview('broken');
@@ -159,6 +180,44 @@ a.API = { get: (u) => {
   await new Promise((r) => setTimeout(r, 0));
   check('позиция пересчитана после прихода данных', places === 2, 'places=' + places);
   check('всплывашка наполнена содержимым', /data-post="1"/.test(pop.innerHTML), pop.innerHTML.slice(0, 120));
+
+  // Два этапа: в библиотеке пусто → показываем «ищу», потом доклеиваем блок с
+  // бору. Раньше всё ехало одним запросом, и подсказка висела пустой.
+  let srcResolve = null;
+  a.fetchTagPreview = function () {
+    return Promise.resolve({ tag: 'lonely', count: 0, posts: [], related: [] });
+  };
+  a.fetchTagSourcePreview = function () {
+    return new Promise((r) => { srcResolve = r; });
+  };
+  a.showTagPopover('lonely', anchor);
+  await new Promise((r) => setTimeout(r, 0));
+  check('пусто в библиотеке: видно, что идёт поиск',
+    /Ищу|Searching/i.test(pop.innerHTML), pop.innerHTML.slice(0, 160));
+  check('пусто в библиотеке: сетки обложек нет', !/data-post=/.test(pop.innerHTML), pop.innerHTML.slice(0, 160));
+  srcResolve({ site: 'rule34', posts: [{ id: 91, thumb: '/api/proxy?url=x&kind=preview', width: 1, height: 1, site: 'rule34' }] });
+  await new Promise((r) => setTimeout(r, 0));
+  check('ответ с бору доклеен в ту же всплывашку',
+    /data-post="91"/.test(pop.innerHTML) && /rule34/.test(pop.innerHTML), pop.innerHTML.slice(0, 200));
+  check('надпись «ищу» исчезла', !/Ищу|Searching/i.test(pop.innerHTML), pop.innerHTML.slice(0, 200));
+
+  // Упавший быстрый запрос: показываем пустоту, а не вечное «tag…».
+  a.fetchTagPreview = function () { return Promise.resolve(null); };
+  a.fetchTagSourcePreview = function () { return Promise.resolve(null); };
+  a.showTagPopover('dead', anchor);
+  await new Promise((r) => setTimeout(r, 0));
+  check('упавший запрос: понятная пустота вместо вечного «tag…»',
+    !/tag…/.test(pop.innerHTML) && /нет скачанных|No downloaded/i.test(pop.innerHTML),
+    pop.innerHTML.slice(0, 200));
+
+  // Служебная пометка не должна попасть в общий кэш: он общий для всех
+  // последующих показов того же тега.
+  const cached = { tag: 'cached', count: 0, posts: [], related: [] };
+  a.fetchTagPreview = function () { return Promise.resolve(cached); };
+  a.fetchTagSourcePreview = function () { return Promise.resolve(null); };
+  a.showTagPopover('cached', anchor);
+  await new Promise((r) => setTimeout(r, 0));
+  check('кэш не заражается служебной пометкой', cached.__searching === undefined, String(cached.__searching));
 
   console.log(`\nИтог: ${passed} ok, ${failed} fail`);
   if (failed) process.exit(1);

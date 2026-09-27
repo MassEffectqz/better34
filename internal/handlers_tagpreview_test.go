@@ -80,6 +80,7 @@ func setupTagPreviewRouterProv(t *testing.T, prov Provider) (*httptest.Server, *
 	r := gin.New()
 	api := r.Group("/api")
 	api.GET("/tags/:tag/preview", h.TagPreview)
+	api.GET("/tags/:tag/source-preview", h.TagSourcePreview)
 	ts := httptest.NewServer(r)
 	t.Cleanup(ts.Close)
 	return ts, db
@@ -95,6 +96,22 @@ func fetchTagPreview(t *testing.T, ts *httptest.Server, path string) (TagPreview
 	var out TagPreview
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
+	}
+	return out, resp.StatusCode
+}
+
+func fetchTagSource(t *testing.T, ts *httptest.Server, path string) (TagSourcePreview, int) {
+	t.Helper()
+	resp, err := http.Get(ts.URL + path)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	var out TagSourcePreview
+	if resp.StatusCode == http.StatusOK {
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
 	}
 	return out, resp.StatusCode
 }
@@ -202,7 +219,7 @@ func (s *stubTagProvider) SearchPosts(tags string, page, limit, minID int) ([]Ru
 	return s.posts[:limit], nil
 }
 
-func TestTagPreviewFallsBackToSourceWhenLibraryEmpty(t *testing.T) {
+func TestTagSourcePreviewFallsBackWhenLibraryEmpty(t *testing.T) {
 	sp := &stubTagProvider{name: "rule34", posts: []Rule34Post{
 		{ID: 101, Tags: "cloudy_sky solo", FileURL: "https://i/101.jpg",
 			PreviewURL: "https://i/101.jpg", Width: 800, Height: 600, FileType: "image/jpeg"},
@@ -214,24 +231,18 @@ func TestTagPreviewFallsBackToSourceWhenLibraryEmpty(t *testing.T) {
 			SampleURL: "https://i/103s.jpg", Width: 100, Height: 100},
 	}}
 	ts, db := setupTagPreviewRouterProv(t, sp)
-	got, code := fetchTagPreview(t, ts, "/api/tags/cloudy_sky/preview")
+	got, code := fetchTagSource(t, ts, "/api/tags/cloudy_sky/source-preview")
 	if code != http.StatusOK {
 		t.Fatalf("status=%d", code)
 	}
-	if got.Count != 0 || len(got.Posts) != 0 {
-		t.Fatalf("библиотека должна остаться пустой, получили %+v", got)
-	}
-	if got.Source == nil {
-		t.Fatal("ожидался блок source с превью с бору")
-	}
-	if got.Source.Site != "rule34" || got.Source.Query != "cloudy_sky" {
-		t.Errorf("site/query=%q/%q", got.Source.Site, got.Source.Query)
+	if got.Site != "rule34" || got.Query != "cloudy_sky" {
+		t.Errorf("site/query=%q/%q", got.Site, got.Query)
 	}
 	// 102 без превью в сетку не попадает — показывать нечего.
-	if len(got.Source.Posts) != 2 || got.Source.Count != 2 {
-		t.Fatalf("source covers=%d count=%d, want 2/2", len(got.Source.Posts), got.Source.Count)
+	if len(got.Posts) != 2 || got.Count != 2 {
+		t.Fatalf("source covers=%d count=%d, want 2/2", len(got.Posts), got.Count)
 	}
-	first := got.Source.Posts[0]
+	first := got.Posts[0]
 	if !strings.HasPrefix(first.Thumb, "/api/proxy?url=") || !strings.Contains(first.Thumb, "kind=preview") {
 		t.Errorf("обложка должна идти через прокси, получили %q", first.Thumb)
 	}
@@ -259,45 +270,29 @@ func TestTagPreviewFallsBackToSourceWhenLibraryEmpty(t *testing.T) {
 	}
 }
 
-func TestTagPreviewSkipsSourceWhenLibraryHasCovers(t *testing.T) {
+// Главное разделение: быстрый /preview не ходит на бор НИКОГДА. Иначе наведение
+// на любой тег без скачанных постов ждало бы сетевого поиска целиком.
+func TestTagPreviewNeverHitsSource(t *testing.T) {
 	sp := &stubTagProvider{name: "rule34", posts: []Rule34Post{{ID: 201, PreviewURL: "https://i/201.jpg"}}}
 	ts, _ := setupTagPreviewRouterProv(t, sp)
-	got, _ := fetchTagPreview(t, ts, "/api/tags/blue_hair/preview")
-	// blue_hair есть у скачанных постов 1, 2, 3, 5 — библиотеку показываем.
-	if len(got.Posts) == 0 {
-		t.Fatal("ожидались локальные обложки")
+	for _, tag := range []string{"blue_hair", "cloudy_sky", "nosuchtag"} {
+		if _, code := fetchTagPreview(t, ts, "/api/tags/"+tag+"/preview"); code != http.StatusOK {
+			t.Fatalf("preview %s: status=%d", tag, code)
+		}
 	}
 	if sp.calls != 0 {
-		t.Errorf("при непустой библиотеке источник трогать нельзя, вызовов %d", sp.calls)
-	}
-	if got.Source != nil {
-		t.Errorf("source не нужен при непустой библиотеке: %+v", got.Source)
+		t.Errorf("быстрый превью опросил источник %d раз, want 0", sp.calls)
 	}
 }
 
-func TestTagPreviewSourceDisabled(t *testing.T) {
-	sp := &stubTagProvider{name: "rule34", posts: []Rule34Post{{ID: 301, PreviewURL: "https://i/301.jpg"}}}
-	ts, _ := setupTagPreviewRouterProv(t, sp)
-	got, code := fetchTagPreview(t, ts, "/api/tags/cloudy_sky/preview?source=0")
-	if code != http.StatusOK {
-		t.Fatalf("status=%d", code)
-	}
-	if got.Source != nil || sp.calls != 0 {
-		t.Errorf("source=0 обязан отключить поиск: source=%+v calls=%d", got.Source, sp.calls)
-	}
-}
-
-// Сеть/лимит: лучше честное «в библиотеке пусто», чем ложное «на бору ничего
-// не нашлось» — пользователь решил бы, что тега не существует.
-func TestTagPreviewSourceErrorStaysSilent(t *testing.T) {
+// Сбой источника — 502, а не пустой список: клиент обязан отличать «на бору
+// ничего нет» от «бор недоступен», иначе пользователь решит, что тега нет.
+func TestTagSourcePreviewErrorIsBadGateway(t *testing.T) {
 	sp := &stubTagProvider{name: "rule34", err: errors.New("timeout")}
 	ts, _ := setupTagPreviewRouterProv(t, sp)
-	got, code := fetchTagPreview(t, ts, "/api/tags/cloudy_sky/preview")
-	if code != http.StatusOK {
-		t.Fatalf("сбой источника не должен ломать превью: status=%d", code)
-	}
-	if got.Source != nil {
-		t.Errorf("при ошибке источника блок source показывать нельзя: %+v", got.Source)
+	_, code := fetchTagSource(t, ts, "/api/tags/cloudy_sky/source-preview")
+	if code != http.StatusBadGateway {
+		t.Errorf("код=%d, want 502", code)
 	}
 	if sp.calls != 1 {
 		t.Errorf("вызовов источника %d, want 1", sp.calls)
@@ -325,12 +320,9 @@ func TestTagPreviewSourceRespectsRatingFilter(t *testing.T) {
 		{ID: 403, Rating: "general", PreviewURL: "https://i/403.jpg"},
 	}
 	ts, _ := setupTagPreviewRouterProv(t, &stubTagProvider{name: "rule34", posts: posts})
-	got, _ := fetchTagPreview(t, ts, "/api/tags/x/preview?rating=sfw")
-	if got.Source == nil {
-		t.Fatal("ожидался source")
-	}
-	ids := make([]int, 0, len(got.Source.Posts))
-	for _, p := range got.Source.Posts {
+	got, _ := fetchTagSource(t, ts, "/api/tags/x/source-preview?rating=sfw")
+	ids := make([]int, 0, len(got.Posts))
+	for _, p := range got.Posts {
 		ids = append(ids, p.ID)
 	}
 	if len(ids) != 1 || ids[0] != 403 {
@@ -339,8 +331,8 @@ func TestTagPreviewSourceRespectsRatingFilter(t *testing.T) {
 
 	// Без фильтра показываем всё, что вернул бор.
 	ts2, _ := setupTagPreviewRouterProv(t, &stubTagProvider{name: "rule34", posts: posts})
-	got2, _ := fetchTagPreview(t, ts2, "/api/tags/x/preview")
-	if got2.Source == nil || len(got2.Source.Posts) != 3 {
-		t.Errorf("без фильтра ждём все 3 поста, получили %+v", got2.Source)
+	got2, _ := fetchTagSource(t, ts2, "/api/tags/x/source-preview")
+	if len(got2.Posts) != 3 {
+		t.Errorf("без фильтра ждём все 3 поста, получили %+v", got2.Posts)
 	}
 }

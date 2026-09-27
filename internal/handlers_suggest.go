@@ -357,9 +357,29 @@ func (h *Handler) TagPreview(c *gin.Context) {
 	if relLimit > 0 {
 		out.Related = GetDB().RelatedTags(tag, relLimit)
 	}
-	// Сначала библиотека; на бур идём, только если её нечего показать.
-	if len(out.Posts) == 0 && c.Query("source") != "0" {
-		out.Source = h.sourceTagPreview(tag, limit, c.Query("rating"))
+	c.JSON(http.StatusOK, out)
+}
+
+// GET /api/tags/:tag/source-preview?limit=6&rating=sfw
+//
+// Превью с бору для тега, которого нет в библиотеке. Отдельный эндпоинт
+// намеренно: поиск в сети занимает секунды, и в общем ответе он задерживал
+// бы всплывашку целиком. Сбой источника — 502, а не пустой список: клиент
+// должен отличать «на бору ничего нет» от «бор недоступен».
+func (h *Handler) TagSourcePreview(c *gin.Context) {
+	tag := normalizeTagParam(c.Param("tag"))
+	if tag == "" {
+		AbortWithError(c, ErrInvalidRequest)
+		return
+	}
+	limit := 6
+	if n, err := strconv.Atoi(c.Query("limit")); err == nil && n > 0 && n <= 12 {
+		limit = n
+	}
+	out := h.sourceTagPreview(tag, limit, c.Query("rating"))
+	if out == nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "source_unavailable"})
+		return
 	}
 	c.JSON(http.StatusOK, out)
 }
