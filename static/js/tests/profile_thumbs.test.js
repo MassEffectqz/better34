@@ -5,6 +5,9 @@
 //  * мульти-выбор и пакетные действия.
 import { App } from '../state.js';
 import { API } from '../api.js';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import '../profile.js';
 
 let passed = 0, failed = 0;
@@ -132,6 +135,26 @@ function makeApp() {
 }
 
 console.log('Профиль: лайки/скрытые — фильтры, сортировка, действия, выбор\n');
+
+// ── 0. Сетка не схлопывается ─────────────────────────────────────────────
+// У плитки ВСЕ дети (картинка, заглушка, бейджи, панель действий) стоят
+// position:absolute, поэтому высоту даёт только aspect-ratio. JS ставит его из
+// размеров поста, но лишь когда размеры пришли; у постов без width/height база
+// обязана остаться в CSS, иначе плитка сжимается в полоску, а картинка
+// обрезается в ноль — сетка выглядит сломанной.
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+  const css = fs.readFileSync(join(here, '..', '..', 'css', 'style.css'), 'utf8');
+  const rule = (sel) => {
+    const i = css.indexOf('\n' + sel);
+    return i < 0 ? '' : css.slice(i, css.indexOf('}', i));
+  };
+  const thumb = rule('.pf-thumb{');
+  const skel = rule('.pf-thumb-skeleton{');
+  check('плитка имеет aspect-ratio по умолчанию', /aspect-ratio:\s*3\/4/.test(thumb), thumb.slice(0, 140));
+  check('скелетон и плитка в одних пропорциях',
+    /aspect-ratio:\s*3\/4/.test(thumb) && /aspect-ratio:\s*3\/4/.test(skel), skel.slice(0, 140));
+}
 // ── 1. Фильтры ────────────────────────────────────────────────────────────
 {
   const a = makeApp();
