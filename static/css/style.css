@@ -1,4 +1,4 @@
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+п*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#0f0f0f;--surface:#1a1a1a;--surface2:#242424;--surface3:#2e2e2e;--hover:#353535;--border:#333;--text:#d4d4d4;--text-dim:#9c9c9c;--text-bright:#f0f0f0;--accent:#a78bfa;--accent-dim:#7c5cbf;--success:#34d399;--error:#f87171;--radius:8px;--radius-sm:4px;--shadow:0 4px 24px rgba(0,0,0,.6);--transition:200ms ease;--font-xs:0.75rem;--font-sm:0.875rem;--font-base:1rem;--font-lg:1.125rem;--font-xl:1.25rem;--font-2xl:1.5rem;--z-base:0;--z-dropdown:100;--z-sticky:200;--z-overlay:300;--z-modal:400;--z-toast:500;--z-tooltip:600;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--duration-fast:100ms;--duration-normal:200ms;--ease-out:cubic-bezier(0,0,0.2,1);--odd-yellow:#eab308;--odd-red:#ef4444;font-size:14px}
 [data-theme="light"]{--bg:#f5f5f5;--surface:#fff;--surface2:#eee;--surface3:#ddd;--hover:#e0e0e0;--border:#ccc;--text:#222;--text-dim:#666;--text-bright:#000;--accent:#7c3aed;--accent-dim:#5b21b6;--success:#059669;--error:#dc2626;--shadow:0 4px 24px rgba(0,0,0,.15);--odd-yellow:#a16207;--odd-red:#dc2626}
 [data-theme="deep"]{--bg:#000;--surface:#0b0b0b;--surface2:#131313;--surface3:#1c1c1c;--hover:#222;--border:#222;--text:#cecece;--text-dim:#8c8c8c;--text-bright:#eaeaea;--accent:#a78bfa;--accent-dim:#7c5cbf;--success:#34d399;--error:#f87171;--shadow:0 4px 24px rgba(0,0,0,.8)}
@@ -631,13 +631,16 @@ select.ss-rate option{color:#111;background:#fff}
 .src-comments-badge{display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 6px;border-radius:8px;background:rgba(0,0,0,.35);color:var(--accent);font-weight:600}
 /* Всплывашка тега: счётчик постов, обложки и смежные теги. */
 .tag-popover{
-  position:fixed;z-index:400;width:300px;
+  position:fixed;z-index:var(--z-tooltip);width:300px;
   /* Всплывашка не должна вылезать за экран: по высоте ограничиваемся окном
      и даём внутреннюю прокрутку, по ширине — тоже (узкие экраны). */
   max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow-y:auto;
   overscroll-behavior:contain;
-  background:var(--surface1);border:1px solid var(--border);border-radius:var(--radius-md);
-  box-shadow:0 8px 28px rgba(0,0,0,.35);padding:10px;
+  /* Непрозрачный фон: --surface2, как у выпадающих списков подсказок.
+     Раньше стоял несуществующий --surface1, и блок оставался вовсе без фона. */
+  background:var(--surface2);
+  border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:0 10px 30px rgba(0,0,0,.5);padding:10px;
 }
 .tag-popover.hidden{display:none}
 .tag-pop-head{font-weight:600;font-size:.82rem;word-break:break-all;margin-bottom:8px}
@@ -655,8 +658,8 @@ select.ss-rate option{color:#111;background:#fff}
 .tag-pop-related-n{opacity:.65;margin-left:3px}
 /* Баннер «нет сети»: показываем, что приложение работает из кэша. */
 .offline-banner{
-  position:fixed;top:0;left:0;right:0;z-index:500;
-  background:var(--warning,#8a6d1f);color:#fff;font-size:.78rem;
+  position:fixed;top:0;left:0;right:0;z-index:var(--z-sticky);
+  background:var(--odd-yellow);color:#1a1a1a;font-size:.78rem;
   padding:5px 12px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.25);
 }
 .offline-banner.hidden{display:none}
