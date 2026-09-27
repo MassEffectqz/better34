@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -302,14 +303,28 @@ type TagPreview struct {
 	Count   int               `json:"count"`
 	Posts   []*TagPreviewPost `json:"posts"`
 	Related []*TagRelated     `json:"related"`
+	// Source — что нашлось на бору, если в библиотеке по тегу пусто.
+	Source *TagSourcePreview `json:"source,omitempty"`
 }
 
 // TagPreviewPost — обложка поста в мини-сетке превью.
 type TagPreviewPost struct {
-	ID    int    `json:"id"`
-	Thumb string `json:"thumb"`
-	W     int    `json:"width"`
-	H     int    `json:"height"`
+	ID         int    `json:"id"`
+	Thumb      string `json:"thumb"`
+	W          int    `json:"width"`
+	H          int    `json:"height"`
+	Downloaded bool   `json:"downloaded"` // false → превью с источника
+	Site       string `json:"site,omitempty"`
+}
+
+// TagSourcePreview — результат поиска тега на активном источнике. Показываем
+// его, только если в библиотеке по тегу ничего нет, и честно помечаем, что
+// это не скачанные посты.
+type TagSourcePreview struct {
+	Site  string            `json:"site"`
+	Query string            `json:"query"`
+	Count int               `json:"count"`
+	Posts []*TagPreviewPost `json:"posts"`
 }
 
 // TagRelated — смежный тег с числом совместных постов.
@@ -318,7 +333,11 @@ type TagRelated struct {
 	Count int    `json:"count"`
 }
 
-// GET /api/tags/:tag/preview?limit=6&related=8
+// GET /api/tags/:tag/preview?limit=6&related=8&source=0
+//
+// source=0 запрещает поиск на бору (для офлайна и тестов). По умолчанию,
+// если в библиотеке по тегу нет ни одной обложки, подтягиваем превью с
+// активного источника — иначе всплывашка упиралась бы в «ничего нет».
 func (h *Handler) TagPreview(c *gin.Context) {
 	tag := normalizeTagParam(c.Param("tag"))
 	if tag == "" {
@@ -338,7 +357,87 @@ func (h *Handler) TagPreview(c *gin.Context) {
 	if relLimit > 0 {
 		out.Related = GetDB().RelatedTags(tag, relLimit)
 	}
+	// Сначала библиотека; на бур идём, только если её нечего показать.
+	if len(out.Posts) == 0 && c.Query("source") != "0" {
+		out.Source = h.sourceTagPreview(tag, limit, c.Query("rating"))
+	}
 	c.JSON(http.StatusOK, out)
+}
+
+// sourceTagPreview ищет тег на активном источнике. Найденные посты
+// записываем в БД метаданными — иначе по клику открыть их нечем (пост-by-ids
+// смотрит в базу, а без строки вьюер не покажет теги), и поиск по такой строке
+// потом найдёт их локально. Сами файлы не скачиваются.
+func (h *Handler) sourceTagPreview(tag string, limit int, ratingMode string) *TagSourcePreview {
+	prov := h.provider()
+	if prov == nil {
+		return nil
+	}
+	out := &TagSourcePreview{Site: prov.Name(), Query: tag}
+	// Фильтр рейтинга — тот же, что у обычного поиска: превью не должно
+	// показывать то, что пользователь запретил показывать.
+	ratingTerms, ratingExcl := ratingFilter(ratingMode)
+	query := tag
+	if len(ratingTerms) > 0 {
+		query = strings.Join(ratingTerms, " ") + " " + tag
+	}
+	posts, err := prov.SearchPosts(query, 1, limit, 0)
+	if err != nil {
+		// Сеть/лимит: показывать «ничего не нашлось» было бы враньём —
+		// отдаём nil, и всплывашка честно скажет, что в библиотеке пусто.
+		log.Printf("tag preview: поиск %q на %s не удался: %v", tag, prov.Name(), err)
+		return nil
+	}
+	if len(ratingExcl) > 0 {
+		// Сайт мог обрезать хвост запроса — досчищаем локально, как это делает
+		// хендлер поиска. Нам хватает первых limit постов, а не полной страницы.
+		kept := make([]Rule34Post, 0, len(posts))
+		for _, p := range posts {
+			if !ratingExcl[strings.ToLower(p.Rating)] {
+				kept = append(kept, p)
+			}
+		}
+		posts = kept
+	}
+	if len(posts) == 0 {
+		return out
+	}
+	upserts := make([]*Post, 0, len(posts))
+	out.Posts = make([]*TagPreviewPost, 0, limit)
+	for i := range posts {
+		p := &posts[i]
+		upserts = append(upserts, &Post{
+			ID: p.ID, Tags: p.Tags, FileURL: p.FileURL, PreviewURL: p.PreviewURL,
+			FileType: p.FileType, Width: p.Width, Height: p.Height,
+			FileSize: p.FileSize, Score: p.Score, Rating: p.Rating,
+			MD5: p.Hash, Source: prov.Name(),
+		})
+		thumb := sourcePreviewURL(p)
+		if thumb == "" {
+			continue // без превью показывать нечего
+		}
+		out.Posts = append(out.Posts, &TagPreviewPost{
+			ID: p.ID, Thumb: thumb, W: p.Width, H: p.Height, Site: prov.Name(),
+		})
+	}
+	if len(upserts) > 0 {
+		GetDB().UpsertMetaMany(upserts)
+	}
+	out.Count = len(out.Posts)
+	return out
+}
+
+// sourcePreviewURL — превью с бура через прокси, как в ленте для
+// нескачанных постов (наш /api/thumb отдаёт только для скачанных).
+func sourcePreviewURL(p *Rule34Post) string {
+	u := p.PreviewURL
+	if u == "" {
+		u = p.SampleURL
+	}
+	if u == "" {
+		return ""
+	}
+	return "/api/proxy?url=" + url.QueryEscape(u) + "&kind=preview"
 }
 
 // normalizeTagParam приводит тег к каноническому виду: теги хранятся

@@ -21,7 +21,15 @@ App.fetchTagPreview = function (tag) {
   if (hit) return Promise.resolve(hit);
   // this.API — точка подмены для тестов.
   const api = this.API || API;
-  return api.get('/tags/' + encodeURIComponent(key) + '/preview?limit=6&related=8', { fresh: true })
+  // Офлайн идти на бор бессмысленно: сервер всё равно ничего не достанет, а
+  // лишний запрос только отложит пустую всплывашку.
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+  // rating — тот же фильтр, что у обычного поиска: превью с бору не должно
+  // показывать то, что пользователь запретил показывать.
+  const rp = (this.state && this.state.ratingFilter) ? '&rating=' + encodeURIComponent(this.state.ratingFilter) : '';
+  const url = '/tags/' + encodeURIComponent(key) + '/preview?limit=6&related=8&source=' +
+    (online ? '1' : '0') + rp;
+  return api.get(url, { fresh: true })
     .then((d) => {
       this._tagCache.set(key, d);
       if (this._tagCache.size > CACHE_MAX) {
@@ -97,20 +105,40 @@ App.showTagPopover = function (tag, anchor) {
   });
 };
 
+// tagPopoverGrid — мини-сетка обложек. fromSource=true для превью с бура:
+// такой пост не скачан, подпись и рамка другие, но он кликабелен — по клику
+// открывается во вьюере (метаданные сервер уже записал в БД).
+const tagPopoverGrid = (posts, fromSource) =>
+  '<div class="tag-pop-covers' + (fromSource ? ' tag-pop-covers-src' : '') + '">' +
+  posts.map((p) => {
+    // У скачанных обложка ведёт на /api/thumb/:id (её кэширует SW, т.е. есть
+    // офлайн), у найденных на бору — прямо на превью через прокси.
+    const ar = p.width && p.height ? ' style="aspect-ratio:' + p.width + '/' + p.height + '"' : '';
+    const title = fromSource
+      ? t('tagPreview.sourceOpen', { id: p.id, site: p.site || '' })
+      : t('tagPreview.openPost', { id: p.id });
+    return '<button type="button" class="tag-pop-cover" data-post="' + p.id + '"' + ar +
+      ' title="' + esc(title) + '">' +
+      (p.thumb ? '<img loading="lazy" decoding="async" alt="" src="' + esc(p.thumb) + '">' : '') +
+      '</button>';
+  }).join('') + '</div>';
+
 App.renderTagPopoverBody = function (d) {
   const head = '<div class="tag-pop-head">' + esc(d.tag) +
     (d.count ? ' <span class="tag-pop-count">' + esc(tf('tagPreview.posts', { n: d.count })) + '</span>' : '') +
     '</div>';
+  // Показываем библиотеку; если по тегу у нас ничего нет — то, что нашлось
+  // на бору, с честной пометкой, что это не скачанные посты.
+  const src = d.source || null;
+  const srcPosts = (src && src.posts) || [];
   const covers = (d.posts || []).length
-    ? '<div class="tag-pop-covers">' + d.posts.map((p) => {
-      // Обложка — наш /api/thumb/:id (его же кэширует SW, т.е. есть офлайн).
-      const ar = p.width && p.height ? ' style="aspect-ratio:' + p.width + '/' + p.height + '"' : '';
-      return '<button type="button" class="tag-pop-cover" data-post="' + p.id + '"' + ar +
-        ' title="' + esc(t('tagPreview.openPost', { id: p.id })) + '">' +
-        (p.thumb ? '<img loading="lazy" decoding="async" alt="" src="' + esc(p.thumb) + '">' : '') +
-        '</button>';
-    }).join('') + '</div>'
-    : '<div class="vc-empty">' + esc(t('tagPreview.noCovers')) + '</div>';
+    ? tagPopoverGrid(d.posts, false)
+    : srcPosts.length
+      ? '<div class="tag-pop-src-title">' + esc(tf('tagPreview.sourceTitle', { site: src.site })) +
+        ' <span class="tag-pop-src-note">' + esc(t('tagPreview.sourceNote')) + '</span></div>' +
+        tagPopoverGrid(srcPosts, true)
+      : '<div class="vc-empty">' + esc(
+        src ? tf('tagPreview.sourceEmpty', { site: src.site }) : t('tagPreview.noCovers')) + '</div>';
   const rel = (d.related || []).length
     ? '<div class="tag-pop-related-row"><span class="tag-pop-related-title">' +
       esc(t('tagPreview.related')) + '</span>' +

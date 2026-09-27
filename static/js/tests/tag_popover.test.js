@@ -63,6 +63,7 @@ a.API = { get: (u) => {
   check('счётчик и обложки получены', d.count === 128 && d.posts.length === 2, JSON.stringify(d && d.count));
   check('URL содержит тег, limit и related',
     /tags\/blue_hair\/preview/.test(urls[0]) && /limit=6/.test(urls[0]) && /related=8/.test(urls[0]), urls[0]);
+  check('URL просит превью с источника', /source=1/.test(urls[0]), urls[0]);
 
   // Повторный запрос того же тега — из кэша, без похода в сервер.
   await a.fetchTagPreview('blue_hair');
@@ -88,6 +89,39 @@ a.API = { get: (u) => {
   const empty = a.renderTagPopoverBody({ tag: 'nothing', count: 0, posts: [], related: [] });
   check('пусто: понятный текст, нет мусора',
     /нет скачанных|No downloaded/i.test(empty) && !/undefined/.test(empty), empty.slice(0, 160));
+
+  // Пусто в библиотеке, но бор что-то нашёл: показываем превью с источника.
+  const fromSrc = a.renderTagPopoverBody({
+    tag: 'cloudy_sky', count: 0, posts: [], related: [],
+    source: {
+      site: 'rule34', query: 'cloudy_sky', count: 2,
+      posts: [
+        { id: 101, thumb: '/api/proxy?url=https%3A%2F%2Fi%2F101.jpg&kind=preview', width: 800, height: 600, site: 'rule34' },
+        { id: 102, thumb: '/api/proxy?url=https%3A%2F%2Fi%2F102.jpg&kind=preview', width: 600, height: 800, site: 'rule34' },
+      ],
+    },
+  });
+  check('источник: видно, с какого сайта и что не скачано',
+    /rule34/.test(fromSrc) && /не скачано|not downloaded/i.test(fromSrc), fromSrc.slice(0, 200));
+  check('источник: обложки кликабельны и несут id',
+    /data-post="101"/.test(fromSrc) && /data-post="102"/.test(fromSrc), fromSrc.slice(0, 300));
+  check('источник: сетка помечена как нескачанная', /tag-pop-covers-src/.test(fromSrc), fromSrc.slice(0, 200));
+  check('источник: локальная пустота не показывается',
+    !/нет скачанных|No downloaded/i.test(fromSrc), fromSrc.slice(0, 200));
+
+  // Бор ответил, но по тегу у него тоже ничего нет — говорим про это прямо.
+  const srcNone = a.renderTagPopoverBody({
+    tag: 'rare_tag', count: 0, posts: [], related: [], source: { site: 'rule34', count: 0, posts: [] },
+  });
+  check('источник пуст: сообщаем про бор, а не про библиотеку',
+    /rule34/.test(srcNone) && !/нет скачанных/i.test(srcNone), srcNone.slice(0, 200));
+
+  // Имя сайта приходит с сервера — экранируем.
+  const srcEvil = a.renderTagPopoverBody({
+    tag: 'x', count: 0, posts: [], related: [],
+    source: { site: '"><script>alert(3)</script>', count: 1, posts: [{ id: 1, thumb: '/x.jpg' }] },
+  });
+  check('XSS: сайт экранирован', !srcEvil.includes('<script>'), srcEvil.slice(0, 200));
 
   // XSS: значения с сервера экранируются.
   const evil = a.renderTagPopoverBody({
