@@ -432,6 +432,10 @@ App.loadMoreThumbs = async function (type) {
     if (s.token !== token) return;
     const posts = (data && data.posts) || [];
     const found = new Set(posts.map(p => p.id).filter(Number.isFinite));
+    // Посты, о которых источник НЕ ОТВЕТИЛ (сеть/лимит). Это не «поста нет»:
+    // такие не кладём в s.missing, иначе одна сетевая ошибка навсегда
+    // закрепила бы живой пост как недоступный — до перезагрузки страницы.
+    const unresolved = new Set((data && data.unresolved) || []);
     posts.forEach(p => s.posts.push(p));
     s.loaded = next;
     const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
@@ -440,11 +444,15 @@ App.loadMoreThumbs = async function (type) {
     // Старые лайки, которых уже нет ни в локальной БД, ни на источнике:
     // показываем заглушку «недоступен», чтобы было видно, что id учитывался.
     const already = new Set(s.missing || []);
-    const missing = ids.filter(id => !found.has(id) && !already.has(id));
+    const missing = ids.filter(id => !found.has(id) && !unresolved.has(id) && !already.has(id));
     if (missing.length) {
       s.missing = [...(s.missing || []), ...missing];
       this._appendMissingThumbs(el, missing, type);
     }
+    // Непроверенные — с кнопкой повтора: когда сеть вернётся, их можно
+    // переспросить, не перезагружая вкладку.
+    const retryable = ids.filter(id => unresolved.has(id) && !already.has(id));
+    if (retryable.length) this._appendUnresolvedThumbs(el, retryable, type);
     this._updateThumbMore(type);
   } catch (err) {
     if (s.token === token && moreBtn) { moreBtn.disabled = false; moreBtn.textContent = t('pf.retry'); }
@@ -588,6 +596,71 @@ App._appendMissingThumbs = function (el, ids, type) {
   });
   el.appendChild(frag);
   if (s) this._applyThumbOpts(type);
+};
+
+// Заглушки для id, о которых источник не ответил (сеть/лимит). В отличие от
+// «недоступен» это НЕ приговор посту, поэтому здесь кнопка повтора: когда сеть
+// вернётся, переспрашиваем ровно эти id.
+App._appendUnresolvedThumbs = function (el, ids, type) {
+  if (!el || !ids || !ids.length) return;
+  const s = this._thumbs && this._thumbs[type];
+  const frag = document.createDocumentFragment();
+  ids.forEach(id => {
+    const tile = document.createElement('div');
+    tile.className = 'pf-thumb pf-unresolved';
+    tile.title = tf('pf.unresolvedTile', { id });
+    tile._pfPost = { id, unresolved: true };
+    tile.dataset.pfId = String(id);
+    const fb = document.createElement('div');
+    fb.className = 'pf-fallback';
+    fb.textContent = tf('pf.unresolvedTile', { id });
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pf-retry';
+    btn.dataset.retryThumbs = String(id);
+    btn.dataset.retryType = type;
+    btn.textContent = t('pf.retryCheck');
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      this.retryUnresolvedThumbs(type, id);
+    });
+    tile.appendChild(fb);
+    tile.appendChild(btn);
+    if (s && s.tiles) s.tiles.push(tile);
+    frag.appendChild(tile);
+  });
+  el.appendChild(frag);
+  if (s) this._applyThumbOpts(type);
+};
+
+// retryUnresolvedThumbs переспрашивает у источника один id и, если тот ответил,
+// заменяет заглушку настоящей плиткой.
+App.retryUnresolvedThumbs = async function (type, id) {
+  const s = this._thumbs && this._thumbs[type];
+  const num = Number(id);
+  if (!s || !Number.isFinite(num)) return;
+  if (s.retrying && s.retrying.has(num)) return;
+  s.retrying = s.retrying || new Set();
+  s.retrying.add(num);
+  try {
+    const data = await API.get(`/posts-by-ids?ids=${num}`);
+    const post = ((data && data.posts) || []).find(p => p && p.id === num);
+    if (!post) return; // по-прежнему нет ответа — заглушка остаётся
+    s.posts.push(post);
+    const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
+    if (!el) return;
+    const stale = (s.tiles || []).find(tile => tile._pfPost && tile._pfPost.unresolved && Number(tile.dataset.pfId) === num);
+    if (stale) {
+      stale.remove();
+      s.tiles = (s.tiles || []).filter(tile => tile !== stale);
+    }
+    this._appendThumbs(el, [post], type);
+    if (s.missing) s.missing = s.missing.filter(x => Number(x) !== num);
+  } catch {
+    // сеть по-прежнему недоступна — заглушка с кнопкой остаётся на месте
+  } finally {
+    s.retrying.delete(num);
+  }
 };
 
 App._appendThumbs = function (el, posts, type) {

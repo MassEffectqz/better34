@@ -614,6 +614,11 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 		}
 	}
 
+	// id, которые спросили у источника и не смогли получить ПО ВИНЕ САМОГО
+	// ИСТОЧНИКА (сеть, лимит, ошибка). Их нельзя молча терять: клиент вкладок
+	// «Лайки»/«Скрытые» трактует отсутствие в ответе как «поста больше нет» и
+	// зовёт живой пост недоступным. Отдаём отдельно.
+	unresolved := make([]int, 0, 8)
 	if len(apiIDs) > 0 {
 		prov := h.provider()
 		tryUpsert := func(p Rule34Post) {
@@ -673,6 +678,8 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				}
 				posts, e := prov.SearchPosts("id:"+strings.Join(idTags, ","), 1, len(batch), 0)
 				if e != nil {
+					// Источник не ответил — это не «постов нет», см. unresolved выше.
+					unresolved = append(unresolved, batch...)
 					continue
 				}
 				for _, p := range posts {
@@ -697,6 +704,9 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 					defer func() { <-sem }()
 					posts, e := prov.SearchPosts(prefix+strconv.Itoa(id), 1, 1, 0)
 					if e != nil {
+						mu.Lock()
+						unresolved = append(unresolved, id)
+						mu.Unlock()
 						return
 					}
 					for _, p := range posts {
@@ -724,10 +734,12 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 	// ленты: неотданные с CDN превью лягут в proxy-cache заранее.
 	go warmPreviewCache(h, enriched)
 
+	slices.Sort(unresolved)
 	c.JSON(http.StatusOK, gin.H{
-		"posts": enriched,
-		"page":  1,
-		"limit": len(enriched),
+		"posts":      enriched,
+		"page":       1,
+		"limit":      len(enriched),
+		"unresolved": unresolved,
 	})
 }
 
