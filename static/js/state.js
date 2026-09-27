@@ -1111,7 +1111,7 @@ export const App = {
     if (idx < 0) {
       const posts = await this._fetchPostsByIds([postId]);
       const post = posts.find(p => p && p.id === postId);
-      if (!post) { this.showToast(`Пост #${postId} недоступен`, 'error'); return false; }
+      if (!post) { this.showToast(tf('viewer.postUnavailable', { id: postId }), 'error'); return false; }
       idx = this.state.posts.push({ ...post, _index: this.state.posts.length }) - 1;
     }
     this.openViewer(idx);

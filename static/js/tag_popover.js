@@ -4,7 +4,7 @@
 import { App } from './state.js';
 import { esc } from './utils.js';
 import { API } from './api.js';
-import { t, tf } from './i18n.js';
+import { t, tf, tp } from './i18n.js';
 
 const HOVER_DELAY = 220;   // не мелькаем, пока курсор скользит по списку
 const HIDE_DELAY = 260;    // даём время навестись на саму всплывашку
@@ -31,7 +31,10 @@ const tagRatingParam = (app) =>
 // а получал из кэша обложки, отфильтрованные по старому правилу. Для превью с
 // бору это тем более неверно.
 const tagCacheKey = (app, tag) =>
-  String(tag || '').toLowerCase() + '|' + ((app.state && app.state.ratingFilter) || '');
+  String(tag || '').toLowerCase() + '|' + ((app.state && app.state.ratingFilter) || '') +
+  // Источник: переключили бор — превью с прошлого сайта показывать нельзя,
+  // у них даже подпись с чужим именем.
+  '|' + ((app.state && app.state.activeProvider) || '');
 
 // fetchTagPreview с кэшем в памяти: повторные наведения на один тег (список
 // тегов поста, подсказки) не должны снова идти в сервер.
@@ -160,6 +163,13 @@ App.showTagPopover = function (tag, anchor) {
   const paint = (d) => {
     // Пока грузили, могли навестись на другой тег или закрыть.
     if (this._tagPopAnchor !== anchor || !el.isConnected) return;
+    // Тег-якорь мог исчезнуть из DOM (лента перерисовалась, вьюер закрыли).
+    // Дорисовывать содержимое для несуществующего элемента бессмысленно:
+    // подсказка осталась бы висеть в произвольной точке экрана.
+    if (!anchor.isConnected) {
+      this.hideTagPopover();
+      return;
+    }
     el.innerHTML = this.renderTagPopoverBody(d);
     // Обязательно пересчитываем позицию: заглушка «тег…» занимала ~30px, а
     // реальное содержимое с обложками и смежными тегами — в разы выше. Без
@@ -212,7 +222,7 @@ const tagPopoverGrid = (posts, fromSource) =>
 
 App.renderTagPopoverBody = function (d) {
   const head = '<div class="tag-pop-head">' + esc(d.tag) +
-    (d.count ? ' <span class="tag-pop-count">' + esc(tf('tagPreview.posts', { n: d.count })) + '</span>' : '') +
+    (d.count ? ' <span class="tag-pop-count">' + esc(tp('tagPreview.posts', d.count)) + '</span>' : '') +
     '</div>';
   // Показываем библиотеку; если по тегу у нас ничего нет — то, что нашлось
   // на бору, с честной пометкой, что это не скачанные посты.
@@ -234,7 +244,7 @@ App.renderTagPopoverBody = function (d) {
     ? '<div class="tag-pop-related-row"><span class="tag-pop-related-title">' +
       esc(t('tagPreview.related')) + '</span>' +
       d.related.map((r) => '<button type="button" class="tag-pop-related" data-tag="' + esc(r.tag) + '">' +
-        esc(r.tag) + ' <span class="tag-pop-related-n">' + r.count + '</span></button>').join('') +
+        esc(r.tag) + ' <span class="tag-pop-related-n">' + esc(r.count) + '</span></button>').join('') +
       '</div>'
     : '';
   return head + covers + rel;
@@ -321,9 +331,13 @@ App.bindTagPopover = function () {
   document.addEventListener('focusin', (ev) => show(ev.target), true);
   document.addEventListener('mouseout', leave, true);
   document.addEventListener('focusout', leave, true);
-  // Клик по самому тегу (переход к поиску) и Esc закрывают всплывашку.
+  // Клик вне всплывашки закрывает её. Раньше закрытие висело на клике по тегу:
+  // на тач-устройствах mouseout не приходит вовсе, и подсказка могла остаться
+  // висеть до перезагрузки. Клик по самой всплывашке не трогаем — там своя
+  // обработка (обложка/чип), она и закрывает.
   document.addEventListener('click', (ev) => {
-    if (ev.target && ev.target.closest && ev.target.closest('[data-tag]')) this.hideTagPopover();
+    const el = ev.target && ev.target.closest ? ev.target.closest('.tag-popover') : null;
+    if (!el) this.hideTagPopover();
   }, true);
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') this.hideTagPopover();

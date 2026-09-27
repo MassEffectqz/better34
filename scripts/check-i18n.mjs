@@ -34,6 +34,16 @@ for (const f of files) {
   const code = readFileSync(f, 'utf8');
   const rel = f.slice(root.length + 1).replace(/\\/g, '/');
   for (const m of code.matchAll(/(?:^|[^\w.$])t(?:f)?\(\s*'([\w.]+)'/g)) add(m[1], rel);
+  // tp('k', n) — числовые формы. Ключи 'k1'/'k2'/'k5' собираются внутри tp()
+  // конкатенацией, поэтому статический разбор их не видит. Регистрируем явно:
+  // так опечатка в имени формы всё равно даст NO SUCH KEY, а не «неиспользуемый
+  // ключ» в белом списке.
+  for (const m of code.matchAll(/(?:^|[^\w.$])tp\(\s*'([\w.]+)'/g)) {
+    // Базового ключа в словаре нет — есть только три формы.
+    add(m[1] + '1', rel);
+    add(m[1] + '2', rel);
+    add(m[1] + '5', rel);
+  }
   // T('k', fallback) — локальный алиас t() в классических скриптах
   // (sw-register.js подключается без module и берёт словарь из window).
   for (const m of code.matchAll(/(?:^|[^\w.$])T\(\s*'([\w.]+)'/g)) add(m[1], rel);

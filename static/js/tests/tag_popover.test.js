@@ -325,6 +325,32 @@ a.API = { get: (u) => {
   check('лента не тронута', a.state.posts.length === 2 && a.state.page === 5,
     JSON.stringify(a.state.posts));
 
+  // Клик где угодно вне всплывашки закрывает её: на таче нет mouseout, иначе
+  // подсказка залипала бы до перезагрузки.
+  const outside = { closest: (s) => (s === '.tag-popover' ? null : outside) };
+  const inside = { closest: (s) => (s === '.tag-popover' ? inside : null) };
+  a.hideTagPopover = function () { this._tagPopAnchor = null; };
+  handlers.click[0]({ target: outside });
+  check('клик вне подсказки закрывает её', a._tagPopAnchor === null);
+  a._tagPopAnchor = { isConnected: true };
+  handlers.click[0]({ target: inside });
+  check('клик по самой подсказке не рвёт обработку', a._tagPopAnchor !== null);
+  delete a.hideTagPopover;
+
+  // Числовые формы: «1 постов» — ошибка, должно быть «1 пост».
+  check('форма 1 пост', /1 пост/.test(a.renderTagPopoverBody({ tag: 'x', count: 1, posts: [], related: [] })),
+    a.renderTagPopoverBody({ tag: 'x', count: 1, posts: [], related: [] }).slice(0, 80));
+  check('форма 2 поста', /2 поста/.test(a.renderTagPopoverBody({ tag: 'x', count: 2, posts: [], related: [] })));
+  check('форма 5 постов', /5 постов/.test(a.renderTagPopoverBody({ tag: 'x', count: 5, posts: [], related: [] })));
+  check('форма 21 пост', /21 пост/.test(a.renderTagPopoverBody({ tag: 'x', count: 21, posts: [], related: [] })));
+  check('форма 112 постов', /112 постов/.test(a.renderTagPopoverBody({ tag: 'x', count: 112, posts: [], related: [] })));
+
+  // Счётчик соседей экранируется, как и всё остальное из ответа сервера.
+  const evilCount = a.renderTagPopoverBody({
+    tag: 'x', count: 1, posts: [], related: [{ tag: 'smile', count: '"><b>1' }],
+  });
+  check('XSS: счётчик соседей экранирован', !evilCount.includes('<b>1'), evilCount.slice(0, 240));
+
   console.log(`\nИтог: ${passed} ok, ${failed} fail`);
   if (failed) process.exit(1);
 })();

@@ -182,6 +182,7 @@ const RU = {
   'viewer.pressX': 'нажми X для скачивания',
   'viewer.slideshow': 'Слайдшоу',
   'viewer.postOf': 'Пост {i} из {n}',
+  'viewer.postUnavailable': 'Пост #{id} недоступен',
   'viewer.relatedTitle': 'Похожие по тегам',
   'viewer.relatedEmpty': 'Похожих по тегам не нашлось',
   'viewer.relatedError': 'Не удалось загрузить похожие',
@@ -396,7 +397,9 @@ const RU = {
   'srcComments.failed': 'Не удалось загрузить комментарии источника',
   'srcComments.refresh': 'Обновить',
   'srcComments.badge': 'Есть комментарии на источнике',
-  'tagPreview.posts': '{n} постов',
+  'tagPreview.posts1': '{n} пост',
+  'tagPreview.posts2': '{n} поста',
+  'tagPreview.posts5': '{n} постов',
   'tagPreview.openPost': 'Открыть пост #{id}',
   'tagPreview.noCovers': 'В библиотеке нет скачанных постов с этим тегом',
   'tagPreview.related': 'Рядом с этим:',
@@ -695,6 +698,7 @@ const EN = {
   'viewer.pressX': 'press X to download',
   'viewer.slideshow': 'Slideshow',
   'viewer.postOf': 'Post {i} of {n}',
+  'viewer.postUnavailable': 'Post #{id} is unavailable',
   'viewer.relatedTitle': 'Similar by tags',
   'viewer.relatedEmpty': 'No similar posts by tags',
   'viewer.relatedError': 'Failed to load similar posts',
@@ -909,7 +913,9 @@ const EN = {
   'srcComments.failed': 'Could not load source comments',
   'srcComments.refresh': 'Refresh',
   'srcComments.badge': 'Has comments on the source',
-  'tagPreview.posts': '{n} posts',
+  'tagPreview.posts1': '{n} post',
+  'tagPreview.posts2': '{n} posts',
+  'tagPreview.posts5': '{n} posts',
   'tagPreview.openPost': 'Open post #{id}',
   'tagPreview.noCovers': 'No downloaded posts with this tag',
   'tagPreview.related': 'Often with:',
@@ -1054,6 +1060,25 @@ function tf(key, params) {
   return t(key, params);
 }
 
+/**
+ * Числовые формы: 1 пост / 2 поста / 5 постов. Ключ хранит три формы с
+ * суффиксами 1/2/5 (1 пост, 2 поста, 5 постов). Английский не различает, у
+ * него формы совпадают, поэтому подставляется любая.
+ * @param {string} base базовый ключ, например 'tagPreview.posts'
+ * @param {number} n
+ * @returns {string}
+ */
+function tp(base, n) {
+  const num = Math.abs(Number(n) || 0);
+  const hundreds = num % 100;
+  const units = num % 10;
+  let form = '5';
+  if (hundreds > 10 && hundreds < 20) form = '5';
+  else if (units === 1) form = '1';
+  else if (units >= 2 && units <= 4) form = '2';
+  return t(`${base}${form}`, { n: n });
+}
+
 function applyI18n(root) {
   const host = root || document;
   host.querySelectorAll('[data-i18n]').forEach(el => {
@@ -1086,4 +1111,4 @@ function setLang(next) {
   window.dispatchEvent(new CustomEvent('briefly-lang', { detail: lang }));
 }
 
-export { t, tf, getLang, setLang, applyI18n };
+export { t, tf, tp, getLang, setLang, applyI18n };
