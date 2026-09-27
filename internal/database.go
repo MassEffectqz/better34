@@ -1351,6 +1351,11 @@ func (db *PostDB) TagPreviewPosts(tag string, limit int) (int, []*TagPreviewPost
 			ID: id, Thumb: "/api/thumb/" + strconv.Itoa(id), W: w, H: h,
 		})
 	}
+	// Обрыв на середине (SQLite отдаёт Err, а Next просто false) — отдаём
+	// что успели, но не молчим: иначе потеря обложек неотличима от «их нет».
+	if err := rows.Err(); err != nil {
+		log.Printf("tag preview: чтение обложек прервано: %v", err)
+	}
 	return count, out
 }
 
@@ -1389,6 +1394,9 @@ func (db *PostDB) RelatedTags(tag string, limit int) []*TagRelated {
 		}
 		cands = append(cands, c)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("related tags: чтение кандидатов прервано: %v", err)
+	}
 	rows.Close()
 
 	// Знаменатель — посты, у которых вообще есть теги: по нему считаем, насколько
@@ -1418,6 +1426,9 @@ func (db *PostDB) RelatedTags(tag string, limit int) []*TagRelated {
 					break
 				}
 				freq[tg] = n
+			}
+			if err := frows.Err(); err != nil {
+				log.Printf("related tags: чтение частот прервано: %v", err)
 			}
 			frows.Close()
 		}
@@ -1575,6 +1586,11 @@ func (db *PostDB) SourceCommentsForPost(postID int, site string) ([]*SourceComme
 			return out, true
 		}
 		out = append(out, c)
+	}
+	// Обрыв на середине: список может быть неполным, а второй результат
+	// (true) кэширует его как достоверный — логируем, чтобы это было видно.
+	if err := rows.Err(); err != nil {
+		log.Printf("source comments %d/%s: чтение прервано: %v", postID, site, err)
 	}
 	return out, true
 }
