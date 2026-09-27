@@ -440,7 +440,7 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
           this.state.hasMore = true;
           usedCache = true;
           this.ensureColumns();
-          const hiddenIds = new Set(this.state.profile.hidden_posts || []);
+          const hiddenIds = new Set(/** @type {number[]} */ (this.state.profile.hidden_posts || []));
           const hiddenTags = this.state.query
             ? (this.state.profile.hidden_tags || []).map(t => t.toLowerCase())
             : [];
@@ -541,7 +541,7 @@ App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh
     }
     this._viewedSkip = 0;
     const existingIds = new Set(this.state.posts.map(p => p.id));
-    const hiddenIds = new Set(this.state.profile.hidden_posts || []);
+    const hiddenIds = new Set(/** @type {number[]} */ (this.state.profile.hidden_posts || []));
     const hiddenTags = this.state.query
       ? (this.state.profile.hidden_tags || []).map(t => t.toLowerCase())
       : [];
@@ -976,7 +976,8 @@ App.updateCardCommentsBadge = function (post) {
   if (!card) return;
   const n = post.comment_count || 0;
   if (!n) return;
-  let el = card.querySelector('.src-comments-badge');
+  // querySelector отдаёт Element: сужаем до HTMLElement, иначе .title недоступен.
+  let el = /** @type {HTMLElement|null} */ (card.querySelector('.src-comments-badge'));
   if (!el) {
     // Бейдж не рисовали, когда флага не было: дорисовываем в то же место,
     // что и при создании карточки.
@@ -989,7 +990,7 @@ App.updateCardCommentsBadge = function (post) {
     el.appendChild(iconToNode(icon('messageSquare', 12)));
     badge.appendChild(el);
   }
-  let num = el.querySelector('.src-comments-n');
+  let num = /** @type {HTMLElement|null} */ (el.querySelector('.src-comments-n'));
   if (!num) {
     num = document.createElement('span');
     num.className = 'src-comments-n';
@@ -1002,7 +1003,7 @@ App.renderPosts = function () {
   if (!this.state.posts.length) return;
   let display = [...this.state.posts];
   if (this.state.displayMode === 'search') {
-    const hiddenIds = new Set(this.state.profile.hidden_posts || []);
+    const hiddenIds = new Set(/** @type {number[]} */ (this.state.profile.hidden_posts || []));
     display = display.filter(p => !hiddenIds.has(p.id));
     const sortBy = this.state.sortBy;
     if (sortBy === 'popularity' || sortBy === 'score') display.sort((a, b) => (b.score || 0) - (a.score || 0));

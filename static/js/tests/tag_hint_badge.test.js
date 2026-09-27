@@ -34,7 +34,7 @@ globalThis.document = {
   getElementById() { return null; },
   createElement() {
     return {
-      style: {}, classList: makeClassList(), children: [], attrs: {},
+      style: {}, classList: makeClassList(), children: [], attrs: {}, dataset: {},
       innerHTML: '', textContent: '', title: '',
       appendChild(c) { this.children.push(c); },
       setAttribute(k, v) { this.attrs[k] = v; },

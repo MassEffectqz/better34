@@ -308,6 +308,8 @@ App._renderViewerTags = function () {
     // тег выглядит как обычный, но с подсказкой.
     span.className = 'viewer-tag' + (isFav(tag) ? ' tag-fav' : '') + (isHid(tag) ? ' tag-hidden' : '') + (isQ(tag) ? ' tag-query' : '') + (lvl === 'yellow' || lvl === 'red' ? ' tag-odd-' + lvl : '');
     span._brieflyTag = tag;
+    // Всплывашка превью тега (tag_popover.js) цепляется к data-tag.
+    span.dataset.tag = tag;
     // A11y (#15): тег — интерактивный элемент: роль + фокус с клавиатуры.
     span.tabIndex = 0;
     try { span.setAttribute('role', 'button'); } catch { /* тестовый DOM без setAttribute */ }

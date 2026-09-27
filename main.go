@@ -109,6 +109,7 @@ func main() {
 		api.GET("/tag-counts", handler.GetTagCounts)
 		api.GET("/tag-stats", handler.GetLocalTagStats)
 		api.GET("/tags/popular", handler.GetPopularTags)
+		api.GET("/tags/:tag/preview", handler.TagPreview)
 		api.POST("/like/:id", handler.ToggleLike)
 		api.POST("/hide/:id", handler.ToggleHide)
 		api.GET("/profile", handler.GetProfileData)

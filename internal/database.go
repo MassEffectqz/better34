@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1316,6 +1317,133 @@ func (db *PostDB) suggestLocalQuery(pattern string, limit int, source string) []
 func (db *PostDB) AllTagsFreq() map[string]int {
 	return db.tagCounts(`SELECT tag, COUNT(*) FROM tags GROUP BY tag`, nil, 0)
 }
+
+// TagPreviewPosts отдаёт число постов с тегом и несколько обложек из них.
+// Считаем по всем постам в БД (выдача буров тоже попадает в tags), но обложки
+// отдаём только для скачанных — у остальных нет ни миниатюры, ни превью.
+// Порядок — по id по убыванию: свежие картинки интереснее старых.
+func (db *PostDB) TagPreviewPosts(tag string, limit int) (int, []*TagPreviewPost) {
+	if tag == "" || limit <= 0 {
+		return 0, nil
+	}
+	var count int
+	if err := db.read.QueryRow(`SELECT COUNT(*) FROM tags WHERE tag = ?`, tag).Scan(&count); err != nil {
+		return 0, nil
+	}
+	rows, err := db.read.Query(`
+		SELECT p.id, p.width, p.height
+		FROM tags t JOIN posts p ON p.id = t.post_id
+		WHERE t.tag = ? AND p.downloaded = 1
+		ORDER BY p.id DESC LIMIT ?`, tag, limit)
+	if err != nil {
+		return count, nil
+	}
+	defer rows.Close()
+	out := make([]*TagPreviewPost, 0, limit)
+	for rows.Next() {
+		var id, w, h int
+		if err := rows.Scan(&id, &w, &h); err != nil {
+			break
+		}
+		// Все строки уже отфильтрованы по downloaded=1, поэтому обложка — наша
+		// миниатюра. Она же кэшируется сервис-воркером, т.е. доступна офлайн.
+		out = append(out, &TagPreviewPost{
+			ID: id, Thumb: "/api/thumb/" + strconv.Itoa(id), W: w, H: h,
+		})
+	}
+	return count, out
+}
+
+// RelatedTags — теги, которые чаще всего встречаются вместе с tag.
+// Порядок по числу совместных постов: в своей библиотеке «самые частые
+// соседи» — это ровно то, что нужно для навигации (для 1girl это solo,
+// long_hair, smile…). Частоту соседа используем не для сортировки, а как
+// фильтр: тег, встречающийся почти во всех постах (highres, absurdres),
+// ничего не говорит о конкретном теге, поэтому его выбрасываем.
+func (db *PostDB) RelatedTags(tag string, limit int) []*TagRelated {
+	if tag == "" || limit <= 0 {
+		return nil
+	}
+	// Кандидаты: до 200 самых частых соседей (дешевле, чем считать по всем).
+	rows, err := db.read.Query(`
+		SELECT t2.tag, COUNT(DISTINCT t2.post_id) AS co
+		FROM tags t1
+		JOIN tags t2 ON t2.post_id = t1.post_id
+		WHERE t1.tag = ? AND t2.tag <> ?
+		GROUP BY t2.tag
+		ORDER BY co DESC, t2.tag
+		LIMIT 200`, tag, tag)
+	if err != nil {
+		return nil
+	}
+	type cand struct {
+		tag  string
+		co   int
+		freq int
+	}
+	cands := make([]cand, 0, 64)
+	for rows.Next() {
+		var c cand
+		if err := rows.Scan(&c.tag, &c.co); err != nil {
+			break
+		}
+		cands = append(cands, c)
+	}
+	rows.Close()
+
+	// Знаменатель — посты, у которых вообще есть теги: по нему считаем, насколько
+	// сосед «везде». Считаем по той же таблице tags, что и совпадения выше,
+	// иначе фильтр сравнивал бы несопоставимые величины.
+	var tagged int
+	if err := db.read.QueryRow(`SELECT COUNT(DISTINCT post_id) FROM tags`).Scan(&tagged); err != nil || tagged == 0 {
+		return nil
+	}
+	generic := float64(tagged) * relatedGenericRatio
+
+	// Частоты всех кандидатов — одним запросом на пачку. Поштучный COUNT по
+	// 200 тегам давал ~150 мс на всплывашку, здесь выходит единицы мс.
+	freq := make(map[string]int, len(cands))
+	args := make([]any, 0, len(cands))
+	for _, c := range cands {
+		args = append(args, c.tag)
+	}
+	if len(args) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+		frows, err := db.read.Query(`SELECT tag, COUNT(*) FROM tags WHERE tag IN (`+ph+`) GROUP BY tag`, args...)
+		if err == nil {
+			for frows.Next() {
+				var tg string
+				var n int
+				if err := frows.Scan(&tg, &n); err != nil {
+					break
+				}
+				freq[tg] = n
+			}
+			frows.Close()
+		}
+	}
+
+	out := make([]*TagRelated, 0, limit)
+	for _, c := range cands {
+		// Совпадение хотя бы в 2 постах: иначе это шум из одного поста.
+		if c.co < 2 {
+			continue
+		}
+		if f, ok := freq[c.tag]; ok && float64(f) > generic {
+			continue
+		}
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, &TagRelated{Tag: c.tag, Count: c.co})
+	}
+	return out
+}
+
+// relatedGenericRatio — доля постов, выше которой тег считается «везде» и
+// в смежные не попадает. 0.35 отсекает highres/absurdres, но оставляет
+// 1girl/solo, которые действительно полезны как соседи.
+const relatedGenericRatio = 0.35
 
 func (db *PostDB) TagStats(limit int) map[string]int {
 	if limit <= 0 {

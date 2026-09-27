@@ -14,6 +14,7 @@ import './settings.js';
 import './aliases.js';
 import './social.js';
 import './source_comments.js';
+import './tag_popover.js';
 import './auth.js';
 import './notify.js';
 import './a11y.js';

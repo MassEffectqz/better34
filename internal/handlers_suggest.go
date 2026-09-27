@@ -293,6 +293,66 @@ func (h *Handler) GetTagCounts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"counts": result})
 }
 
+// ── Превью и смежные теги для всплывашки при наведении ─────────────────────
+
+// TagPreview — срез библиотеки по одному тегу: счётчик постов, несколько
+// обложек и теги, которые чаще всего встречаются вместе с ним.
+type TagPreview struct {
+	Tag     string            `json:"tag"`
+	Count   int               `json:"count"`
+	Posts   []*TagPreviewPost `json:"posts"`
+	Related []*TagRelated     `json:"related"`
+}
+
+// TagPreviewPost — обложка поста в мини-сетке превью.
+type TagPreviewPost struct {
+	ID    int    `json:"id"`
+	Thumb string `json:"thumb"`
+	W     int    `json:"width"`
+	H     int    `json:"height"`
+}
+
+// TagRelated — смежный тег с числом совместных постов.
+type TagRelated struct {
+	Tag   string `json:"tag"`
+	Count int    `json:"count"`
+}
+
+// GET /api/tags/:tag/preview?limit=6&related=8
+func (h *Handler) TagPreview(c *gin.Context) {
+	tag := normalizeTagParam(c.Param("tag"))
+	if tag == "" {
+		AbortWithError(c, ErrInvalidRequest)
+		return
+	}
+	limit := 6
+	if n, err := strconv.Atoi(c.Query("limit")); err == nil && n > 0 && n <= 12 {
+		limit = n
+	}
+	relLimit := 8
+	if n, err := strconv.Atoi(c.Query("related")); err == nil && n >= 0 && n <= 20 {
+		relLimit = n
+	}
+	out := TagPreview{Tag: tag}
+	out.Count, out.Posts = GetDB().TagPreviewPosts(tag, limit)
+	if relLimit > 0 {
+		out.Related = GetDB().RelatedTags(tag, relLimit)
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// normalizeTagParam приводит тег к каноническому виду: теги хранятся
+// lowercase, пробелы заменены на подчёркивание (как в выдаче буров).
+func normalizeTagParam(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "+", " ")
+	s = strings.Join(strings.Fields(s), "_")
+	if len(s) > 200 {
+		s = s[:200]
+	}
+	return s
+}
+
 func (h *Handler) GetLocalTagStats(c *gin.Context) {
 	db := GetDB()
 	stats := db.TagStats(60)

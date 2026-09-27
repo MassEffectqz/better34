@@ -629,6 +629,26 @@ select.ss-rate option{color:#111;background:#fff}
 }
 .vc-item.src .vc-text{color:var(--text-dim)}
 .src-comments-badge{display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 6px;border-radius:8px;background:rgba(0,0,0,.35);color:var(--accent);font-weight:600}
+/* Всплывашка тега: счётчик постов, обложки и смежные теги. */
+.tag-popover{
+  position:fixed;z-index:400;width:300px;max-width:calc(100vw - 16px);
+  background:var(--surface1);border:1px solid var(--border);border-radius:var(--radius-md);
+  box-shadow:0 8px 28px rgba(0,0,0,.35);padding:10px;
+}
+.tag-popover.hidden{display:none}
+.tag-pop-head{font-weight:600;font-size:.82rem;word-break:break-all;margin-bottom:8px}
+.tag-pop-count{color:var(--text-dim);font-weight:400;margin-left:4px}
+.tag-pop-covers{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.tag-pop-cover{position:relative;padding:0;border:none;background:var(--surface3);cursor:pointer;
+  border-radius:var(--radius-sm);overflow:hidden;aspect-ratio:1/1;min-height:42px}
+.tag-pop-cover img{width:100%;height:100%;object-fit:cover;display:block}
+.tag-pop-cover:hover{outline:2px solid var(--accent);outline-offset:-2px}
+.tag-pop-related-row{margin-top:9px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.tag-pop-related-title{font-size:.68rem;color:var(--text-dim);width:100%;margin-bottom:2px}
+.tag-pop-related{background:var(--surface3);color:var(--text);border:none;cursor:pointer;
+  font-size:.7rem;padding:2px 7px;border-radius:8px;font-family:inherit}
+.tag-pop-related:hover{background:var(--accent);color:#fff}
+.tag-pop-related-n{opacity:.65;margin-left:3px}
 .vc-empty{font-size:.8rem;color:var(--text-dim)}
 .vc-item{display:flex;gap:8px;align-items:flex-start}
 .vc-item.mine .vc-meta{color:var(--accent)}

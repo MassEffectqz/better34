@@ -341,6 +341,8 @@ App.renderSuggestions = function (tags) {
     const div = document.createElement('div');
     div.className = 'suggestion-item';
     div.dataset.value = value;
+    // Метка для всплывашки превью тега (tag_popover.js) по наведению/фокусу.
+    div.dataset.tag = String(value).replace(/^[+-]+/, '');
     div.setAttribute('role', 'option');
     div.setAttribute('id', `sugg-opt-${i}`);
     const span = document.createElement('span');

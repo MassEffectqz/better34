@@ -606,6 +606,8 @@ export const App = {
     if (e.btnImportProfile) e.btnImportProfile.addEventListener('click', () => e.profileImportFile.click());
     if (e.profileImportFile) e.profileImportFile.addEventListener('change', (ev) => go(this.importProfile(ev)));
     if (e.btnQRLogin) e.btnQRLogin.addEventListener('click', () => this.showQRLogin());
+    // Всплывашка превью тега: одна делегированная подписка на весь документ.
+    if (typeof this.bindTagPopover === 'function') this.bindTagPopover();
     if (e.viewerSource) {
       e.viewerSource.addEventListener('click', (ev) => this.onSourceClick(ev));
       e.viewerSource.addEventListener('auxclick', (ev) => this.onSourceAuxClick(ev));

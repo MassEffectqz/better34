@@ -36,7 +36,7 @@ globalThis.document = {
   getElementById() { return null; },
   createElement() {
     return {
-      style: {}, classList: makeClassList(), children: [],
+      style: {}, classList: makeClassList(), children: [], dataset: {},
       innerHTML: '', textContent: '',
       appendChild(c) { this.children.push(c); },
       addEventListener() {},
