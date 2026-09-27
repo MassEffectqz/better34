@@ -26,6 +26,13 @@ App._tagCachePut = function (cache, key, val) {
 const tagRatingParam = (app) =>
   (app.state && app.state.ratingFilter) ? '&rating=' + encodeURIComponent(app.state.ratingFilter) : '';
 
+// tagCacheKey — ключ кэша вместе с фильтром рейтинга. Без этого переключение
+// «SFW/NSFW» не перезапрашивало ничего: пользователь включал безопасный режим,
+// а получал из кэша обложки, отфильтрованные по старому правилу. Для превью с
+// бору это тем более неверно.
+const tagCacheKey = (app, tag) =>
+  String(tag || '').toLowerCase() + '|' + ((app.state && app.state.ratingFilter) || '');
+
 // fetchTagPreview с кэшем в памяти: повторные наведения на один тег (список
 // тегов поста, подсказки) не должны снова идти в сервер.
 //
@@ -33,13 +40,14 @@ const tagRatingParam = (app) =>
 // (fetchTagSourcePreview): раньше поиск в сети был частью этого ответа, и
 // наведение на любой тег без скачанных постов висело на нем секундами.
 App.fetchTagPreview = function (tag) {
-  const key = String(tag || '').toLowerCase();
-  if (!key) return Promise.resolve(null);
+  const name = String(tag || '').toLowerCase();
+  if (!name.trim()) return Promise.resolve(null);
+  const key = tagCacheKey(this, tag);
   const hit = this._tagCache.get(key);
   if (hit) return Promise.resolve(hit);
   // this.API — точка подмены для тестов.
   const api = this.API || API;
-  const url = '/tags/' + encodeURIComponent(key) + '/preview?limit=6&related=8' + tagRatingParam(this);
+  const url = '/tags/' + encodeURIComponent(name) + '/preview?limit=6&related=8' + tagRatingParam(this);
   return api.get(url, { fresh: true })
     .then((d) => this._tagCachePut(this._tagCache, key, d))
     .catch(() => null);
@@ -49,15 +57,16 @@ App.fetchTagPreview = function (tag) {
 // запрос, поэтому всплывашка не ждёт его: показывает локальную часть сразу и
 // доклеивает этот блок, когда он придёт.
 App.fetchTagSourcePreview = function (tag) {
-  const key = String(tag || '').toLowerCase();
-  if (!key) return Promise.resolve(null);
+  const name = String(tag || '').toLowerCase();
+  if (!name.trim()) return Promise.resolve(null);
+  const key = tagCacheKey(this, tag);
   const hit = this._tagSourceCache.get(key);
   if (hit) return Promise.resolve(hit);
   // Офлайн идти на бор бессмысленно: сервер всё равно ничего не достанет, а
   // лишний запрос только отложит пустую всплывашку.
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve(null);
   const api = this.API || API;
-  const url = '/tags/' + encodeURIComponent(key) + '/source-preview?limit=6' + tagRatingParam(this);
+  const url = '/tags/' + encodeURIComponent(name) + '/source-preview?limit=6' + tagRatingParam(this);
   return api.get(url, { fresh: true })
     .then((d) => this._tagCachePut(this._tagSourceCache, key, d))
     .catch(() => null);
@@ -103,6 +112,15 @@ App.onTagPopoverClick = function (ev) {
 App.hideTagPopover = function () {
   this._tagPopHideTimer && clearTimeout(this._tagPopHideTimer);
   this._tagPopHideTimer = null;
+  // Гасим и отложенное ПОКАЗЫВАНИЕ. Иначе сценарий «навести → Esc/клик»
+  // оставлял таймер в полёте, и через 220 мс подсказка выскакивала сама —
+  // уже после того, как её закрыли.
+  this._tagPopTimer && clearTimeout(this._tagPopTimer);
+  this._tagPopTimer = null;
+  // Сбрасываем и активный тег. Пока он записан, повторное наведение на тот же
+  // тег считалось «уже показанным» (см. show) — после Esc или клика по обложке
+  // подсказка на этом теге просто переставала появляться.
+  this._tagPopTag = null;
   this._tagPopAnchor = null;
   if (this._tagPop) this._tagPop.classList.add('hidden');
 };
@@ -320,25 +338,14 @@ App.bindTagPopover = function () {
   window.addEventListener('resize', () => this.hideTagPopover());
 };
 
-// openPostById открывает пост по id: он может прийти из обложки тега, которого
-// нет в текущей выдаче, тогда подгружаем его по id.
-App.openPostById = async function (id) {
-  if (!id) return;
-  const posts = this.state.posts || [];
-  const idx = posts.findIndex((p) => p.id === id);
-  if (idx >= 0) {
-    this.openViewer(idx);
-    return;
-  }
-  try {
-    const d = await (this.API || API).get('/posts-by-ids?ids=' + encodeURIComponent(id), { fresh: true });
-    const got = (d && d.posts) || [];
-    if (!got.length) {
-      this.showToast(t('tagPreview.postMissing'), 'info');
-      return;
-    }
-    this.state.posts = got.map((p, i) => ({ ...p, _index: i }));
-    this.state.page = 1;
-    this.openViewer(0);
-  } catch { /* пост недоступен — молча закрываем */ }
+// openPostById открывает пост по id из обложки тега. Чаще всего он уже есть в
+// текущей выдаче, но может прийти из подсказки поиска или с другого поста.
+//
+// Открываем штатным openViewerByPostId: он ДОСТРАИВАЕТ пост в конец выдачи.
+// Свой вариант ниже заменял ленту одним постом — то есть клик по обложке в
+// подсказке уничтожал выдачу, к которой возвращался пользователь.
+App.openPostById = function (id) {
+  if (!id) return null;
+  if (typeof this.openViewerByPostId === 'function') return this.openViewerByPostId(id);
+  return null;
 };

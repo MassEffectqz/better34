@@ -274,6 +274,57 @@ a.API = { get: (u) => {
   delete a._tagPointer;
   check('без данных о курсоре не считаем, что он в зоне', a._tagPointerOverTagUI() === false);
 
+  // Дальше нужны настоящие методы: выше они подменялись заглушками.
+  delete a.fetchTagPreview;
+  delete a.fetchTagSourcePreview;
+  delete a.hideTagPopover;
+
+  // Регресс: после Esc/клика подсказка обязана снова появляться на том же
+  // теге. Пока активный тег не сбрасывался, повторное наведение считалось
+  // «уже показанным» и подсказка просто не открывалась.
+  a._tagPopTag = 'blue_hair';
+  a._tagPopAnchor = { isConnected: true };
+  a.hideTagPopover();
+  check('скрытие сбрасывает активный тег', a._tagPopTag === null, String(a._tagPopTag));
+  check('скрытие сбрасывает якорь', a._tagPopAnchor === null);
+  let popped = 0;
+  a.showTagPopover = () => { popped++; };
+  handlers.mouseover[0]({ target: pageTag });
+  await new Promise((r) => setTimeout(r, 260));
+  check('после скрытия подсказка снова открывается', popped === 1, 'shown=' + popped);
+
+  // И отложенное ПОКАЗЫВАНИЕ не должно выстреливать после закрытия.
+  a.showTagPopover = function (tag, anchor) { shown.push([tag, anchor]); };
+  const shownBeforeEsc = shown.length;
+  handlers.mouseover[0]({ target: pageTag });
+  a.hideTagPopover();
+  await new Promise((r) => setTimeout(r, 300));
+  check('Esc/клик отменяет и отложенное открытие', shown.length === shownBeforeEsc,
+    'shown=' + shown.length);
+
+  // Кэш обязан учитывать фильтр рейтинга: включил SFW — нельзя отдать обложки,
+  // отобранные по старому правилу.
+  a._tagCache = new Map();
+  const before = urls.length;
+  await a.fetchTagPreview('blue_hair');
+  a.state.ratingFilter = 'sfw';
+  await a.fetchTagPreview('blue_hair');
+  check('смена фильтра рейтинга перезапрашивает', urls.length === before + 2,
+    'added=' + (urls.length - before));
+  check('rating уходит в URL', /rating=sfw/.test(urls[urls.length - 1]), urls[urls.length - 1]);
+  a.state.ratingFilter = '';
+
+  // Клик по обложке не имеет права заменять ленту одним постом: открываем
+  // штатным openViewerByPostId, он лишь достраивает пост в конец выдачи.
+  const feed = [{ id: 1 }, { id: 2 }];
+  a.state = { posts: feed.slice(), page: 5, ratingFilter: '' };
+  let delegated = 0;
+  a.openViewerByPostId = (id) => { delegated = id; return true; };
+  a.openPostById(77);
+  check('обложка открывается штатным помощником', delegated === 77, String(delegated));
+  check('лента не тронута', a.state.posts.length === 2 && a.state.page === 5,
+    JSON.stringify(a.state.posts));
+
   console.log(`\nИтог: ${passed} ok, ${failed} fail`);
   if (failed) process.exit(1);
 })();
