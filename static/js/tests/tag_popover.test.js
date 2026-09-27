@@ -220,32 +220,28 @@ a.API = { get: (u) => {
   await new Promise((r) => setTimeout(r, 0));
   check('кэш не заражается служебной пометкой', cached.__searching === undefined, String(cached.__searching));
 
-  // Регрессия: чип смежного тега лежит ВНУТРИ всплывашки. Если он становится
-  // якорем, позиция считается от элемента внутри самой всплывашки — и она
-  // улетает. Якорем обязан остаться исходный тег на странице.
+  // Регрессия: чип смежного тега — это ссылка, а не цель наведения. Наведение
+  // на него не должно ни перерисовывать подсказку на другой тег, ни менять
+  // якорь: и то и другое выглядит как «подсказка сменила тему» или улетела.
   const handlers = {};
   document.addEventListener = (ev, fn) => { (handlers[ev] = handlers[ev] || []).push(fn); };
   a.bindTagPopover();
-  const outer = { isConnected: true, dataset: { tag: 'blue_hair' }, closest: () => null };
   const chip = {
     isConnected: true,
     dataset: { tag: 'smile' },
     closest: (sel) => (sel === '.tag-popover' ? {} : sel === '[data-tag]' ? chip : null),
   };
-  a._tagPopAnchor = outer;
   const shown = [];
   a.showTagPopover = (tag, anchor) => { shown.push([tag, anchor]); };
   handlers.mouseover[0]({ target: chip });
   await new Promise((r) => setTimeout(r, 260));
-  check('чип внутри всплывашки не становится якорем',
-    shown.length === 1 && shown[0][0] === 'smile' && shown[0][1] === outer,
-    JSON.stringify(shown.map((s) => s[0])));
+  check('наведение на чип ничего не перерисовывает', shown.length === 0, JSON.stringify(shown.map((s) => s[0])));
 
-  // Обычный тег на странице — наоборот, становится якорем.
-  const pageTag = { isConnected: true, dataset: { tag: 'long_hair' }, closest: (s) => (s === '[data-tag]' ? pageTag : null) };
+  // Обычный тег на странице — наоборот, цель наведения и якорь.
+  const pageTag = { isConnected: true, dataset: { tag: 'long_hair' }, closest: (s) => (s === '.tag-popover' ? null : s === '[data-tag]' ? pageTag : null) };
   handlers.mouseover[0]({ target: pageTag });
   await new Promise((r) => setTimeout(r, 260));
-  check('тег на странице — якорь', shown.length === 2 && shown[1][1] === pageTag,
+  check('тег на странице — цель и якорь', shown.length === 1 && shown[0][0] === 'long_hair' && shown[0][1] === pageTag,
     JSON.stringify(shown.map((s) => s[0])));
 
   // Главное: подсказка не должна прятаться, пока курсор в ней. Проверяем

@@ -265,18 +265,17 @@ App.bindTagPopover = function () {
   const show = (target) => {
     const el = target && target.closest ? target.closest('[data-tag]') : null;
     if (!el) return;
+    // Чипы смежных тегов — ссылки, а не цели наведения. Подсказка продолжает
+    // показывать исходный тег: иначе содержимое подменяется прямо под
+    // курсором, и кажется, что подсказка «сменила тему». И позицию считать
+    // от чипа нельзя — он лежит внутри самой всплывашки.
+    if (el.closest('.tag-popover')) return;
     const tag = el.dataset.tag;
-    if (!tag) return;
-    // Чип смежного тега лежит ВНУТРИ всплывашки. Якорем он быть не может:
-    // позиция считалась бы от элемента внутри самой всплывашки, и она
-    // улетала при наведении. Держим позицию по исходному тегу на странице.
-    const inPop = el.closest('.tag-popover');
-    const anchor = inPop ? this._tagPopAnchor : el;
-    if (!anchor || !anchor.isConnected) return;
-    if (!inPop && tag === this._tagPopTag) return;
+    if (!tag || tag === this._tagPopTag) return;
+    if (!el.isConnected) return;
     this._tagPopTag = tag;
     this._tagPopTimer && clearTimeout(this._tagPopTimer);
-    this._tagPopTimer = setTimeout(() => this.showTagPopover(tag, anchor), HOVER_DELAY);
+    this._tagPopTimer = setTimeout(() => this.showTagPopover(tag, el), HOVER_DELAY);
   };
   const leave = (ev) => {
     const from = ev.target;
