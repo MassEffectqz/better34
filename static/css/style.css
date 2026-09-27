@@ -618,6 +618,11 @@ select.ss-rate option{color:#111;background:#fff}
 .viewer-comments .vc-head{font-size:.78rem;font-weight:600;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
 .viewer-comments .vc-count{color:var(--accent)}
 .vc-list{display:flex;flex-direction:column;gap:8px;max-height:180px;overflow-y:auto;margin-bottom:8px}
+/* Комментарии источника: отдельная секция под локальным «Обсуждением». */
+.src-comments .vc-list:empty{display:none}
+.src-comments .vc-list{max-height:150px}
+.vc-src-actions{display:flex;gap:8px;flex-wrap:wrap}
+.src-comments-badge{display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 6px;border-radius:8px;background:rgba(0,0,0,.35);color:var(--accent);font-weight:600}
 .vc-empty{font-size:.8rem;color:var(--text-dim)}
 .vc-item{display:flex;gap:8px;align-items:flex-start}
 .vc-item.mine .vc-meta{color:var(--accent)}

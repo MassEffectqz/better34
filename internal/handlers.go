@@ -431,40 +431,48 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 	enriched := make([]gin.H, 0)
 	for _, p := range posts {
 		entry := gin.H{
-			"id":          p.ID,
-			"tags":        p.Tags,
-			"file_url":    p.FileURL,
-			"sample_url":  p.SampleURL,
-			"preview_url": p.PreviewURL,
-			"width":       p.Width,
-			"height":      p.Height,
-			"file_size":   p.FileSize,
-			"file_type":   p.FileType,
-			"score":       p.Score,
-			"rating":      p.Rating,
-			"downloaded":  false,
+			"id":           p.ID,
+			"tags":         p.Tags,
+			"file_url":     p.FileURL,
+			"sample_url":   p.SampleURL,
+			"preview_url":  p.PreviewURL,
+			"width":        p.Width,
+			"height":       p.Height,
+			"file_size":    p.FileSize,
+			"file_type":    p.FileType,
+			"score":        p.Score,
+			"rating":       p.Rating,
+			"downloaded":   false,
+			"has_comments": bool(p.HasComments),
 		}
 
 		if existing := byID[p.ID]; existing != nil {
 			entry["downloaded"] = existing.Downloaded
 			entry["file_path"] = existing.FilePath
+			// Число комментариев источника знаем только из кэша — дописываем
+			// поверх свежего флага has_comments, чтобы бейдж не «потуск» после
+			// перезагрузки страницы.
+			if existing.CommentCount > 0 {
+				entry["comment_count"] = existing.CommentCount
+			}
 			if existing.ThumbPath != "" {
 				entry["thumb_path"] = existing.ThumbPath
 			}
 		}
 
 		upserts = append(upserts, &Post{
-			ID:         p.ID,
-			Tags:       p.Tags,
-			FileURL:    p.FileURL,
-			PreviewURL: p.PreviewURL,
-			FileType:   p.FileType,
-			Width:      p.Width,
-			Height:     p.Height,
-			FileSize:   p.FileSize,
-			Score:      p.Score,
-			Rating:     p.Rating,
-			MD5:        p.Hash,
+			ID:          p.ID,
+			Tags:        p.Tags,
+			FileURL:     p.FileURL,
+			PreviewURL:  p.PreviewURL,
+			FileType:    p.FileType,
+			Width:       p.Width,
+			Height:      p.Height,
+			FileSize:    p.FileSize,
+			Score:       p.Score,
+			Rating:      p.Rating,
+			MD5:         p.Hash,
+			HasComments: bool(p.HasComments),
 		})
 
 		enriched = append(enriched, entry)
@@ -610,33 +618,39 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 		prov := h.provider()
 		tryUpsert := func(p Rule34Post) {
 			upsertBatch = append(upsertBatch, &Post{
-				ID:         p.ID,
-				Tags:       p.Tags,
-				FileURL:    p.FileURL,
-				PreviewURL: p.PreviewURL,
-				FileType:   p.FileType,
-				Width:      p.Width,
-				Height:     p.Height,
-				FileSize:   p.FileSize,
-				Score:      p.Score,
-				Rating:     p.Rating,
-				MD5:        p.Hash,
+				ID:          p.ID,
+				Tags:        p.Tags,
+				FileURL:     p.FileURL,
+				PreviewURL:  p.PreviewURL,
+				FileType:    p.FileType,
+				Width:       p.Width,
+				Height:      p.Height,
+				FileSize:    p.FileSize,
+				Score:       p.Score,
+				Rating:      p.Rating,
+				MD5:         p.Hash,
+				HasComments: bool(p.HasComments),
 			})
-			enriched = append(enriched, gin.H{
-				"id":          p.ID,
-				"tags":        p.Tags,
-				"file_url":    p.FileURL,
-				"sample_url":  p.SampleURL,
-				"preview_url": p.PreviewURL,
-				"width":       p.Width,
-				"height":      p.Height,
-				"file_size":   p.FileSize,
-				"file_type":   p.FileType,
-				"score":       p.Score,
-				"rating":      p.Rating,
-				"downloaded":  false,
-				"viewed":      viewedMap[p.ID],
-			})
+			e := gin.H{
+				"id":           p.ID,
+				"tags":         p.Tags,
+				"file_url":     p.FileURL,
+				"sample_url":   p.SampleURL,
+				"preview_url":  p.PreviewURL,
+				"width":        p.Width,
+				"height":       p.Height,
+				"file_size":    p.FileSize,
+				"file_type":    p.FileType,
+				"score":        p.Score,
+				"rating":       p.Rating,
+				"downloaded":   false,
+				"viewed":       viewedMap[p.ID],
+				"has_comments": bool(p.HasComments),
+			}
+			if ex := byID[p.ID]; ex != nil && ex.CommentCount > 0 {
+				e["comment_count"] = ex.CommentCount
+			}
+			enriched = append(enriched, e)
 		}
 
 		if bc, ok := prov.(*booruClient); ok && bc.spec.batchIDs {

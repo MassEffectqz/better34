@@ -806,6 +806,19 @@ App.createPostCard = function (post) {
     iconToNode(icon(post.downloaded ? 'check' : 'download', 12)),
     document.createTextNode(' ' + (post.file_type || '?'))
   );
+  // Индикатор комментариев на самом источнике (dapi has_comments / кэш).
+  // Числа у буров обычно нет — источник отдаёт лишь флаг, поэтому при
+  // отсутствии счётчика показываем точку, а не выдуманное «1».
+  if (typeof this.hasSourceComments === 'function' && this.hasSourceComments(post)) {
+    const n = post.comment_count || 0;
+    const sc = document.createElement('span');
+    sc.className = 'src-comments-badge';
+    sc.title = t('srcComments.badge');
+    sc.setAttribute('aria-label', t('srcComments.badge'));
+    sc.appendChild(iconToNode(icon('messageSquare', 12)));
+    if (n) sc.appendChild(document.createTextNode(' ' + n));
+    badge.appendChild(sc);
+  }
   left.appendChild(badge);
   overlay.appendChild(left);
 

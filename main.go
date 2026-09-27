@@ -134,6 +134,8 @@ func main() {
 		api.GET("/posts/:id/relations", handler.PostRelations)
 		api.POST("/remote/push", handler.RemotePush)
 		api.GET("/comments/:id", handler.GetComments)
+		api.GET("/posts/:id/source-comments", handler.GetSourceComments)
+		api.GET("/posts/:id/source-comments/meta", handler.GetSourceCommentsMeta)
 		api.POST("/comments/:id", handler.AddComment)
 		api.DELETE("/comments/:cid", handler.DeleteComment)
 		api.POST("/download-liked", handler.DownloadLiked)

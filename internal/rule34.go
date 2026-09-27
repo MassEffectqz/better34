@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -46,8 +47,20 @@ type Rule34Post struct {
 	Status     string `json:"status"`
 	HasNotes   bool   `json:"has_notes"`
 	CommentCnt int    `json:"comment_count"`
-	FileSize   int    `json:"file_size"`
-	FileType   string `json:"file_type"`
+	// HasComments приходит строкой "true"/"false" даже при json=1 — разбирает flexBool.
+	HasComments flexBool `json:"has_comments"`
+	FileSize    int      `json:"file_size"`
+	FileType    string   `json:"file_type"`
+}
+
+// SourceComment — комментарий поста на самом источнике (dapi s=comment).
+// Локальные комментарии (internal/handlers_comments.go) — другая сущность.
+type SourceComment struct {
+	ID        int    `json:"id"`
+	PostID    int    `json:"post_id"`
+	Author    string `json:"author"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
 }
 
 type TagSuggestion struct {
@@ -70,6 +83,11 @@ type Provider interface {
 	HTTPClient() *http.Client
 	RefererURL() string
 	AllowsHost(host string) bool
+	// SourceComments — комментарии поста на источнике (dapi s=comment).
+	// Поддерживают не все сайты: Moebooru-ветка (safebooru) комментариев не
+	// имеет вовсе, gelbooru отключил сервис — такие возвращают
+	// ErrSourceCommentsUnsupported, это штатный ответ, не ошибка.
+	SourceComments(postID int) ([]SourceComment, error)
 }
 
 const defaultProviderName = "rule34"
@@ -708,10 +726,257 @@ var errAPI403 = errors.New("API returned 403")
 // errAPIAuth — обёртка над 401/403: ключ невалиден для этого сайта.
 var errAPIAuth = errors.New("API key rejected")
 
-// errAPITransient — исчерпаны ретраи из-за 429: рейт-лимит апстрима —
-// следствие нашего всплеска, а не отказ сервиса; брейкер за это
-// наказывать не должен (иначе автодополнение блокирует весь API).
+// flexBool принимает JSON-булево, строку "true"/"false", "1"/"0" и числа:
+// dapi отдаёт has_comments строкой даже при json=1, у части сайтов поле
+// отсутствует (тогда остаётся false).
+type flexBool bool
+
+func (fb *flexBool) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		return nil
+	}
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return nil
+		}
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "true", "1", "yes":
+			*fb = true
+		}
+		return nil
+	}
+	var t bool
+	if err := json.Unmarshal(b, &t); err == nil {
+		*fb = flexBool(t)
+		return nil
+	}
+	var n flexInt
+	if err := n.UnmarshalJSON(b); err == nil {
+		*fb = n != 0
+	}
+	return nil
+}
+
+// SourceComment — структура элемента <comment> в XML-ответе dapi. Атрибуты
+// приходят строками (в том числе время в формате сайта, а не RFC3339), поэтому
+// разбираем всё через string и приводим сами.
+type sourceCommentXML struct {
+	ID        string `xml:"id,attr"`
+	PostID    string `xml:"post_id,attr"`
+	Body      string `xml:"body,attr"`
+	Text      string `xml:"text,attr"`
+	Comment   string `xml:"comment,attr"`
+	Creator   string `xml:"creator,attr"`
+	Author    string `xml:"author,attr"`
+	Username  string `xml:"username,attr"`
+	CreatedAt string `xml:"created_at,attr"`
+}
+
+func (s sourceCommentXML) toSourceComment() SourceComment {
+	body := s.Body
+	if body == "" {
+		body = s.Text
+	}
+	if body == "" {
+		body = s.Comment
+	}
+	author := s.Creator
+	if author == "" {
+		author = s.Author
+	}
+	if author == "" {
+		author = s.Username
+	}
+	id, _ := strconv.Atoi(strings.TrimSpace(s.ID))
+	postID, _ := strconv.Atoi(strings.TrimSpace(s.PostID))
+	return SourceComment{
+		ID:        id,
+		PostID:    postID,
+		Author:    strings.TrimSpace(author),
+		Body:      strings.TrimSpace(body),
+		CreatedAt: strings.TrimSpace(s.CreatedAt),
+	}
+}
+
+// parseDapiComments понимает обе формы ответа s=comment:
+// XML <comments type="array"><comment …/></comments> (hypnohub, safebooru
+// игнорируют json=1) и JSON — голый массив либо обёртку {"comment":[…]}.
+func parseDapiComments(body []byte) ([]SourceComment, error) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return []SourceComment{}, nil
+	}
+
+	if trimmed[0] == '<' {
+		var doc struct {
+			Items []sourceCommentXML `xml:"comment"`
+		}
+		if err := xml.Unmarshal(trimmed, &doc); err != nil {
+			return nil, fmt.Errorf("failed to parse comments XML: %w", err)
+		}
+		out := make([]SourceComment, 0, len(doc.Items))
+		for _, it := range doc.Items {
+			c := it.toSourceComment()
+			// Запись без текста (а у hypnohub body может быть пустым) в
+			// список не попадает — иначе в UI будет пустая строка.
+			if c.Body == "" {
+				continue
+			}
+			out = append(out, c)
+		}
+		return out, nil
+	}
+
+	if trimmed[0] != '{' && trimmed[0] != '[' {
+		// Не JSON и не XML: gelbooru на s=comment отвечает 200 с текстом
+		// «Disabled due to abuse.» — сервис отключён их стороной.
+		msg := strings.TrimSpace(string(trimmed))
+		if len(msg) > 120 {
+			msg = msg[:120]
+		}
+		return nil, fmt.Errorf("%w: %s", ErrSourceCommentsUnsupported, msg)
+	}
+
+	var raws []json.RawMessage
+	if trimmed[0] == '{' {
+		var wrap struct {
+			Comment  []json.RawMessage `json:"comment"`
+			Comments []json.RawMessage `json:"comments"`
+		}
+		if err := json.Unmarshal(trimmed, &wrap); err != nil {
+			return nil, err
+		}
+		if wrap.Comment != nil {
+			raws = wrap.Comment
+		} else {
+			raws = wrap.Comments
+		}
+	} else if err := json.Unmarshal(trimmed, &raws); err != nil {
+		return nil, err
+	}
+
+	out := make([]SourceComment, 0, len(raws))
+	for _, raw := range raws {
+		var w struct {
+			ID        flexInt `json:"id"`
+			PostID    flexInt `json:"post_id"`
+			Body      string  `json:"body"`
+			Text      string  `json:"text"`
+			Comment   string  `json:"comment"`
+			Creator   string  `json:"creator"`
+			Author    string  `json:"author"`
+			Username  string  `json:"username"`
+			CreatedAt string  `json:"created_at"`
+		}
+		if err := json.Unmarshal(raw, &w); err != nil {
+			log.Printf("[dapi] пропущен битый комментарий: %v", err)
+			continue
+		}
+		body := w.Body
+		if body == "" {
+			body = w.Text
+		}
+		if body == "" {
+			body = w.Comment
+		}
+		author := w.Creator
+		if author == "" {
+			author = w.Author
+		}
+		if author == "" {
+			author = w.Username
+		}
+		body = strings.TrimSpace(body)
+		if body == "" {
+			continue
+		}
+		out = append(out, SourceComment{
+			ID:        int(w.ID),
+			PostID:    int(w.PostID),
+			Author:    strings.TrimSpace(author),
+			Body:      body,
+			CreatedAt: strings.TrimSpace(w.CreatedAt),
+		})
+	}
+	return out, nil
+}
+
+// SourceComments тянет комментарии поста у сайта (dapi s=comment). Один запрос,
+// без ретраев: вызывается вручную из UI, а комментарии источника иммутабельны
+// и кэшируются на стороне БД (см. handlers_sourcecomments.go).
+func (c *booruClient) SourceComments(postID int) ([]SourceComment, error) {
+	if postID <= 0 {
+		return nil, fmt.Errorf("invalid post id")
+	}
+	if c.srcCommentsOff.Load() {
+		return nil, ErrSourceCommentsUnsupported
+	}
+	c.keys.syncFromConfig(c.spec.name)
+	cred, ok := c.keys.pickCred()
+	if !ok {
+		if c.spec.requireAuth {
+			return nil, fmt.Errorf("нет доступных API ключей — все на карантине")
+		}
+		cred = APICredential{}
+	}
+
+	v := url.Values{}
+	v.Set("page", "dapi")
+	v.Set("s", "comment")
+	v.Set("q", "index")
+	v.Set("json", "1")
+	v.Set("post_id", strconv.Itoa(postID))
+	if cred.APIKey != "" {
+		v.Set("api_key", cred.APIKey)
+	}
+	if cred.UserID != "" {
+		v.Set("user_id", cred.UserID)
+	}
+	reqURL := fmt.Sprintf("%s?%s", c.spec.apiURL, v.Encode())
+
+	c.limiter.Wait()
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("Accept", "application/json, application/xml")
+
+	resp, err := c.HTTPClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("source comments request failed: %w", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read source comments: %w", err)
+	}
+	switch {
+	case resp.StatusCode == 401 || resp.StatusCode == 403:
+		return nil, errAPIAuth
+	case resp.StatusCode == 429:
+		return nil, errAPITransient
+	case resp.StatusCode != 200:
+		return nil, fmt.Errorf("source comments API returned %d", resp.StatusCode)
+	}
+
+	list, err := parseDapiComments(body)
+	if errors.Is(err, ErrSourceCommentsUnsupported) {
+		// Запомним, что сайт не отдаёт комментарии, чтобы следующий открытый
+		// пост не дёргал API снова (gelbooru отвечает так на каждый запрос).
+		c.srcCommentsOff.Store(true)
+	}
+	return list, err
+}
+
 var errAPITransient = errors.New("API rate limited")
+
+// ErrSourceCommentsUnsupported — источник не отдаёт комментарии (сервис
+// отключён у сайта или его движок их не поддерживает). Это не сбой: такой
+// ответ хендлер отдаёт клиенту штатным кодом «источник не поддерживает».
+var ErrSourceCommentsUnsupported = errors.New("source comments unsupported")
 
 // booruClient — общий клиент для всех Gelbooru-0.2-совместимых сайтов.
 // Вся инфраструктура (кэши, брейкер, ротация ключей, singleflight)
@@ -729,6 +994,9 @@ type booruClient struct {
 
 	suggMu sync.Mutex
 	suggM  map[string]suggestionCacheEntry
+	// srcCommentsOff — сайт не отдаёт комментарии (gelbooru отключил s=comment).
+	// Флаг ставится при первом таком ответе, чтобы не опрашивать вхолостую.
+	srcCommentsOff atomic.Bool
 }
 
 func newBooruClient(spec siteSpec) *booruClient {
@@ -1146,6 +1414,8 @@ func parseDapiPost(raw []byte) (Rule34Post, error) {
 		Source     string  `json:"source"`
 		Status     string  `json:"status"`
 		FileSize   flexInt `json:"file_size"`
+		// has_comments приходит строкой "true"/"false" даже при json=1.
+		HasComments flexBool `json:"has_comments"`
 	}
 	if err := json.Unmarshal(raw, &w); err != nil {
 		return Rule34Post{}, err
@@ -1162,22 +1432,23 @@ func parseDapiPost(raw []byte) (Rule34Post, error) {
 		return Rule34Post{}, fmt.Errorf("post %d with malformed file_url", int(w.ID))
 	}
 	return Rule34Post{
-		ID:         int(w.ID),
-		Tags:       w.Tags,
-		FileURL:    w.FileURL,
-		SampleURL:  w.SampleURL,
-		PreviewURL: w.PreviewURL,
-		Width:      int(w.Width),
-		Height:     int(w.Height),
-		Score:      int(w.Score),
-		Rating:     w.Rating,
-		Image:      w.Image,
-		Hash:       w.Hash,
-		Owner:      w.Owner,
-		Source:     w.Source,
-		Status:     w.Status,
-		FileSize:   int(w.FileSize),
-		FileType:   detectFileType(w.FileURL),
+		ID:          int(w.ID),
+		Tags:        w.Tags,
+		FileURL:     w.FileURL,
+		SampleURL:   w.SampleURL,
+		PreviewURL:  w.PreviewURL,
+		Width:       int(w.Width),
+		Height:      int(w.Height),
+		Score:       int(w.Score),
+		Rating:      w.Rating,
+		Image:       w.Image,
+		Hash:        w.Hash,
+		Owner:       w.Owner,
+		Source:      w.Source,
+		Status:      w.Status,
+		FileSize:    int(w.FileSize),
+		FileType:    detectFileType(w.FileURL),
+		HasComments: w.HasComments,
 	}, nil
 }
 

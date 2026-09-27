@@ -12,8 +12,20 @@ interface Post {
   height: number;
   file_size: number;
   source: string;
+  /** Источник сообщил, что под постом есть комментарии (dapi has_comments). */
+  has_comments?: boolean;
+  /** Сколько комментариев на источнике (из кэша, заполняется при загрузке). */
+  comment_count?: number;
   downloadedAt: string;
   _index: number;
+}
+
+interface SourceComment {
+  id: number;
+  post_id: number;
+  author: string;
+  body: string;
+  created_at: string;
 }
 
 interface Profile {

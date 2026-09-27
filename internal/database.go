@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"log"
 	"os"
 	"path/filepath"
@@ -37,6 +38,10 @@ type Post struct {
 	Blurhash   string `json:"blurhash,omitempty"`  // placeholder-строка BlurHash
 	Source     string `json:"source,omitempty"`    // метка источника: "rule34", "gelbooru", хост (для «откуда пост»)
 	ParentID   int    `json:"parent_id,omitempty"` // родительский пост (danbooru-style связки)
+	// HasComments — источник сообщил, что под постом есть комментарии;
+	// CommentCount — сколько их на самом деле (заполняется при загрузке).
+	HasComments  bool `json:"has_comments,omitempty"`
+	CommentCount int  `json:"comment_count,omitempty"`
 }
 
 // PostDB — SQLite-хранилище постов (modernc.org/sqlite, без CGO).
@@ -102,7 +107,9 @@ CREATE TABLE IF NOT EXISTS posts (
 	phash       TEXT NOT NULL DEFAULT '',
 	blurhash    TEXT NOT NULL DEFAULT '',
 	source      TEXT NOT NULL DEFAULT '',
-	parent_id   INTEGER NOT NULL DEFAULT 0
+	parent_id   INTEGER NOT NULL DEFAULT 0,
+	has_comments  INTEGER NOT NULL DEFAULT 0,
+	comment_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS tags (
 	tag     TEXT NOT NULL COLLATE NOCASE,
@@ -116,6 +123,30 @@ CREATE TABLE IF NOT EXISTS comments (
 	text       TEXT NOT NULL,
 	created_at TEXT NOT NULL
 );
+-- source_comments — кэш комментариев источника (dapi s=comment). Ключ
+-- (post_id, site, cid): id поста в боре не глобален (у разных сайтов
+-- диапазоны пересекаются), поэтому сайт входит в ключ.
+CREATE TABLE IF NOT EXISTS source_comments (
+	post_id    INTEGER NOT NULL,
+	site       TEXT NOT NULL,
+	cid        INTEGER NOT NULL,
+	author     TEXT NOT NULL DEFAULT '',
+	body       TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL DEFAULT '',
+	fetched_at TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (post_id, site, cid)
+) WITHOUT ROWID;
+-- source_comments_state — «источник уже опрашивали»: нужна, чтобы отличать
+-- «комментариев нет» (повторно не ходим) от «ещё не проверяли». Живёт
+-- отдельно от source_comments, потому что запись должна существовать и при
+-- нуле комментариев.
+CREATE TABLE IF NOT EXISTS source_comments_state (
+	post_id    INTEGER NOT NULL,
+	site       TEXT NOT NULL,
+	count      INTEGER NOT NULL DEFAULT 0,
+	fetched_at TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (post_id, site)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS view_history (
 	post_id   INTEGER PRIMARY KEY,
 	viewed_at TEXT NOT NULL
@@ -183,6 +214,18 @@ func NewPostDB(path string) *PostDB {
 	// phash_seed — корзина для быстрого поиска «похожих»(старшие 16 бит pHash).
 	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN phash_seed INTEGER NOT NULL DEFAULT 0`); err == nil {
 		log.Printf("[db] добавлена колонка phash_seed")
+	}
+	// has_comments/comment_count — признак и число комментариев источника.
+	// Заполняется из выдачи (has_comments у gelbooru) и при загрузке
+	// комментариев источника; по умолчанию 0, чтобы старые БД не гадали.
+	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN has_comments INTEGER NOT NULL DEFAULT 0`); err == nil {
+		log.Printf("[db] добавлена колонка has_comments")
+	}
+	// comment_count — последнее известное число комментариев источника (для
+	// бейджа в ленте). Факт «источник уже опрашивался» хранится отдельно, в
+	// source_comments_state: он привязан к паре (пост, сайт).
+	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN comment_count INTEGER NOT NULL DEFAULT 0`); err == nil {
+		log.Printf("[db] добавлена колонка comment_count")
 	}
 	if _, err := sqlDB.Exec(postsIndexes); err != nil {
 		log.Printf("[db] indexes: %v", err)
@@ -288,17 +331,18 @@ func (db *PostDB) withTx(fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-const postCols = `id, tags, file_url, preview_url, file_type, width, height, file_size, score, rating, downloaded, file_path, thumb_path, md5, phash, blurhash, source, parent_id`
+const postCols = `id, tags, file_url, preview_url, file_type, width, height, file_size, score, rating, downloaded, file_path, thumb_path, md5, phash, blurhash, source, parent_id, has_comments, comment_count`
 
 func scanPost(scan func(...any) error) (*Post, error) {
 	p := &Post{}
-	var dl int
+	var dl, hc int
 	err := scan(&p.ID, &p.Tags, &p.FileURL, &p.PreviewURL, &p.FileType,
-		&p.Width, &p.Height, &p.FileSize, &p.Score, &p.Rating, &dl, &p.FilePath, &p.ThumbPath, &p.MD5, &p.Phash, &p.Blurhash, &p.Source, &p.ParentID)
+		&p.Width, &p.Height, &p.FileSize, &p.Score, &p.Rating, &dl, &p.FilePath, &p.ThumbPath, &p.MD5, &p.Phash, &p.Blurhash, &p.Source, &p.ParentID, &hc, &p.CommentCount)
 	if err != nil {
 		return nil, err
 	}
 	p.Downloaded = dl != 0
+	p.HasComments = hc != 0
 	return p, nil
 }
 
@@ -310,17 +354,18 @@ func upsertPostTx(tx *sql.Tx, p *Post) error {
 	if h, ok := decodePHash(p.Phash); ok {
 		seed = phashSeed(h)
 	}
-	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`, phash_seed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := tx.Exec(`INSERT INTO posts (`+postCols+`, phash_seed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET tags=excluded.tags, file_url=excluded.file_url,
 		 preview_url=excluded.preview_url, file_type=excluded.file_type, width=excluded.width,
 		 height=excluded.height, file_size=excluded.file_size, score=excluded.score,
 		 rating=excluded.rating, downloaded=excluded.downloaded, file_path=excluded.file_path,
 		 thumb_path=excluded.thumb_path, phash=excluded.phash, blurhash=excluded.blurhash,
 		 phash_seed=excluded.phash_seed, parent_id=excluded.parent_id,
+		 has_comments=excluded.has_comments, comment_count=excluded.comment_count,
 		 source=CASE WHEN posts.source='' THEN excluded.source ELSE posts.source END`,
 		p.ID, p.Tags, p.FileURL, p.PreviewURL, p.FileType, p.Width, p.Height,
 		p.FileSize, p.Score, p.Rating, boolToInt(p.Downloaded), p.FilePath, p.ThumbPath, p.MD5,
-		p.Phash, p.Blurhash, p.Source, p.ParentID, seed)
+		p.Phash, p.Blurhash, p.Source, p.ParentID, boolToInt(p.HasComments), p.CommentCount, seed)
 	if err != nil {
 		return err
 	}
@@ -388,13 +433,15 @@ func upsertMetaTx(tx *sql.Tx, p *Post) (bool, error) {
 	if old.Tags == p.Tags && old.FileURL == p.FileURL && old.PreviewURL == p.PreviewURL &&
 		old.FileType == p.FileType && old.Width == p.Width && old.Height == p.Height &&
 		old.FileSize == p.FileSize && old.Score == p.Score && old.Rating == p.Rating &&
-		old.MD5 == p.MD5 {
+		old.MD5 == p.MD5 && old.HasComments == p.HasComments {
 		return false, nil
 	}
+	// has_comments обновляем вместе с метаданными; comment_count здесь не
+	// трогаем — его ставит загрузка комментариев источника (SetSourceCommentCount).
 	if _, err := tx.Exec(`UPDATE posts SET tags=?, file_url=?, preview_url=?, file_type=?,
-			width=?, height=?, file_size=?, score=?, rating=?, md5=? WHERE id=?`,
+			width=?, height=?, file_size=?, score=?, rating=?, md5=?, has_comments=? WHERE id=?`,
 		p.Tags, p.FileURL, p.PreviewURL, p.FileType, p.Width, p.Height,
-		p.FileSize, p.Score, p.Rating, p.MD5, p.ID); err != nil {
+		p.FileSize, p.Score, p.Rating, p.MD5, boolToInt(p.HasComments), p.ID); err != nil {
 		return true, err
 	}
 	return true, replaceTagsTx(tx, p.ID, p.Tags)
@@ -1383,9 +1430,95 @@ func (db *PostDB) ReplaceCommentsPost(from, to int) {
 	_, _ = db.db.Exec(`UPDATE comments SET post_id=? WHERE post_id=?`, to, from)
 }
 
+// SourceCommentsForPost — кэш комментариев источника поста. Второй
+// результат true, если запись уже запрашивалась (тогда «нет комментариев» —
+// тоже достоверный ответ, и второй раз источник не опрашиваем).
+func (db *PostDB) SourceCommentsForPost(postID int, site string) ([]*SourceComment, bool) {
+	rows, err := db.read.Query(`SELECT cid, author, body, created_at FROM source_comments
+		WHERE post_id=? AND site=? ORDER BY cid ASC`, postID, site)
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+	out := make([]*SourceComment, 0, 8)
+	for rows.Next() {
+		c := &SourceComment{PostID: postID}
+		if err := rows.Scan(&c.ID, &c.Author, &c.Body, &c.CreatedAt); err != nil {
+			return out, true
+		}
+		out = append(out, c)
+	}
+	return out, true
+}
+
+// SourceCommentState — кэшированное состояние поста: есть ли комментарии
+// (проверено), сколько их и когда запрашивали. ready=false → источник ещё
+// не опрашивали, клиент должен сделать первый запрос.
+func (db *PostDB) SourceCommentState(postID int, site string) (comments []*SourceComment, count int, fetchedAt string, ready bool) {
+	// Состояние привязано к паре (пост, сайт): id в боре не глобален, и
+	// «проверяли hypnohub» ничего не говорит про gelbooru.
+	var n int
+	if err := db.read.QueryRow(`SELECT count, fetched_at FROM source_comments_state
+		WHERE post_id=? AND site=?`, postID, site).Scan(&n, &fetchedAt); err != nil {
+		// Нет записи — источник ещё не опрашивали.
+		comments, _ = db.SourceCommentsForPost(postID, site)
+		return comments, 0, "", false
+	}
+	comments, _ = db.SourceCommentsForPost(postID, site)
+	return comments, n, fetchedAt, true
+}
+
+// ReplaceSourceComments полностью заменяет кэш комментариев поста и
+// фиксирует comment_count (0 — «у поста их нет»).
+func (db *PostDB) ReplaceSourceComments(postID int, site string, list []*SourceComment) error {
+	return db.withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM source_comments WHERE post_id=? AND site=?`, postID, site); err != nil {
+			return err
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		stmt, err := tx.Prepare(`INSERT INTO source_comments
+			(post_id, site, cid, author, body, created_at, fetched_at) VALUES (?,?,?,?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for _, c := range list {
+			if c.Body == "" {
+				continue
+			}
+			cid := c.ID
+			if cid <= 0 {
+				// У части сайтов id не приходит — ключ всё равно должен быть.
+				cid = int(crc32.ChecksumIEEE([]byte(c.Author + "\x00" + c.Body + "\x00" + c.CreatedAt)))
+			}
+			if _, err := stmt.Exec(postID, site, cid, c.Author, c.Body, c.CreatedAt, now); err != nil {
+				return err
+			}
+		}
+		// Запись состояния создаётся даже для пустого списка: «у поста нет
+		// комментариев» — тоже достоверный ответ, второй раз не ходим.
+		if _, err := tx.Exec(`INSERT INTO source_comments_state (post_id, site, count, fetched_at)
+			VALUES (?,?,?,?) ON CONFLICT(post_id, site) DO UPDATE SET
+			count=excluded.count, fetched_at=excluded.fetched_at`, postID, site, len(list), now); err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE posts SET comment_count=?, has_comments=CASE WHEN ?>0 THEN 1 ELSE has_comments END
+			WHERE id=?`, len(list), len(list), postID)
+		return err
+	})
+}
+
+// DeleteSourceCommentsForPost — чистит кэш при удалении поста.
+func (db *PostDB) DeleteSourceCommentsForPost(postID int) {
+	_, _ = db.db.Exec(`DELETE FROM source_comments WHERE post_id=?`, postID)
+	_, _ = db.db.Exec(`DELETE FROM source_comments_state WHERE post_id=?`, postID)
+}
+
 // DeletePostRow удаляет запись поста целиком (теги уходят каскадом).
 // Файлы на диске и комментарии (если нужны) обрабатывает вызывающий код.
+// Кэш комментариев источника чистим здесь же — иначе он осиротеет.
 func (db *PostDB) DeletePostRow(id int) {
+	db.DeleteSourceCommentsForPost(id)
 	_, _ = db.db.Exec(`DELETE FROM posts WHERE id=?`, id)
 }
 

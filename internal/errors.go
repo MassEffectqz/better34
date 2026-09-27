@@ -39,6 +39,10 @@ var (
 	ErrProviderUnavailable = &AppError{Code: "provider_unavailable", Message: "источник постов недоступен", Status: http.StatusBadGateway}
 	ErrConfirmRequired     = &AppError{Code: "confirm_required", Message: "подтверждение обязательно", Status: http.StatusBadRequest}
 	ErrProfileFormat       = &AppError{Code: "profile_format_error", Message: "ожидается объект вида {\"profile\": {...}}", Status: http.StatusBadRequest}
+	// Комментарии источника (dapi s=comment).
+	ErrSourceCommentsFetch = &AppError{Code: "source_comments_failed", Message: "не удалось загрузить комментарии источника", Status: http.StatusBadGateway}
+	ErrSourceAuthFailed    = &AppError{Code: "source_auth_failed", Message: "источник отклонил API-ключ", Status: http.StatusBadGateway}
+	ErrSourceRateLimited   = &AppError{Code: "source_rate_limited", Message: "источник временно ограничил запросы, попробуйте позже", Status: http.StatusTooManyRequests}
 )
 
 // AbortWithError код —.abort with AppError, frontend переводит по code.
