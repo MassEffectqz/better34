@@ -83,6 +83,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .grid-opt{flex:1;min-width:44px;padding:6px 4px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.82rem;cursor:pointer;transition:all var(--transition)}
 .grid-opt:hover{background:var(--hover)}
 .grid-opt.active{background:var(--accent);border-color:var(--accent);color:#fff}
+/* .btn — базовая (вторичная) кнопка. Раньше её не было: .btn-sm — модификатор
+   (padding/font-size), который сам по себе ничего не красит, и кнопки вроде
+   «Выбрать» в профиле и кнопок панели выделения висели на голом <button>
+   браузера. .btn идёт до .btn-sm, поэтому мелкие отступы побеждают. */
+.btn{background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 12px;font-size:.85rem;font-family:inherit;cursor:pointer;transition:background var(--transition),border-color var(--transition),color var(--transition)}
+.btn:hover{background:var(--hover);border-color:var(--accent-dim)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn:disabled:hover{background:var(--surface2);border-color:var(--border)}
 .btn-primary{background:var(--accent);color:#fff;border:none;border-radius:var(--radius);padding:10px 24px;font-size:.95rem;font-weight:600;cursor:pointer;transition:background var(--transition),transform var(--transition),box-shadow var(--transition);display:inline-flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 3px 12px color-mix(in srgb,var(--accent-dim) 28%,transparent)}
 .btn-primary:hover{background:var(--accent-dim);transform:translateY(-1px);box-shadow:0 6px 16px color-mix(in srgb,var(--accent-dim) 38%,transparent)}
 .btn-primary:active{transform:translateY(0)}

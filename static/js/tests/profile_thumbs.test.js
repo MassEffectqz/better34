@@ -158,6 +158,31 @@ console.log('Профиль: лайки/скрытые — фильтры, со�
   check('скелетон и плитка в одних пропорциях',
     /aspect-ratio:\s*3\/4/.test(thumb) && /aspect-ratio:\s*3\/4/.test(skel), skel.slice(0, 140));
 }
+// ── 0б. Кнопки не висят на голом <button> ─────────────────────────────────
+// .btn-sm — модификатор (padding/font-size), базу даёт .btn/.btn-primary.
+// Кнопка «Выбрать» была `btn-sm pf-tool-btn` без базы, то есть рендерилась
+// стилем браузера по умолчанию и выбивалась из ряда чипов; там же не работал
+// .active, который вешает _syncThumbSelBar (стилизуется только .pf-chip.active).
+// Плюс панель выделения и «Скачать всё» — там base тоже был нулевой, а
+// кнопки гаснут через disabled, который никто не описывал.
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+  const html = fs.readFileSync(join(here, '..', '..', 'index.html'), 'utf8');
+  const css = fs.readFileSync(join(here, '..', '..', 'css', 'style.css'), 'utf8');
+  // Классы, дающие кнопке полный вид сами по себе.
+  const BASE = ['btn', 'btn-primary', 'preset-tag-btn'];
+  const bare = [];
+  for (const m of html.matchAll(/<button[^>]*class="([^"]*btn-sm[^"]*)"[^>]*>/g)) {
+    const cls = m[1].split(/\s+/);
+    if (!BASE.some((b) => cls.includes(b))) bare.push(m[0].slice(0, 90));
+  }
+  check('нет кнопок с btn-sm без базового класса', bare.length === 0, bare.join(' ~ ').slice(0, 200));
+  check('базовый класс .btn объявлен в CSS', /^\.btn\{/m.test(css));
+
+  const sel = html.match(/<button[^>]*data-act="selectMode"[^>]*>/g) || [];
+  check('кнопка «Выбрать» — чип (как соседи в ряду)',
+    sel.length === 2 && sel.every((s) => s.includes('pf-chip')), sel[0] || 'не найдена');
+}
 // ── 1. Фильтры ────────────────────────────────────────────────────────────
 {
   const a = makeApp();
