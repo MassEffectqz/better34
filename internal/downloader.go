@@ -669,6 +669,9 @@ func (d *Downloader) QueueList() []DownloadJob {
 	return out
 }
 
+// setQueueFile — путь к файлу очереди. Ставится только из тестов (в проде
+// очередь создаёт NewDownloader), но без него тесты не пишут очередь в
+// временный каталог. U1000 такое использование не видит — см. check:static.
 func (d *Downloader) setQueueFile(path string) {
 	d.queueFile = path
 }

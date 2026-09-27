@@ -140,13 +140,15 @@ func TestTagAliasHandlers(t *testing.T) {
 	if code != http.StatusOK || out["target"] != "neko" {
 		t.Fatalf("POST: %d %v", code, out)
 	}
-	code, out = do("POST", "/api/tag-alias", `{"alias":"a","target":"a"}`)
+	// Ответ этого POST разбирать не нужно — важен только код, поэтому out
+	// и не читаем (иначе staticcheck ругается на неиспользуемое значение).
+	code, _ = do("POST", "/api/tag-alias", `{"alias":"a","target":"a"}`)
 	if code != http.StatusBadRequest {
 		t.Fatalf("alias==target должен отклоняться: %d", code)
 	}
 	code, out = do("GET", "/api/tag-aliases", "")
 	if code != http.StatusOK {
-		t.Fatalf("GET: %d", code)
+		t.Fatalf("GET /api/tag-aliases: %d", code)
 	}
 	aliases, _ := out["aliases"].([]any)
 	if len(aliases) != 1 {

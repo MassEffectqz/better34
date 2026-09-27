@@ -314,7 +314,9 @@ func (h *Handler) OddTags(c *gin.Context) {
 	c.JSON(200, d)
 }
 
-// sortedOddKeys — для логов и тестов: ключи map идут случайно, нужен порядок.
+// sortedOddKeys — ключи map в стабильном порядке: обход map случаен, а в
+// тестах и логах нужен воспроизводимый вывод. U1000 использование из тестов
+// не видит — см. check:static.
 func sortedOddKeys(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

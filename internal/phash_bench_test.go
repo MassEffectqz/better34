@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 // ─── Эталонная (старая) реализация: полный скан всех строк ────────────────
@@ -23,10 +22,6 @@ func (db *PostDB) similarPHashFullScan(phash string, excludeID, limit, maxDist i
 		return nil
 	}
 	defer rows.Close()
-	type scored struct {
-		p    *Post
-		dist int
-	}
 	var candidates []scoredPost
 	for rows.Next() {
 		p, err := scanPost(rows.Scan)
@@ -45,7 +40,10 @@ func (db *PostDB) similarPHashFullScan(phash string, excludeID, limit, maxDist i
 	if err := rows.Err(); err != nil {
 		return nil
 	}
-	sortPHashCandidates(candidates, limit)
+	// Возвращаем результат: срез передаётся по значению, и присваивание
+	// c = c[:limit] внутри функции обрезало бы локальную копию — вызывающий
+	// получил бы полный список, а лимит не сработал бы.
+	candidates = sortPHashCandidates(candidates, limit)
 	out := make([]*Post, 0, len(candidates))
 	for _, c := range candidates {
 		out = append(out, c.p)
@@ -89,7 +87,7 @@ type scoredPost struct {
 	dist int
 }
 
-func sortPHashCandidates(c []scoredPost, limit int) {
+func sortPHashCandidates(c []scoredPost, limit int) []scoredPost {
 	for i := 1; i < len(c); i++ {
 		for j := i; j > 0 && (c[j].dist < c[j-1].dist); j-- {
 			c[j], c[j-1] = c[j-1], c[j]
@@ -98,6 +96,7 @@ func sortPHashCandidates(c []scoredPost, limit int) {
 	if len(c) > limit {
 		c = c[:limit]
 	}
+	return c
 }
 
 func newBenchmarkDB(t *testing.B, n int) (*PostDB, []string) {
@@ -248,6 +247,5 @@ func BenchmarkETagGeneration(b *testing.B) {
 	}
 }
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
+// Глобальный math/rand с Go 1.20 сеется случайно сам, поэтому rand.Seed
+// здесь был лишним (и deprecated).

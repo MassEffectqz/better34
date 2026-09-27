@@ -249,9 +249,10 @@ func TestTagSourcePreviewFallsBackWhenLibraryEmpty(t *testing.T) {
 	if !strings.Contains(first.Thumb, "101.jpg") {
 		t.Errorf("в url обложки нет превью поста: %q", first.Thumb)
 	}
-	// Честная пометка: это не скачанные посты.
-	if first.Downloaded || first.Site != "rule34" {
-		t.Errorf("обложка помечена как скачанная: %+v", first)
+	// Честная пометка: это не скачанные посты. Отдельного флага downloaded у
+	// обложки больше нет — источник клиент узнаёт по блоку source в ответе.
+	if first.Site != "rule34" {
+		t.Errorf("источник обложки не указан: %+v", first)
 	}
 	if sp.calls != 1 {
 		t.Errorf("источник опрошен %d раз, want 1", sp.calls)

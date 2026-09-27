@@ -1382,9 +1382,8 @@ func (db *PostDB) RelatedTags(tag string, limit int) []*TagRelated {
 		return nil
 	}
 	type cand struct {
-		tag  string
-		co   int
-		freq int
+		tag string
+		co  int
 	}
 	cands := make([]cand, 0, 64)
 	for rows.Next() {

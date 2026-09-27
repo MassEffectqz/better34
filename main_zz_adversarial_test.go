@@ -18,7 +18,6 @@ func TestAdversarialIndexHTMLRace(t *testing.T) {
 	versionMu.Lock()
 	versionVal = "seed-a"
 	lastWalk = time.Time{}
-	indexOnce = sync.Once{}
 	versionMu.Unlock()
 
 	stop := make(chan struct{})

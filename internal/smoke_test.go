@@ -2,7 +2,6 @@ package internal
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -279,6 +278,6 @@ func TestLiveKeyRotation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("SearchPosts(%q) failed: %v", q, err)
 		}
-		t.Logf("rotation %d: key ...%s got %d posts\n", i+1, fmt.Sprintf("%s", "?"), len(posts))
+		t.Logf("rotation %d: key ...%s got %d posts\n", i+1, "?", len(posts))
 	}
 }

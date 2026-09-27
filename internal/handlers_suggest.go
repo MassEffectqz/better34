@@ -307,14 +307,15 @@ type TagPreview struct {
 	Source *TagSourcePreview `json:"source,omitempty"`
 }
 
-// TagPreviewPost — обложка поста в мини-сетке превью.
+// TagPreviewPost — обложка поста в мини-сетке превью. Поле downloaded было
+// лишним: клиент отличает превью с источника по отдельному блоку source, само
+// значение всегда было false и только раздувало ответ.
 type TagPreviewPost struct {
-	ID         int    `json:"id"`
-	Thumb      string `json:"thumb"`
-	W          int    `json:"width"`
-	H          int    `json:"height"`
-	Downloaded bool   `json:"downloaded"` // false → превью с источника
-	Site       string `json:"site,omitempty"`
+	ID    int    `json:"id"`
+	Thumb string `json:"thumb"`
+	W     int    `json:"width"`
+	H     int    `json:"height"`
+	Site  string `json:"site,omitempty"`
 }
 
 // TagSourcePreview — результат поиска тега на активном источнике. Показываем

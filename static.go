@@ -34,7 +34,6 @@ var frontendFS embed.FS
 var (
 	indexHTML  []byte
 	indexError error
-	indexOnce  sync.Once
 
 	versionMu    sync.Mutex
 	versionVal   string
@@ -173,8 +172,9 @@ func staticVersion() string {
 	return versionVal
 }
 
-func refreshStaticVersion() { walkStaticVersion(false) }
-
+// loadIndex отдаёт актуальный index.html вместе с пересчитанной версией
+// статики. Живёт ради теста гонки версий: в проде serveIndex читает те же поля
+// под versionMu сам. U1000 использование из тестов не видит — см. check:static.
 func loadIndex() ([]byte, error) {
 	staticVersion()
 	versionMu.Lock()

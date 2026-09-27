@@ -33,9 +33,17 @@ jobs:
         run: git diff --exit-code -- static/js/dist
       - name: i18n keys (parity, duplicates, placeholders, unused)
         run: npm run check:i18n
+      - name: //go:embed targets (fresh clone must build)
+        run: npm run check:embed
+      - name: Batch script traps (unbalanced parens, metachars in for /f)
+        run: npm run check:batch
       - name: Mobile/touch invariants
         run: npm run check:mobile
       - name: Go quality gate
         run: npm run check:go
+      - name: staticcheck (unused-code check U1000 отключён намеренно)
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+          "$(go env GOPATH)/bin/staticcheck" -checks=inherit,-U1000 . ./internal/...
       - name: Go race tests
         run: npm run check:race

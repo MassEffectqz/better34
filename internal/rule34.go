@@ -559,7 +559,20 @@ func (m *keyManager) sync(creds []APICredential) {
 	m.syncLocked(creds)
 }
 
-// syncLocked вызывает под уже взятым m.mu.
+// healthyCount — сколько ключей сейчас не на карантине. Нужен тестам
+// ротации. U1000 использование из тестов не видит — см. check:static.
+func (m *keyManager) healthyCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	n := 0
+	for i := range m.keys {
+		if now.After(m.keys[i].excludedUntil) {
+			n++
+		}
+	}
+	return n
+}
 func (m *keyManager) syncLocked(creds []APICredential) {
 	byKey := make(map[string]*keyState, len(m.keys))
 	for i := range m.keys {
@@ -640,19 +653,6 @@ func (m *keyManager) report(apiKey string, ok bool, why string) {
 		}
 		return
 	}
-}
-
-func (m *keyManager) healthyCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	now := time.Now()
-	n := 0
-	for i := range m.keys {
-		if now.After(m.keys[i].excludedUntil) {
-			n++
-		}
-	}
-	return n
 }
 
 type suggestionCacheEntry struct {

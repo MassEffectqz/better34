@@ -662,7 +662,11 @@ select.ss-rate option{color:#111;background:#fff}
 .tag-popover.hidden{display:none}
 .tag-pop-head{font-weight:600;font-size:.82rem;word-break:break-all;margin-bottom:8px}
 .tag-pop-count{color:var(--text-dim);font-weight:400;margin-left:4px}
-.tag-pop-covers{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:min(46vh,240px);overflow-y:auto;overscroll-behavior:contain}
+.tag-pop-covers{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+/* Внутренней прокрутки у сетки нет намеренно: её ограничивал max-height с
+   overflow-y:auto, и получалось ДВА вложенных скролла (контейнер подсказки +
+   сетка). На тач-устройствах внутренний перехватывал жест, и сетка
+   прокручивалась вместо всей подсказки. Потолок и прокрутка — на .tag-popover. */
 /* Ячейка обложки: всегда квадратная, картинка вписывается целиком (contain).
    Раньше пропорции тянулись из БД, строки получались разной высоты, картинки
    обрезались по object-fit:cover, а сетка меняла высоту по мере загрузки —

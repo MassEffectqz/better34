@@ -28,4 +28,24 @@ if (formatted.stdout.trim()) {
 
 run('go', ['build', '.', './internal/...']);
 run('go', ['vet', '.', './internal/...']);
+
+// staticcheck ловит то, чего не видит go vet: sqlrowserr, устаревшие API,
+// подозрительные конструкции. Устанавливается отдельно
+// (go install honnef.co/go/tools/cmd/staticcheck@2025.1.1), в CI — обязателен,
+// локально гейт его пропускает с явной пометкой, чтобы npm run check не
+// требовал сетевую установку.
+//
+// U1000 (unused) отключён НАМЕРЕННО: он не учитывает использование из
+// _test.go и требовал удалять хелперы, на которых держатся тесты (проверено:
+// setQueueFile, keyManager.sync/healthyCount, sortedOddKeys). Такие помечены
+// комментарием со ссылкой на этот файл.
+const hasStaticcheck = spawnSync('staticcheck', ['-version'], { stdio: 'ignore' }).error == null
+  && spawnSync('staticcheck', ['-version'], { stdio: 'ignore' }).status === 0;
+if (hasStaticcheck) {
+  console.log('staticcheck: SA/S/ST/QF (-U1000)…');
+  run('staticcheck', ['-checks=inherit,-U1000', '.', './internal/...']);
+} else {
+  console.log('staticcheck: не установлен — пропускаю (в CI обязателен)');
+}
+
 run('go', ['test', '.', './internal/...']);
