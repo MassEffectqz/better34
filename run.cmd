@@ -87,6 +87,10 @@ rem     падал на //go:embed all:static/js/dist, а с ним прилож
 rem     десятки несобранных модулей вместо одного файла. Собираем, если бандла
 rem     нет или он старше исходников (пересборка меняет mtime и тем самым
 rem     версию ?v= в index.html, поэтому лишние пересборки нежелательны).
+rem ВНИМАНИЕ, батч: внутри блока ( ... ) скобки в тексте echo — это уже
+rem вложенная группа команд, а всё после неё cmd считает командой и падает с
+rem «Непредвиденное появление: ...». Отсюда «(npm run build)» заменено на
+rem запятую. В rem-строках скобки безопасны.
 set "NEEDBUILD="
 for /f "usebackq delims=" %%T in (`node scripts\need-frontend-build.mjs`) do set "NEEDBUILD=1"
 if defined NEEDBUILD (
@@ -98,7 +102,7 @@ if defined NEEDBUILD (
       echo [1/2] npm install...
       call npm install --no-audit --no-fund
     )
-    echo [2/2] building frontend bundle (npm run build)...
+    echo [2/2] building frontend bundle, npm run build...
     call npm run build
   )
 )
