@@ -2,7 +2,17 @@ package internal
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Спека Safebooru зафиксирована живыми запросами к API (2026-08):
@@ -32,9 +42,135 @@ func TestSafebooruNoIDBatches(t *testing.T) {
 	if safebooruSite.batchIDs || safebooruSite.idListParam || safebooruSite.supportsMinID || safebooruSite.supportsSort {
 		t.Errorf("batchIDs/idListParam/supportsMinID/supportsSort должны быть false")
 	}
-	if !rule34Site.batchIDs || !gelbooruSite.batchIDs {
-		t.Errorf("rule34/gelbooru должны поддерживать пакетный запрос id")
+	if !rule34Site.batchIDs {
+		t.Errorf("rule34: пакетный список id работает, batchIDs обязан быть true")
 	}
+	if !hypnohubSite.batchIDs {
+		t.Errorf("hypnohub: список id=1,2,3 проверен живым запросом, batchIDs обязан быть true")
+	}
+}
+
+// ── Gelbooru: список id НЕ поддержан ──────────────────────────────────────
+// Проверено живыми запросами к dapi (2026-09):
+//
+//	id=1,2,3            → 3 поста, но id=[14980512, 14980511, 14980510] (свежие)
+//	id=900000,900001,.. → те же свежие посты, прос��анные id не учтены
+//	без id вовсе         → ровно то же самое
+//	id=14856425 (один)  → возвращает именно пост 14856425
+//
+// То есть параметр id у Gelbooru понимает РОВНО ОДИН id, а список молча
+// игнорирует, подставляя обычную выдачу. Раньше спека считала, что списки
+// работают, и пакетный путь GetPostsByIDs слал id=1,2,3: при 84 непроверенных
+// постах пользователь получал 84 чужих поста в ответе, все id уходили в
+// unresolved, и автоперепроверка выглядела как «ничего не происходит».
+func TestGelbooruNoIDBatches(t *testing.T) {
+	if gelbooruSite.batchIDs {
+		t.Errorf("gelbooruSite.batchIDs = true: список id Gelbooru не поддерживает, нужен путь одиночных запросов")
+	}
+	if !gelbooruSite.idListParam {
+		t.Errorf("gelbooruSite.idListParam = false: одиночный id= работает и ходит через отдельный параметр")
+	}
+	if !rule34Site.batchIDs {
+		t.Errorf("rule34Site.batchIDs = false: у rule34 пакетный список id работает")
+	}
+	if hypnohubSite.batchIDs == false {
+		t.Errorf("hypnohubSite.batchIDs = false: список id=1,2,3 проверен живым запросом")
+	}
+}
+
+// Сквозной сценарий: сервер-подделка повторяет поведение Gelbooru — список id
+// игнорирует и отдаёт «свежие» посты, одиночный id отдаёт как есть. Без
+// одиночных запросов GetPostsByIDs не вернёт ничего, и плитки останутся
+// заглушками навсегда.
+func TestGelbooruPostsByIDsUseSingleRequests(t *testing.T) {
+	const fresh = 14980512 // «свежий» пост, который сервер подсовывает вместо списка
+	var mu sync.Mutex
+	seen := make([]string, 0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw := r.URL.Query().Get("id")
+		mu.Lock()
+		seen = append(seen, raw)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		// preview_url намеренно пустой: иначе фоновый warmPreviewCache после
+		// ответа полезет в сеть и уронит тест — здесь проверяется только
+		// разбор ответа на нужные id.
+		post := func(id int) string {
+			return `{"id":` + strconv.Itoa(id) + `,"file_url":"","preview_url":"","tags":"a b","width":100,"height":100}`
+		}
+		if raw == "" || strings.Contains(raw, ",") {
+			// Список (или его отсутствие): отдаём посты, которых не просили.
+			w.Write([]byte("[" + post(fresh) + "]"))
+			return
+		}
+		w.Write([]byte("[" + post(atoiOr(raw, fresh)) + "]"))
+	}))
+	defer srv.Close()
+
+	cl := NewGelbooruClient()
+	cl.spec.apiURL = srv.URL
+	cl.httpClient.Store(&http.Client{})
+	seedTestKeys(cl, []APICredential{{Name: "t", APIKey: "fake-gelbooru-key", UserID: "1"}})
+	cl.cache = newBooruCache(filepath.Join(t.TempDir(), "sc.json"))
+	cl.breaker.failures = 0
+	cl.breaker.openUntil = time.Time{}
+
+	h := &Handler{providers: map[string]Provider{"gelbooru": cl}}
+	// provider() смотрит активного провайдера в конфиге и только потом
+	// откатывается на defaultProviderName, поэтому без этого тест ушёл бы в
+	// nil и объявил все id unresolved — ровно тот симптом, который чиним.
+	cfg := GetConfig()
+	prev := cfg.GetProvider()
+	cfg.SetProvider("gelbooru")
+	t.Cleanup(func() { cfg.SetProvider(prev) })
+
+	// id из диапазона, который не встречается в других тестах пакета: БД
+	// общая на весь прогон (TestMain её не изолирует), и запись сюда попадает
+	// через UpsertMetaMany — чужой тест с такими же id получил бы их «из
+	// локальной БД» и не увидит источник.
+	const idA, idB, idC = 7001101, 7001102, 7001103
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", fmt.Sprintf("/posts-by-ids?ids=%d,%d,%d", idA, idB, idC), nil)
+	h.GetPostsByIDs(c)
+
+	var resp struct {
+		Posts []struct {
+			ID int `json:"id"`
+		} `json:"posts"`
+		Unresolved []int `json:"unresolved"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := map[int]bool{}
+	for _, p := range resp.Posts {
+		got[p.ID] = true
+	}
+	for _, want := range []int{idA, idB, idC} {
+		if !got[want] {
+			t.Errorf("пост %d не вернулся: ответ posts=%v unresolved=%v",
+				want, got, resp.Unresolved)
+		}
+	}
+	if got[fresh] {
+		t.Errorf("в ответ попал посторонний пост %d, которого не просили", fresh)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, raw := range seen {
+		if strings.Contains(raw, ",") {
+			t.Errorf("Gelbooru получил список id=%q: такой запрос он игнорирует", raw)
+		}
+	}
+}
+
+func atoiOr(s string, def int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 // Спека Hypnohub зафиксирована живыми запросами к API (2026-08):

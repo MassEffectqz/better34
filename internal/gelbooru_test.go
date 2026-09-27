@@ -86,14 +86,18 @@ func TestGelbooruIDListParam(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestGelbooru(srv.URL)
-	if _, err := c.SearchPosts("id:1,2,3", 1, 3, 0); err != nil {
+	// Одиночный id уходит в отдельный параметр id= и работает: проверено живым
+	// запросом (id=14856425 вернул именно пост 14856425). СПИСОК id Gelbooru не
+	// поддерживает вовсе — см. TestGelbooruNoIDBatches, поэтому пакетные выборки
+	// идут по одному id, а не через этот параметр.
+	if _, err := c.SearchPosts("id:5", 1, 3, 0); err != nil {
 		t.Fatalf("SearchPosts failed: %v", err)
 	}
-	if gotID != "1,2,3" {
-		t.Errorf("expected id=1,2,3 param, got %q (tags=%q)", gotID, gotTags)
+	if gotID != "5" {
+		t.Errorf("expected id=5 param, got %q (tags=%q)", gotID, gotTags)
 	}
 	if gotTags != "" {
-		t.Errorf("tags should be empty for id batch, got %q", gotTags)
+		t.Errorf("tags should be empty for id query, got %q", gotTags)
 	}
 }
 

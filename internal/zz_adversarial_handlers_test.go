@@ -52,10 +52,15 @@ func TestAdversarialCleanDuplicatesWithoutConfirm(t *testing.T) {
 // Сбой источника обязан попадать в отдельный unresolved, иначе живой пост
 // навечно помечается недоступным (одна сетевая ошибка — и статус закреплён).
 func TestAdversarialPostsByIDsReportsUnresolved(t *testing.T) {
+	// id из диапазона, не занятого другими тестами пакета: БД общая на весь
+	// прогон, и запись от соседнего теста (UpsertMetaMany) сделала бы эти id
+	// «найденными в локальной БД» — до источника дело не дойдёт, и проверка
+	// молча потеряла бы смысл.
+	const idA, idB = 7001201, 7001202
 	h := &Handler{providers: map[string]Provider{"rule34": &stubTagProvider{name: "rule34"}}}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/posts-by-ids?ids=111,222", nil)
+	c.Request = httptest.NewRequest("GET", fmt.Sprintf("/posts-by-ids?ids=%d,%d", idA, idB), nil)
 	h.GetPostsByIDs(c)
 
 	var resp struct {
@@ -72,8 +77,8 @@ func TestAdversarialPostsByIDsReportsUnresolved(t *testing.T) {
 	}
 	got := append([]int(nil), resp.Unresolved...)
 	sort.Ints(got)
-	if len(got) != 2 || got[0] != 111 || got[1] != 222 {
-		t.Errorf("unresolved=%v, want [111 222]", got)
+	if len(got) != 2 || got[0] != idA || got[1] != idB {
+		t.Errorf("unresolved=%v, want [%d %d]", got, idA, idB)
 	}
 }
 
@@ -84,9 +89,12 @@ func TestAdversarialPostsByIDsReportsUnresolved(t *testing.T) {
 // «Лайки»/«Скрытые» трактует отсутствие как удалённый пост и навечно рисует
 // «#id · недоступен» — без кнопки повтора, хотя пост жив и его можно переспросить.
 func TestAdversarialPostsByIDsIgnoredIDListIsUnresolved(t *testing.T) {
+	// Уникальный диапазон id: БД общая на весь прогон пакета, и если такой id
+	// уже лежит в ней, до источника дело не дойдёт — тест молча потеряет смысл.
+	const idA, idB = 7001301, 7001302
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// Просили 111,222 — отдали посторонние посты.
+		// Просили idA,idB — отдали посторонний пост.
 		w.Write([]byte(`[{"id":9001,"file_url":"https://x/1.jpg","preview_url":"https://x/1p.jpg","tags":"a"}]`))
 	}))
 	defer srv.Close()
@@ -102,7 +110,7 @@ func TestAdversarialPostsByIDsIgnoredIDListIsUnresolved(t *testing.T) {
 	h := &Handler{providers: map[string]Provider{"rule34": cl}}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/posts-by-ids?ids=111,222", nil)
+	c.Request = httptest.NewRequest("GET", fmt.Sprintf("/posts-by-ids?ids=%d,%d", idA, idB), nil)
 	h.GetPostsByIDs(c)
 
 	var resp struct {
@@ -116,14 +124,14 @@ func TestAdversarialPostsByIDsIgnoredIDListIsUnresolved(t *testing.T) {
 	}
 	// Чужие посты в ответ попадать не должны — это не те id, что просили.
 	for _, p := range resp.Posts {
-		if p.ID != 111 && p.ID != 222 {
+		if p.ID != idA && p.ID != idB {
 			t.Errorf("в ответе чужой пост id=%d", p.ID)
 		}
 	}
 	got := append([]int(nil), resp.Unresolved...)
 	sort.Ints(got)
-	if len(got) != 2 || got[0] != 111 || got[1] != 222 {
-		t.Errorf("BUG G8b: источник проигнорировал список id, но id пропали молча: unresolved=%v, want [111 222]", got)
+	if len(got) != 2 || got[0] != idA || got[1] != idB {
+		t.Errorf("BUG G8b: источник проигнорировал список id, но id пропали молча: unresolved=%v, want [%d %d]", got, idA, idB)
 	}
 }
 

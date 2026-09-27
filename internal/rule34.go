@@ -172,11 +172,20 @@ var gelbooruSite = siteSpec{
 	wrappedResp:   true,
 	supportsMinID: false,
 	supportsSort:  false,
-	idListParam:   true,
-	batchIDs:      true,
-	suggestMode:   "tagindex",
-	cacheFile:     "data/cache/search_cache_gelbooru.json",
-	maxQueryLen:   1900,
+	// ВАЖНО (проверено живыми запросами к dapi 2026-09): параметр id у
+	// Gelbooru понимает РОВНО ОДИН id. Список id=1,2,3 молча игнорируется —
+	// приходит обычная свежая выдача ровно на limit постов, причём limit
+	// соблюдается, поэтому такой ответ неотличим от успеха. Одиночный
+	// id=14856425 при этом работает, поэтому idListParam остаётся включённым,
+	// а batchIDs выключен: пакетные выборки идут путём одиночных обращений
+	// (providerSingleID) с ограничением параллелизма. При batchIDs=true
+	// вкладки «Лайки»/«Скрытые» получали чужие посты вместо запрошенных —
+	// см. TestGelbooruNoIDBatches.
+	idListParam: true,
+	batchIDs:    false,
+	suggestMode: "tagindex",
+	cacheFile:   "data/cache/search_cache_gelbooru.json",
+	maxQueryLen: 1900,
 }
 
 // safebooruSite — SFW-клон Gelbooru 0.2 (safebooru.org). Проверено живыми

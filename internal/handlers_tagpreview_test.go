@@ -208,6 +208,16 @@ type stubTagProvider struct {
 func (s *stubTagProvider) Name() string        { return s.name }
 func (s *stubTagProvider) DisplayName() string { return s.name }
 
+// Стаб встраивает nil-интерфейс Provider, поэтому всё нереализованное падает
+// при вызове. GetPostsByIDs на конце запускает go warmPreviewCache(h, entries),
+// и тот для каждого превью зовёт proxyHostAllowed → AllowsHost: без этих
+// методов фоновая горутина паникует и роняет ВЕСЬ прогон тестов, а не только
+// этот тест. Поэтому замыкаем всё, до чего дотягиваются фоновые обработчики.
+// AllowsHost=false — чтобы warm не полез в сеть по фейковым URL.
+func (s *stubTagProvider) AllowsHost(string) bool { return false }
+func (s *stubTagProvider) RefererURL() string     { return "" }
+func (s *stubTagProvider) MaxQueryLen() int       { return 1900 }
+
 func (s *stubTagProvider) SearchPosts(tags string, page, limit, minID int) ([]Rule34Post, error) {
 	s.calls++
 	if s.err != nil {
