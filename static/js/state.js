@@ -112,7 +112,7 @@ export const App = {
       btnCollectionsZipAll: _('btn-collections-zip-all'),
       batchZip: _('batch-zip'),
       btnExportProfile: _('btn-export-profile'), btnImportProfile: _('btn-import-profile'), profileImportFile: _('profile-import-file'),
-      btnQRLogin: _('btn-qr-login'), btnRemotePush: _('btn-remote-push'), viewerSimilar: _('viewer-similar'),
+      btnQRLogin: _('btn-qr-login'),
       viewerSource: _('viewer-source'), backToTop: _('back-to-top'),
     };
     this.loadTheme();
@@ -606,12 +606,6 @@ export const App = {
     if (e.btnImportProfile) e.btnImportProfile.addEventListener('click', () => e.profileImportFile.click());
     if (e.profileImportFile) e.profileImportFile.addEventListener('change', (ev) => go(this.importProfile(ev)));
     if (e.btnQRLogin) e.btnQRLogin.addEventListener('click', () => this.showQRLogin());
-    if (e.btnRemotePush) e.btnRemotePush.addEventListener('click', () => this.remotePushCurrent());
-    if (e.viewerSimilar) {
-      // Ctrl/Cmd+ЛКМ и средняя кнопка — глубокая ссылка /similar/<id> в новой вкладке.
-      e.viewerSimilar.addEventListener('click', (ev) => this.onSimilarClick(ev));
-      e.viewerSimilar.addEventListener('auxclick', (ev) => this.onSimilarAuxClick(ev));
-    }
     if (e.viewerSource) {
       e.viewerSource.addEventListener('click', (ev) => this.onSourceClick(ev));
       e.viewerSource.addEventListener('auxclick', (ev) => this.onSourceAuxClick(ev));
