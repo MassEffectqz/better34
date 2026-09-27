@@ -161,11 +161,13 @@ const tagPopoverGrid = (posts, fromSource) =>
   posts.map((p) => {
     // У скачанных обложка ведёт на /api/thumb/:id (её кэширует SW, т.е. есть
     // офлайн), у найденных на бору — прямо на превью через прокси.
-    const ar = p.width && p.height ? ' style="aspect-ratio:' + p.width + '/' + p.height + '"' : '';
+    // Пропорции картинки НЕ задаём: ячейка квадратная, картинка вписывается
+    // целиком. Иначе высоты строк разъезжались, картинки обрезались, а сетка
+    // меняла высоту по мере загрузки — и всплывашка прыгала под курсором.
     const title = fromSource
       ? t('tagPreview.sourceOpen', { id: p.id, site: p.site || '' })
       : t('tagPreview.openPost', { id: p.id });
-    return '<button type="button" class="tag-pop-cover" data-post="' + p.id + '"' + ar +
+    return '<button type="button" class="tag-pop-cover" data-post="' + p.id + '"' +
       ' title="' + esc(title) + '">' +
       (p.thumb ? '<img loading="lazy" decoding="async" alt="" src="' + esc(p.thumb) + '">' : '') +
       '</button>';
@@ -246,10 +248,17 @@ App.bindTagPopover = function () {
     const el = target && target.closest ? target.closest('[data-tag]') : null;
     if (!el) return;
     const tag = el.dataset.tag;
-    if (!tag || tag === this._tagPopTag) return;
+    if (!tag) return;
+    // Чип смежного тега лежит ВНУТРИ всплывашки. Якорем он быть не может:
+    // позиция считалась бы от элемента внутри самой всплывашки, и она
+    // улетала при наведении. Держим позицию по исходному тегу на странице.
+    const inPop = el.closest('.tag-popover');
+    const anchor = inPop ? this._tagPopAnchor : el;
+    if (!anchor || !anchor.isConnected) return;
+    if (!inPop && tag === this._tagPopTag) return;
     this._tagPopTag = tag;
     this._tagPopTimer && clearTimeout(this._tagPopTimer);
-    this._tagPopTimer = setTimeout(() => this.showTagPopover(tag, el), HOVER_DELAY);
+    this._tagPopTimer = setTimeout(() => this.showTagPopover(tag, anchor), HOVER_DELAY);
   };
   const leave = (ev) => {
     const from = ev.target;

@@ -632,10 +632,14 @@ select.ss-rate option{color:#111;background:#fff}
 /* Всплывашка тега: счётчик постов, обложки и смежные теги. */
 .tag-popover{
   position:fixed;z-index:var(--z-tooltip);width:300px;
-  /* Всплывашка не должна вылезать за экран: по высоте ограничиваемся окном
-     и даём внутреннюю прокрутку, по ширине — тоже (узкие экраны). */
-  max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow-y:auto;
-  overscroll-behavior:contain;
+  /* Всплывашка не должна вылезать за экран: по высоте ограничиваемся и окном,
+     и разумным пределом. Предел важен и для устойчивости: пока контент растёт
+     (сначала локальный, потом блок с бору), всплывашка меняет высоту, и при
+     переносе с «под тегом» на «над тегом» она прыгала под курсором. С
+     потолком высота стабильна, а лишнее уезжает во внутреннюю прокрутку. */
+  max-width:calc(100vw - 16px);
+  max-height:min(calc(100vh - 16px),420px);
+  overflow-y:auto;overscroll-behavior:contain;
   /* Непрозрачный фон: --surface2, как у выпадающих списков подсказок.
      Раньше стоял несуществующий --surface1, и блок оставался вовсе без фона. */
   background:var(--surface2);
@@ -646,9 +650,13 @@ select.ss-rate option{color:#111;background:#fff}
 .tag-pop-head{font-weight:600;font-size:.82rem;word-break:break-all;margin-bottom:8px}
 .tag-pop-count{color:var(--text-dim);font-weight:400;margin-left:4px}
 .tag-pop-covers{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:min(46vh,240px);overflow-y:auto;overscroll-behavior:contain}
+/* Ячейка обложки: всегда квадратная, картинка вписывается целиком (contain).
+   Раньше пропорции тянулись из БД, строки получались разной высоты, картинки
+   обрезались по object-fit:cover, а сетка меняла высоту по мере загрузки —
+   из-за этого всплывашка прыгала прямо под курсором. */
 .tag-pop-cover{position:relative;padding:0;border:none;background:var(--surface3);cursor:pointer;
   border-radius:var(--radius-sm);overflow:hidden;aspect-ratio:1/1;min-height:42px}
-.tag-pop-cover img{width:100%;height:100%;object-fit:cover;display:block}
+.tag-pop-cover img{width:100%;height:100%;object-fit:contain;display:block;background:var(--surface3)}
 .tag-pop-cover:hover{outline:2px solid var(--accent);outline-offset:-2px}
 /* Превью с бору: посты не скачаны — помечаем пунктиром и подписью, но по
    клику открываются во вьюере, поэтому остаются кликабельными. */

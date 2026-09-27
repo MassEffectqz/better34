@@ -103,7 +103,8 @@ a.API = { get: (u) => {
   });
   check('заголовок со счётчиком', /blue_hair/.test(body) && /128/.test(body), body.slice(0, 120));
   check('обложка кликабельна и несёт id', /data-post="11"/.test(body), body.slice(0, 240));
-  check('пропорции обложки', /aspect-ratio:800\/600/.test(body), body.slice(0, 240));
+  check('обложка без inline-пропорций (квадратная ячейка)',
+    !/aspect-ratio/.test(body), body.slice(0, 240));
   check('смежный тег кликабелен', /data-tag="long_hair"/.test(body) && /90/.test(body), body.slice(0, 320));
 
   // Пустые данные: подсказка вместо пустой сетки, без «undefined».
@@ -218,6 +219,34 @@ a.API = { get: (u) => {
   a.showTagPopover('cached', anchor);
   await new Promise((r) => setTimeout(r, 0));
   check('кэш не заражается служебной пометкой', cached.__searching === undefined, String(cached.__searching));
+
+  // Регрессия: чип смежного тега лежит ВНУТРИ всплывашки. Если он становится
+  // якорем, позиция считается от элемента внутри самой всплывашки — и она
+  // улетает. Якорем обязан остаться исходный тег на странице.
+  const handlers = {};
+  document.addEventListener = (ev, fn) => { (handlers[ev] = handlers[ev] || []).push(fn); };
+  a.bindTagPopover();
+  const outer = { isConnected: true, dataset: { tag: 'blue_hair' }, closest: () => null };
+  const chip = {
+    isConnected: true,
+    dataset: { tag: 'smile' },
+    closest: (sel) => (sel === '.tag-popover' ? {} : sel === '[data-tag]' ? chip : null),
+  };
+  a._tagPopAnchor = outer;
+  const shown = [];
+  a.showTagPopover = (tag, anchor) => { shown.push([tag, anchor]); };
+  handlers.mouseover[0]({ target: chip });
+  await new Promise((r) => setTimeout(r, 260));
+  check('чип внутри всплывашки не становится якорем',
+    shown.length === 1 && shown[0][0] === 'smile' && shown[0][1] === outer,
+    JSON.stringify(shown.map((s) => s[0])));
+
+  // Обычный тег на странице — наоборот, становится якорем.
+  const pageTag = { isConnected: true, dataset: { tag: 'long_hair' }, closest: (s) => (s === '[data-tag]' ? pageTag : null) };
+  handlers.mouseover[0]({ target: pageTag });
+  await new Promise((r) => setTimeout(r, 260));
+  check('тег на странице — якорь', shown.length === 2 && shown[1][1] === pageTag,
+    JSON.stringify(shown.map((s) => s[0])));
 
   console.log(`\nИтог: ${passed} ok, ${failed} fail`);
   if (failed) process.exit(1);
