@@ -248,6 +248,36 @@ a.API = { get: (u) => {
   check('тег на странице — якорь', shown.length === 2 && shown[1][1] === pageTag,
     JSON.stringify(shown.map((s) => s[0])));
 
+  // Главное: подсказка не должна прятаться, пока курсор в ней. Проверяем
+  // решение по elementFromPoint, а не по воле событий.
+  let under = null;
+  document.elementFromPoint = () => under;
+  a._tagPop = pop;
+  const anchorChild = { closest: () => null };
+  a._tagPopAnchor = { contains: (n) => n === anchorChild };
+  a._tagPointer = { x: 10, y: 10 };
+
+  const inPopChild = { closest: (s) => (s === '.tag-popover' ? {} : null) };
+  under = inPopChild;
+  check('курсор внутри всплывашки → не прячем', a._tagPointerOverTagUI() === true);
+  under = { closest: () => null };
+  check('курсор снаружи → прячем', a._tagPointerOverTagUI() === false);
+  under = anchorChild;
+  check('курсор на самом теге → не прячем', a._tagPointerOverTagUI() === true);
+
+  let hidden = 0;
+  a.hideTagPopover = () => { hidden++; };
+  under = inPopChild;
+  a.scheduleHideTagPopover();
+  await new Promise((r) => setTimeout(r, 300));
+  check('отложенное скрытие не срабатывает под курсором', hidden === 0, 'hidden=' + hidden);
+  under = { closest: () => null };
+  a.scheduleHideTagPopover();
+  await new Promise((r) => setTimeout(r, 300));
+  check('отложенное скрытие срабатывает, когда курсор ушёл', hidden === 1, 'hidden=' + hidden);
+  delete a._tagPointer;
+  check('без данных о курсоре не считаем, что он в зоне', a._tagPointerOverTagUI() === false);
+
   console.log(`\nИтог: ${passed} ok, ${failed} fail`);
   if (failed) process.exit(1);
 })();

@@ -107,9 +107,28 @@ App.hideTagPopover = function () {
   if (this._tagPop) this._tagPop.classList.add('hidden');
 };
 
+// _tagPointerOverTagUI — курсор прямо сейчас внутри всплывашки или на самом
+// теге? Это единственный надёжный ответ: события мыши приходят парами, при
+// перерисовке и при переезде между элементами, и по цепочке
+// mouseout/mouseenter подсказка гасла ровно тогда, когда на неё наводились.
+App._tagPointerOverTagUI = function () {
+  const p = this._tagPointer;
+  if (!p || typeof document.elementFromPoint !== 'function') return false;
+  const under = document.elementFromPoint(p.x, p.y);
+  if (!under || !under.closest) return false;
+  if (under.closest('.tag-popover')) return true;
+  const a = this._tagPopAnchor;
+  return !!(a && a.contains && a.contains(under));
+};
+
 App.scheduleHideTagPopover = function () {
   this._tagPopHideTimer && clearTimeout(this._tagPopHideTimer);
-  this._tagPopHideTimer = setTimeout(() => this.hideTagPopover(), HIDE_DELAY);
+  this._tagPopHideTimer = setTimeout(() => {
+    this._tagPopHideTimer = null;
+    // Курсор мог вернуться в нашу зону за время ожидания — тогда не прячем.
+    if (this._tagPointerOverTagUI()) return;
+    this.hideTagPopover();
+  }, HIDE_DELAY);
 };
 
 // showTagPopover ставит всплывашку под элементом с тегом и наполняет её.
@@ -209,12 +228,11 @@ App._placeTagPopover = function (anchor) {
   const r = anchor.getBoundingClientRect();
   const vw = window.innerWidth || document.documentElement.clientWidth;
   const vh = window.innerHeight || document.documentElement.clientHeight;
-  // Меряем в скрытом состоянии на нулевой позиции: иначе getBoundingClientRect
-  // вернёт размер с учётом старой координаты, а при переносе на край экрана —
-  // размер «в воздухе».
-  el.classList.remove('hidden');
-  el.style.left = '0px';
-  el.style.top = '0px';
+  // Меряем НА МЕСТЕ, просто сняв видимость. Раньше на время замера элемент
+  // уезжал в (0,0), и если курсор в этот момент лежал на всплывашке, браузер
+  // считал, что её больше под мышью, и слал mouseout — подсказка гасла прямо
+  // под курсором. Размер здесь от позиции не зависит: ширина фиксирована,
+  // потолок по высоте задан в vh.
   el.style.visibility = 'hidden';
   const box = el.getBoundingClientRect();
   // Высота не должна вылезать за экран: ограничение и прокрутка заданы в CSS,
@@ -276,6 +294,12 @@ App.bindTagPopover = function () {
     this._tagPopTag = null;
     this.scheduleHideTagPopover();
   };
+  // Позиция курсора: по ней решаем, ушёл ли он из нашей зоны. События мыши
+  // приходят парами и сыпятся при перерисовке, поэтому верим не им, а
+  // фактическому элементу под курсором (см. _tagPointerOverTagUI).
+  const track = (ev) => { this._tagPointer = { x: ev.clientX, y: ev.clientY }; };
+  document.addEventListener('mousemove', track, true);
+  document.addEventListener('pointermove', track, true);
   document.addEventListener('mouseover', (ev) => show(ev.target), true);
   document.addEventListener('focusin', (ev) => show(ev.target), true);
   document.addEventListener('mouseout', leave, true);
