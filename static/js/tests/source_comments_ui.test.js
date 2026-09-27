@@ -208,6 +208,93 @@ a._sourceNote = '';
 v = mergeView([], [], 'hypnohub');
 check('без заметки note пуст', v.note.textContent === '');
 
+// ── 5. Фоновая предзагрузка комментариев источника ────────────────────────
+// Ручной клик больше не нужен: посты с has_comments кэшируются сами, по одному
+// и с паузой. setTimeout глушим, чтобы тест не ждал реальные 4 секунды между
+// запросами, и двигаем очередь вручную.
+const realTimeout = globalThis.setTimeout;
+globalThis.setTimeout = () => 0;
+const tick = () => new Promise((r) => realTimeout(r, 0));
+
+a._srcUnsupported = new Set();
+a._srcPrefetch = { queue: [], done: 0, running: false };
+a.state = { viewerOpen: false, viewerIndex: -1, posts: [] };
+a.updateCardCommentsBadge = function (p) { a._badged = p.id; };
+
+const unsupportedSites = new Set(['gelbooru']);
+a.API = { get: (u) => {
+  const site = /site=([^&]+)/.exec(u)[1];
+  if (unsupportedSites.has(site)) return Promise.resolve({ site, unsupported: true });
+  return Promise.resolve({ site, count: 2,
+    comments: [{ id: 1, author: 'a', body: 'b', created_at: '2026-09-27 00:08' }] });
+} };
+
+const posts = [
+  { id: 1, has_comments: true, file_url: 'https://gelbooru.com/img/x/1.jpg' },
+  { id: 2, has_comments: true, comment_count: 4, file_url: 'https://hypnohub.net/img/x/2.jpg' },
+  { id: 3, has_comments: false, file_url: 'https://hypnohub.net/img/x/3.jpg' },
+  { id: 4, file_url: 'https://hypnohub.net/img/x/4.jpg' },
+  { id: 5, has_comments: true, file_url: 'https://example.org/5.jpg' },
+  { id: 6, has_comments: true, file_url: 'https://hypnohub.net/img/x/6.jpg' },
+];
+a.state.posts = posts;
+a.scheduleSourceCommentsPrefetch(posts);
+// Первый пост (gelbooru) ушёл в работу сразу: счётчик вышел бы иначе.
+check('в работу берётся has_comments с известным сайтом',
+  a._srcPrefetch.running === true, 'running=' + a._srcPrefetch.running);
+check('в очередь попал только следующий подходящий пост',
+  JSON.stringify(a._srcPrefetch.queue.map((j) => j.id)) === '[6]',
+  JSON.stringify(a._srcPrefetch.queue));
+
+await tick(); // gelbooru ответил «не поддерживает»
+check('сайт без комментариев запомнен и выкинут из очереди',
+  a._srcUnsupported.has('gelbooru') && a._srcPrefetch.queue.length === 1,
+  [...a._srcUnsupported].join(',') + ' queue=' + a._srcPrefetch.queue.length);
+
+a._pumpSourceCommentsPrefetch(); // берём hypnohub
+await tick();
+check('после «unsupported» очередь продолжает работать',
+  a._srcPrefetch.done === 2, 'done=' + a._srcPrefetch.done);
+check('точный счётчик записан в пост ленты',
+  posts.find((p) => p.id === 6).comment_count === 2,
+  String(posts.find((p) => p.id === 6).comment_count));
+check('бейдж карточки обновлён', a._badged === 6, 'badged=' + a._badged);
+
+check('повторный вызов не дублирует', (() => {
+  a.scheduleSourceCommentsPrefetch(posts);
+  return a._srcPrefetch.queue.length === 0;
+})(), String(a._srcPrefetch.queue.length));
+
+check('открытый пост не ставим в очередь', (() => {
+  a.state.viewerOpen = true; a.state.viewerIndex = 5; // открыт пост 6
+  a._srcPrefetch.queue = []; a._srcPrefetch.done = 0; a._srcPrefetch.seen = new Set();
+  a.scheduleSourceCommentsPrefetch(posts);
+  const ids = JSON.stringify(a._srcPrefetch.queue.map((j) => j.id));
+  a.state.viewerOpen = false;
+  return ids === '[]';
+})(), 'открытый пост должен пропускаться');
+
+check('бюджет сессии ограничен', (() => {
+  a._srcPrefetch = { queue: [], done: 0, running: false };
+  const many = Array.from({ length: 60 }, (_, i) => ({
+    id: 100 + i, has_comments: true, file_url: 'https://hypnohub.net/img/x/' + i + '.jpg' }));
+  a.scheduleSourceCommentsPrefetch(many);
+  return a._srcPrefetch.queue.length <= 40;
+})(), 'очередь должна быть ограничена');
+
+// В Node navigator — геттер, поэтому задаём его через defineProperty.
+const setOnline = (v) => Object.defineProperty(globalThis, 'navigator',
+  { value: { onLine: v }, configurable: true, writable: true });
+check('оффлайн: очередь не трогается', (() => {
+  a._srcPrefetch = { queue: [{ id: 77, site: 'hypnohub' }], done: 0, running: false };
+  setOnline(false);
+  a._pumpSourceCommentsPrefetch();
+  setOnline(true);
+  return a._srcPrefetch.queue.length === 1 && a._srcPrefetch.running === false;
+})(), 'без сети очередь должна ждать');
+
+globalThis.setTimeout = realTimeout;
+
 console.log(`\nИтог: ${passed} ok, ${failed} fail`);
 if (failed) process.exit(1);
 })();

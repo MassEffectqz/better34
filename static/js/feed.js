@@ -816,12 +816,16 @@ App.createPostCard = function (post) {
     sc.title = t('srcComments.badge');
     sc.setAttribute('aria-label', t('srcComments.badge'));
     sc.appendChild(iconToNode(icon('messageSquare', 12)));
-    if (n) sc.appendChild(document.createTextNode(' ' + n));
+    // Счётчик в отдельном узле: фоновой предзагрузке потом достаточно
+    // обновить текст здесь, не перерисовывая иконку (updateCardCommentsBadge).
+    const num = document.createElement('span');
+    num.className = 'src-comments-n';
+    num.textContent = n ? String(n) : '';
+    sc.appendChild(num);
     badge.appendChild(sc);
   }
   left.appendChild(badge);
   overlay.appendChild(left);
-
   const right = document.createElement('div');
   right.className = 'post-overlay-right';
   const likeBtn = document.createElement('button');
@@ -962,6 +966,38 @@ App._feedDoubleTapLike = function (post, card) {  const liked = this.optimisticL
 };
 
 /** @this {AppType} */
+// updateCardCommentsBadge обновляет индикатор комментариев источника на уже
+// отрисованной карточке: фоновой предзагрузке пришло точное число, и вместо
+// точки («есть, но неизвестно сколько») стоит показать его.
+App.updateCardCommentsBadge = function (post) {
+  const id = post && post.id;
+  if (!id) return;
+  const card = this.els.grid && this.els.grid.querySelector('.post-card[data-id="' + id + '"]');
+  if (!card) return;
+  const n = post.comment_count || 0;
+  if (!n) return;
+  let el = card.querySelector('.src-comments-badge');
+  if (!el) {
+    // Бейдж не рисовали, когда флага не было: дорисовываем в то же место,
+    // что и при создании карточки.
+    const badge = card.querySelector('.post-badge');
+    if (!badge) return;
+    el = document.createElement('span');
+    el.className = 'src-comments-badge';
+    el.title = t('srcComments.badge');
+    el.setAttribute('aria-label', t('srcComments.badge'));
+    el.appendChild(iconToNode(icon('messageSquare', 12)));
+    badge.appendChild(el);
+  }
+  let num = el.querySelector('.src-comments-n');
+  if (!num) {
+    num = document.createElement('span');
+    num.className = 'src-comments-n';
+    el.appendChild(num);
+  }
+  num.textContent = String(n);
+};
+
 App.renderPosts = function () {
   if (!this.state.posts.length) return;
   let display = [...this.state.posts];
@@ -1003,6 +1039,12 @@ App.renderPosts = function () {
   });
   byId.forEach(card => card.remove());
   this.updateStatus();
+  // Комментарии источника подтягиваем в фоне: источник сам пометил посты
+  // has_comments, кэшируем их тихо и по одному, чтобы к моменту открытия
+  // поста обсуждение уже было собрано.
+  if (typeof this.scheduleSourceCommentsPrefetch === 'function') {
+    this.scheduleSourceCommentsPrefetch(this.state.posts);
+  }
 };
 
 /** @this {AppType} */
