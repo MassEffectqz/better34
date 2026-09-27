@@ -1,11 +1,13 @@
 package internal
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -42,6 +44,36 @@ func TestAdversarialCleanDuplicatesWithoutConfirm(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "b", "file.bin")); err != nil {
 		t.Errorf("BUG G5: дубликат удалён БЕЗ подтверждения X-Confirm-Dupes (b/file.bin: %v)", err)
+	}
+}
+
+// G8: «пост недоступен» и «источник не ответил» — разные вещи, а клиент
+// вкладок «Лайки»/«Скрытые» трактует отсутствие в ответе как удалённый пост.
+// Сбой источника обязан попадать в отдельный unresolved, иначе живой пост
+// навечно помечается недоступным (одна сетевая ошибка — и статус закреплён).
+func TestAdversarialPostsByIDsReportsUnresolved(t *testing.T) {
+	h := &Handler{providers: map[string]Provider{"rule34": &stubTagProvider{name: "rule34"}}}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/posts-by-ids?ids=111,222", nil)
+	h.GetPostsByIDs(c)
+
+	var resp struct {
+		Posts []struct {
+			ID int `json:"id"`
+		} `json:"posts"`
+		Unresolved []int `json:"unresolved"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Posts) != 0 {
+		t.Errorf("постов нет, но ответ их содержит: %+v", resp.Posts)
+	}
+	got := append([]int(nil), resp.Unresolved...)
+	sort.Ints(got)
+	if len(got) != 2 || got[0] != 111 || got[1] != 222 {
+		t.Errorf("unresolved=%v, want [111 222]", got)
 	}
 }
 

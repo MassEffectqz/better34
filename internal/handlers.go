@@ -726,6 +726,11 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 					tryUpsert(p)
 				}
 			}
+		} else {
+			// Провайдер не умеет искать по id — спросить нечем. Тоже молча
+			// терять нельзя: отдаём как unresolved, иначе клиент сочтёт эти
+			// посты удалёнными.
+			unresolved = append(unresolved, apiIDs...)
 		}
 		db.UpsertMetaMany(upsertBatch)
 	}

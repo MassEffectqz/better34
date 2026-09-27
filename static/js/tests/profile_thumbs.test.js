@@ -50,6 +50,9 @@ function makeList() {
   // сортировка переставляет плитки, и в children должна остаться одна копия.
   return {
     children: [],
+    // loadMoreThumbs снимает скелетоны через querySelectorAll; без этого
+    // исключение уходит в его catch и молча обрывает обработку ответа.
+    querySelectorAll: () => [],
     appendChild(c) {
       const i = this.children.indexOf(c);
       if (i >= 0) this.children.splice(i, 1);
@@ -364,6 +367,45 @@ console.log('Профиль: лайки/скрытые — фильтры, со�
   check('недоступные выброшены из ids кэша', !a._thumbs.likes.ids.includes(2), JSON.stringify(a._thumbs.likes.ids));
   check('после очистки показан тост с числом убранных',
     a.toasts.some(([m]) => m === 'Убрано недоступных: 1'), JSON.stringify(a.toasts));
+}
+
+// ── Непроверенные и недоступные — разные вещи ────────────────────────────
+// Сервер отдаёт unresolved для id, о которых источник не ответил. Клиент
+// обязан показать по ним «не удалось проверить» с кнопкой повтора и НЕ
+// писать их в s.missing: иначе одна сетевая ошибка закрепляет живой пост
+// как удалённый до перезагрузки страницы.
+{
+  const a = makeApp();
+  a._thumbs.likes = { key: 'likes', ids: [1, 2, 3], posts: [], loaded: 0, token: 0, missing: [], tiles: [] };
+  a._thumbsBatch = 3;
+  a._updateThumbMore = () => {};
+  a._appendThumbs = (el, posts) => { (a.got || []).concat(posts.map(p => p.id)); a.got = (a.got || []).concat(posts.map(p => p.id)); };
+  a._appendMissingThumbs = (el, ids) => { a.missed = (a.missed || []).concat(ids); };
+  a._appendUnresolvedThumbs = (el, ids) => { a.tried = (a.tried || []).concat(ids); };
+  API.get = async () => ({ posts: [{ id: 1 }], unresolved: [2, 3] });
+
+  await a.loadMoreThumbs('likes');
+  check('найденные посты показаны', JSON.stringify(a.got) === '[1]', JSON.stringify(a.got));
+  check('непроверенные уходят в повтор, а не в недоступные',
+    JSON.stringify(a.tried) === '[2,3]' && JSON.stringify(a.missed || []) === '[]',
+    JSON.stringify({ tried: a.tried, missed: a.missed }));
+  check('s.missing остаётся чистым', JSON.stringify(a._thumbs.likes.missing || []) === '[]',
+    JSON.stringify(a._thumbs.likes.missing));
+  check('фильтр «недоступные» непроверенные не ловит',
+    !a._thumbMatchesFilter({ id: 2, unresolved: true }, 'unavailable')
+    && a._thumbMatchesFilter({ id: 2, missing: true }, 'unavailable'));
+
+  // Источник ответил — заглушка сменяется настоящей плиткой.
+  API.get = async () => ({ posts: [{ id: 2 }], unresolved: [] });
+  a._appendUnresolvedThumbs = () => {};
+  a.tiles = [{ _pfPost: { id: 2, unresolved: true }, dataset: { pfId: '2' }, removed: false,
+    remove() { this.removed = true; } }];
+  a._thumbs.likes.tiles = a.tiles;
+  a.got = [];
+  await a.retryUnresolvedThumbs('likes', 2);
+  check('повтор подставляет настоящую плитку',
+    JSON.stringify(a.got) === '[2]' && a.tiles[0].removed === true,
+    JSON.stringify({ got: a.got, rm: a.tiles[0].removed, live: a._thumbs.likes.tiles.length }));
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');

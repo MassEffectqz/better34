@@ -324,6 +324,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .pf-thumb.pf-broken{opacity:.72;filter:saturate(.35)}
 .pf-thumb.pf-missing{border:1px dashed var(--border);cursor:default;opacity:.55;animation:none}
 .pf-thumb.pf-missing:hover{transform:none}
+/* Непроверенный пост: источник не ответил (сеть/лимит). Это НЕ «поста нет»,
+   поэтому рамка сплошная, а внутри — кнопка повтора. */
+.pf-thumb.pf-unresolved{border-style:dashed}
+.pf-thumb .pf-retry{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:4;
+  font-size:.66rem;padding:4px 9px;border-radius:8px;border:1px solid var(--border);
+  background:rgba(0,0,0,.6);color:var(--text);cursor:pointer;backdrop-filter:blur(3px);white-space:nowrap}
+.pf-thumb .pf-retry:hover{background:var(--accent);border-color:var(--accent);color:#fff}
 .pf-thumb .pf-play{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;display:flex;align-items:center;justify-content:center;z-index:2}
 .pf-thumb .pf-play svg{width:9px;height:9px;margin-left:1px}
 .pf-thumb .pf-bar{position:absolute;left:0;right:0;bottom:0;padding:4px 5px;display:flex;justify-content:space-between;align-items:center;gap:4px;background:linear-gradient(transparent,rgba(0,0,0,.8));font-size:.66rem;color:#eee;opacity:0;transition:opacity var(--transition);z-index:2}
