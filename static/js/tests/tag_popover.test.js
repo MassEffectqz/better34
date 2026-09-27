@@ -105,7 +105,10 @@ a.API = { get: (u) => {
   check('обложка кликабельна и несёт id', /data-post="11"/.test(body), body.slice(0, 240));
   check('обложка без inline-пропорций (квадратная ячейка)',
     !/aspect-ratio/.test(body), body.slice(0, 240));
-  check('смежный тег кликабелен', /data-tag="long_hair"/.test(body) && /90/.test(body), body.slice(0, 320));
+  check('смежный тег кликабелен', /data-suggest="long_hair"/.test(body) && /90/.test(body), body.slice(0, 320));
+  // Чипы не должны носить data-tag: иначе они снова становятся целями наведения
+  // для document-слушателя, и подсказка начнёт подменять себя под курсором.
+  check('чипы не помечены как цели наведения', !/data-tag=/.test(body), body.slice(0, 320));
 
   // Пустые данные: подсказка вместо пустой сетки, без «undefined».
   const empty = a.renderTagPopoverBody({ tag: 'nothing', count: 0, posts: [], related: [] });
@@ -220,9 +223,9 @@ a.API = { get: (u) => {
   await new Promise((r) => setTimeout(r, 0));
   check('кэш не заражается служебной пометкой', cached.__searching === undefined, String(cached.__searching));
 
-  // Регрессия: чип смежного тега — это ссылка, а не цель наведения. Наведение
-  // на него не должно ни перерисовывать подсказку на другой тег, ни менять
-  // якорь: и то и другое выглядит как «подсказка сменила тему» или улетела.
+  // Второй слой защиты: даже если элемент внутри всплывашки каким-то образом
+  // нёс data-tag, наведение на него не должно ничего перерисовывать. Первый
+  // слой — чипы вообще не носят data-tag (см. проверку разметки выше).
   const handlers = {};
   document.addEventListener = (ev, fn) => { (handlers[ev] = handlers[ev] || []).push(fn); };
   a.bindTagPopover();
@@ -236,6 +239,16 @@ a.API = { get: (u) => {
   handlers.mouseover[0]({ target: chip });
   await new Promise((r) => setTimeout(r, 260));
   check('наведение на чип ничего не перерисовывает', shown.length === 0, JSON.stringify(shown.map((s) => s[0])));
+
+  // Клик по чипу ведёт к поиску — по data-suggest, а не по data-tag.
+  const suggested = [];
+  a.applySuggestion = (t) => suggested.push(t);
+  let opened = 0;
+  a.openPostById = () => { opened++; };
+  a.onTagPopoverClick({ target: { closest: (s) => (s === '.tag-pop-related' ? { dataset: { suggest: 'smile' } } : null) }, preventDefault() {} });
+  check('клик по чипу применяет подсказку', suggested[0] === 'smile', JSON.stringify({ suggested, opened }));
+  a.onTagPopoverClick({ target: { closest: (s) => (s === '.tag-pop-cover' ? { dataset: { post: '7' } } : null) }, preventDefault() {} });
+  check('клик по обложке открывает пост', opened === 1, JSON.stringify({ suggested, opened }));
 
   // Обычный тег на странице — наоборот, цель наведения и якорь.
   const pageTag = { isConnected: true, dataset: { tag: 'long_hair' }, closest: (s) => (s === '.tag-popover' ? null : s === '[data-tag]' ? pageTag : null) };
@@ -316,6 +329,8 @@ a.API = { get: (u) => {
 
   // Клик по обложке не имеет права заменять ленту одним постом: открываем
   // штатным openViewerByPostId, он лишь достраивает пост в конец выдачи.
+  // Снимаем заглушку-счётчик выше, иначе она проглотит вызов.
+  delete a.openPostById;
   const feed = [{ id: 1 }, { id: 2 }];
   a.state = { posts: feed.slice(), page: 5, ratingFilter: '' };
   let delegated = 0;

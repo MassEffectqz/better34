@@ -105,10 +105,10 @@ App.onTagPopoverClick = function (ev) {
     return;
   }
   const rel = ev.target.closest ? ev.target.closest('.tag-pop-related') : null;
-  if (rel && rel.dataset.tag) {
+  if (rel && rel.dataset.suggest) {
     ev.preventDefault();
     this.hideTagPopover();
-    this.applySuggestion(rel.dataset.tag);
+    this.applySuggestion(rel.dataset.suggest);
   }
 };
 
@@ -243,7 +243,12 @@ App.renderTagPopoverBody = function (d) {
   const rel = (d.related || []).length
     ? '<div class="tag-pop-related-row"><span class="tag-pop-related-title">' +
       esc(t('tagPreview.related')) + '</span>' +
-      d.related.map((r) => '<button type="button" class="tag-pop-related" data-tag="' + esc(r.tag) + '">' +
+      // data-suggest, а НЕ data-tag: последний — это признак «здесь живёт
+      // всплывашка превью». Чипы смежных тегов ссылаются на поиск и наведениями
+      // не являются, поэтому им нельзя носить этот признак вообще — иначе
+      // достаточно одного забытого guard'а, чтобы подсказка подменяла себя
+      // прямо под курсором.
+      d.related.map((r) => '<button type="button" class="tag-pop-related" data-suggest="' + esc(r.tag) + '">' +
         esc(r.tag) + ' <span class="tag-pop-related-n">' + esc(r.count) + '</span></button>').join('') +
       '</div>'
     : '';
@@ -293,11 +298,10 @@ App.bindTagPopover = function () {
   const show = (target) => {
     const el = target && target.closest ? target.closest('[data-tag]') : null;
     if (!el) return;
-    // Чипы смежных тегов — ссылки, а не цели наведения. Подсказка продолжает
-    // показывать исходный тег: иначе содержимое подменяется прямо под
-    // курсором, и кажется, что подсказка «сменила тему». И позицию считать
-    // от чипа нельзя — он лежит внутри самой всплывашки.
-    if (el.closest('.tag-popover')) return;
+    // Всё, что внутри самой всплывашки, целью наведения не является: это её
+    // собственное содержимое. Проверяем и по классу, и по факту владения —
+    // на случай, если класс когда-нибудь переедет.
+    if (el.closest('.tag-popover') || (this._tagPop && this._tagPop.contains && this._tagPop.contains(el))) return;
     const tag = el.dataset.tag;
     if (!tag || tag === this._tagPopTag) return;
     if (!el.isConnected) return;
