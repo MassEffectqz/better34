@@ -649,6 +649,13 @@ select.ss-rate option{color:#111;background:#fff}
   font-size:.7rem;padding:2px 7px;border-radius:8px;font-family:inherit}
 .tag-pop-related:hover{background:var(--accent);color:#fff}
 .tag-pop-related-n{opacity:.65;margin-left:3px}
+/* Баннер «нет сети»: показываем, что приложение работает из кэша. */
+.offline-banner{
+  position:fixed;top:0;left:0;right:0;z-index:500;
+  background:var(--warning,#8a6d1f);color:#fff;font-size:.78rem;
+  padding:5px 12px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.25);
+}
+.offline-banner.hidden{display:none}
 .vc-empty{font-size:.8rem;color:var(--text-dim)}
 .vc-item{display:flex;gap:8px;align-items:flex-start}
 .vc-item.mine .vc-meta{color:var(--accent)}

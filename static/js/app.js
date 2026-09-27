@@ -15,6 +15,7 @@ import './aliases.js';
 import './social.js';
 import './source_comments.js';
 import './tag_popover.js';
+import './offline_library.js';
 import './auth.js';
 import './notify.js';
 import './a11y.js';
@@ -40,5 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Открытый пост мог быть отрисован до загрузки списка — обновляем теги.
     if (typeof App._renderViewerTags === 'function') App._renderViewerTags();
   });
+  // Кнопки «библиотека офлайн» и банкер «нет сети».
+  if (typeof App.bindOfflineLibraryUI === 'function') App.bindOfflineLibraryUI();
   App.init();
 });

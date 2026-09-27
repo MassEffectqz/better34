@@ -451,6 +451,14 @@
           <button id="btn-clean-dups" class="btn-primary btn-sm hidden"><span data-i18n="btn.cleanDups">Удалить дубликаты</span></button>
           <button id="btn-merge-dups" class="btn-primary btn-sm hidden"><span data-i18n="btn.mergeDups">Объединить дубликаты</span></button>
         </div>
+        <div class="setting-group" id="offline-lib-group">
+          <span class="setting-label" data-i18n="offlineLib.title">Библиотека офлайн</span>
+          <span class="setting-hint" data-i18n="offlineLib.hint">Кэширует список постов и миниатюры, чтобы листать без сети. Кэширование делает сервис-воркер.</span>
+          <button id="btn-offline-lib" class="btn-primary btn-sm"><span data-i18n="offlineLib.prefetch">Скачать офлайн</span></button>
+          <button id="btn-offline-lib-cancel" class="btn-primary btn-sm hidden" data-i18n="offlineLib.cancel">Остановить</button>
+          <button id="btn-offline-lib-clear" class="btn-primary btn-sm"><span data-i18n="offlineLib.clear">Очистить кэш</span></button>
+          <span id="offline-lib-info" class="dups-info"></span>
+        </div>
         <div class="setting-group">
           <span class="setting-label" data-i18n="alias.title">Алиасы тегов</span>
           <span class="setting-hint" data-i18n="alias.hint">Синонимы вроде «catgirl» → «neko»: поиск и провайдеры используют канонический тег</span>
