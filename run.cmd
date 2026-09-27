@@ -81,6 +81,28 @@ echo Phone: %SCHEME%://%LAN_IP%:3000
 
 rem ── 4. Сервер. Переменные выше наследуются дочерним процессом. ──
 rem --print: показать конфигурацию и выйти, не запуская сервер.
+rem ── шаг 4. Фронтенд. Собранный esbuild-бандл лежит в static/js/dist и в git
+rem     НЕ отслеживается, поэтому на свежем клоне его нет: без него go build
+rem     падал на //go:embed all:static/js/dist, а с ним приложение отдаёт
+rem     десятки несобранных модулей вместо одного файла. Собираем, если бандла
+rem     нет или он старше исходников (пересборка меняет mtime и тем самым
+rem     версию ?v= в index.html, поэтому лишние пересборки нежелательны).
+set "NEEDBUILD="
+for /f "usebackq delims=" %%T in (`node scripts\need-frontend-build.mjs`) do set "NEEDBUILD=1"
+if defined NEEDBUILD (
+  where node >nul 2>nul
+  if errorlevel 1 (
+    echo [warn] node/npm not found - running on unminified modules.
+  ) else (
+    if not exist node_modules (
+      echo [1/2] npm install...
+      call npm install --no-audit --no-fund
+    )
+    echo [2/2] building frontend bundle (npm run build)...
+    call npm run build
+  )
+)
+
 if /i "%~1" == "--print" (
   echo [dry-run] go run .
   endlocal

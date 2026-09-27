@@ -20,8 +20,15 @@ import (
 
 // Production frontend only: static/js/tests is intentionally not embedded.
 //
+// all:static/js/dist — с префиксом all:, иначе каталог без собранного бандла
+// (свежий клон: dist/ в .gitignore) не матчится и СБОРКА ПАДАЕТ с
+// «pattern static/js/dist: no matching files found». С .gitkeep внутри
+// паттерн матчится всегда, а приложение само решает, отдавать ли бандл:
+// без js/dist/app.js serveIndex оставляет несобранные ES-модули (медленнее,
+// зато работает), см. distBundleOK.
+//
 //go:embed static/index.html static/offline.html static/manifest.webmanifest static/sw.js
-//go:embed static/css static/js/*.js static/js/dist static/icons
+//go:embed static/css static/js/*.js all:static/js/dist static/icons
 var frontendFS embed.FS
 
 var (

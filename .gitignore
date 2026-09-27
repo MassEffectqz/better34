@@ -26,4 +26,7 @@ tmp/
 node_modules/
 
 # РЎР±РѕСЂРєР° esbuild (РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ npm run build)
-static/js/dist/
+static/js/dist/*
+# …кроме заглушки: без неё //go:embed all:static/js/dist не матчится
+# каталог, и `go build`/`go run` падают на свежем клоне ещё до npm install.
+!static/js/dist/.gitkeep
