@@ -90,6 +90,10 @@ App.showTagPopover = function (tag, anchor) {
     // Пока грузили, могли навестись на другой тег или закрыть.
     if (!d || this._tagPopAnchor !== anchor || !el.isConnected) return;
     el.innerHTML = this.renderTagPopoverBody(d);
+    // Обязательно пересчитываем позицию: заглушка «тег…» занимала ~30px, а
+    // реальное содержимое с обложками и смежными тегами — в разы выше. Без
+    // этого всплывашка уезжала за нижний край экрана.
+    this._placeTagPopover(anchor);
   });
 };
 
@@ -121,18 +125,33 @@ App._placeTagPopover = function (anchor) {
   const el = this._tagPop;
   if (!el) return;
   const r = anchor.getBoundingClientRect();
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  // Меряем в скрытом состоянии на нулевой позиции: иначе getBoundingClientRect
+  // вернёт размер с учётом старой координаты, а при переносе на край экрана —
+  // размер «в воздухе».
+  el.classList.remove('hidden');
   el.style.left = '0px';
   el.style.top = '0px';
   el.style.visibility = 'hidden';
-  el.classList.remove('hidden');
   const box = el.getBoundingClientRect();
-  const vw = window.innerWidth || document.documentElement.clientWidth;
-  const vh = window.innerHeight || document.documentElement.clientHeight;
+  // Высота не должна вылезать за экран: ограничение и прокрутка заданы в CSS,
+  // но и тут подстраховываемся.
+  const h = Math.min(box.height, vh - 16);
+  const w = Math.min(box.width, vw - 16);
+
   let left = r.left;
-  if (left + box.width > vw - 8) left = Math.max(8, vw - box.width - 8);
+  if (left + w > vw - 8) left = vw - w - 8;
   if (left < 8) left = 8;
-  let top = r.bottom + 6;
-  if (top + box.height > vh - 8) top = Math.max(8, r.top - box.height - 6);
+
+  // Сначала пробуем под тегом, затем над ним. Если не влезает ни там, ни там
+  // (короткое окно, длинный список) — прижимаем к верху, внутри прокрутка.
+  const gap = 6;
+  let top = r.bottom + gap;
+  if (top + h > vh - 8) {
+    const above = r.top - h - gap;
+    top = above >= 8 ? above : 8;
+  }
   el.style.left = Math.round(left) + 'px';
   el.style.top = Math.round(top) + 'px';
   el.style.visibility = 'visible';

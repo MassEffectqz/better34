@@ -101,6 +101,31 @@ a.API = { get: (u) => {
   a.showTagPopover('x', null);
   check('без anchor не падаем', true);
 
+  // Позиция пересчитывается ПОСЛЕ прихода данных: заглушка «тег…» занимает
+  // ~30px, реальное содержимое — в разы выше, и без пересчёта всплывашка
+  // уезжает за нижний край экрана.
+  const pop = {
+    _html: '',
+    style: {},
+    classList: { add() {}, remove() {}, contains: () => false, toggle() {} },
+    isConnected: true,
+    set innerHTML(v) { this._html = String(v); },
+    get innerHTML() { return this._html; },
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 300, height: 300 }),
+  };
+  a._tagPop = pop;
+  let places = 0;
+  a._placeTagPopover = function () { places++; };
+  const anchor = { isConnected: true, dataset: { tag: 'blue_hair' } };
+  a.fetchTagPreview = function () {
+    return Promise.resolve({ tag: 'blue_hair', count: 9, posts: [{ id: 1, thumb: '/api/thumb/1' }], related: [] });
+  };
+  a.showTagPopover('blue_hair', anchor);
+  check('позиция посчитана сразу (по заглушке)', places === 1, 'places=' + places);
+  await new Promise((r) => setTimeout(r, 0));
+  check('позиция пересчитана после прихода данных', places === 2, 'places=' + places);
+  check('всплывашка наполнена содержимым', /data-post="1"/.test(pop.innerHTML), pop.innerHTML.slice(0, 120));
+
   console.log(`\nИтог: ${passed} ok, ${failed} fail`);
   if (failed) process.exit(1);
 })();

@@ -631,14 +631,18 @@ select.ss-rate option{color:#111;background:#fff}
 .src-comments-badge{display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 6px;border-radius:8px;background:rgba(0,0,0,.35);color:var(--accent);font-weight:600}
 /* Всплывашка тега: счётчик постов, обложки и смежные теги. */
 .tag-popover{
-  position:fixed;z-index:400;width:300px;max-width:calc(100vw - 16px);
+  position:fixed;z-index:400;width:300px;
+  /* Всплывашка не должна вылезать за экран: по высоте ограничиваемся окном
+     и даём внутреннюю прокрутку, по ширине — тоже (узкие экраны). */
+  max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow-y:auto;
+  overscroll-behavior:contain;
   background:var(--surface1);border:1px solid var(--border);border-radius:var(--radius-md);
   box-shadow:0 8px 28px rgba(0,0,0,.35);padding:10px;
 }
 .tag-popover.hidden{display:none}
 .tag-pop-head{font-weight:600;font-size:.82rem;word-break:break-all;margin-bottom:8px}
 .tag-pop-count{color:var(--text-dim);font-weight:400;margin-left:4px}
-.tag-pop-covers{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.tag-pop-covers{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:min(46vh,240px);overflow-y:auto;overscroll-behavior:contain}
 .tag-pop-cover{position:relative;padding:0;border:none;background:var(--surface3);cursor:pointer;
   border-radius:var(--radius-sm);overflow:hidden;aspect-ratio:1/1;min-height:42px}
 .tag-pop-cover img{width:100%;height:100%;object-fit:cover;display:block}
