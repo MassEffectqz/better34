@@ -77,6 +77,56 @@ func TestAdversarialPostsByIDsReportsUnresolved(t *testing.T) {
 	}
 }
 
+// G8b: то же, но источник ОТВЕЧАЕТ успешно и при этом игнорирует список id —
+// возвращает посты, которых не просили (поведение safebooru и часть CDN-ов).
+// Раньше такой ответ проходил через `if !want[p.ID] { continue }`, и запрошенные
+// id исчезали молча: их не было ни в posts, ни в unresolved. Клиент вкладок
+// «Лайки»/«Скрытые» трактует отсутствие как удалённый пост и навечно рисует
+// «#id · недоступен» — без кнопки повтора, хотя пост жив и его можно переспросить.
+func TestAdversarialPostsByIDsIgnoredIDListIsUnresolved(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Просили 111,222 — отдали посторонние посты.
+		w.Write([]byte(`[{"id":9001,"file_url":"https://x/1.jpg","preview_url":"https://x/1p.jpg","tags":"a"}]`))
+	}))
+	defer srv.Close()
+
+	cl := NewRule34Client()
+	cl.spec.apiURL = srv.URL
+	cl.httpClient.Store(&http.Client{})
+	seedTestKeys(cl, []APICredential{{Name: "t", APIKey: "adversarial-fake-key"}})
+	cl.cache = newBooruCache(filepath.Join(t.TempDir(), "sc.json"))
+	cl.breaker.failures = 0
+	cl.breaker.openUntil = time.Time{}
+
+	h := &Handler{providers: map[string]Provider{"rule34": cl}}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/posts-by-ids?ids=111,222", nil)
+	h.GetPostsByIDs(c)
+
+	var resp struct {
+		Posts []struct {
+			ID int `json:"id"`
+		} `json:"posts"`
+		Unresolved []int `json:"unresolved"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Чужие посты в ответ попадать не должны — это не те id, что просили.
+	for _, p := range resp.Posts {
+		if p.ID != 111 && p.ID != 222 {
+			t.Errorf("в ответе чужой пост id=%d", p.ID)
+		}
+	}
+	got := append([]int(nil), resp.Unresolved...)
+	sort.Ints(got)
+	if len(got) != 2 || got[0] != 111 || got[1] != 222 {
+		t.Errorf("BUG G8b: источник проигнорировал список id, но id пропали молча: unresolved=%v, want [111 222]", got)
+	}
+}
+
 // G7: GetPostsByIDs делает по одному HTTP-запросу на каждый id (N+1).
 // 60 id → 60 запросов к API вместо одного пакетного.
 func TestAdversarialGetPostsByIDsFanOut(t *testing.T) {

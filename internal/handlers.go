@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -682,11 +683,25 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 					unresolved = append(unresolved, batch...)
 					continue
 				}
+				// Сайт может ответить успешно, проигнорировав список id и отдав
+				// свежие посты вместо запрошенных (так ведёт себя safebooru). Тогда
+				// ни один want не закрыт, а сами id исчезают из ответа молча — клиент
+				// вкладок «Лайки»/«Скрытые» навечно рисует «#id · недоступен» без
+				// кнопки повтора. Пустой ответ — это правдоподобное «посты удалены»,
+				// его трогать нельзя; ответ не по нашим id — почти наверняка сбой
+				// разбора, поэтому такие id уходят в unresolved (их можно переспросить).
+				matched := 0
 				for _, p := range posts {
 					if !want[p.ID] {
 						continue // страховка от сайтов, игнорирующих id-список
 					}
+					matched++
 					tryUpsert(p)
+				}
+				if len(posts) > 0 && matched == 0 {
+					log.Printf("posts-by-ids: %s проигнорировал список id (%d постов в ответе, %d запрошено) — id в unresolved, а не «удалены»",
+						prov.Name(), len(posts), len(batch))
+					unresolved = append(unresolved, batch...)
 				}
 			}
 		} else if prefix := providerSingleID(prov); prefix != "" {
