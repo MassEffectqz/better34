@@ -363,6 +363,7 @@ App._syncThumbTools = function (type) {
 };
 
 App.renderThumbs = function (type, ids) {
+  this.initThumbRecheck();
   if (!this._thumbs) this._thumbs = {};
   const el = this.els[type === 'likes' ? 'likesList' : 'hidesList'];
   const empty = this.els[type === 'likes' ? 'likesEmpty' : 'hidesEmpty'];
@@ -453,6 +454,15 @@ App.loadMoreThumbs = async function (type) {
     // переспросить, не перезагружая вкладку.
     const retryable = ids.filter(id => unresolved.has(id) && !already.has(id));
     if (retryable.length) this._appendUnresolvedThumbs(el, retryable, type);
+    // Оба непроверенных множества — в очередь автоперепроверки: пользователю
+    // не нужно жать «проверить» на каждой плитке, приложение переспросит само.
+    // Для missing счётчик попыток растёт: сколько раз источник сказал «поста
+    // нет» — столько раз id переспрашивается, и только потом признаётся
+    // удалённым (см. THUMB_MISSING_TRIES).
+    this._queueThumbRecheck(type, retryable, false);
+    this._queueThumbRecheck(type, missing, true);
+    this._syncThumbRecheckBar(type);
+    this._armThumbRecheckTimer();
     this._updateThumbMore(type);
   } catch (err) {
     if (s.token === token && moreBtn) { moreBtn.disabled = false; moreBtn.textContent = t('pf.retry'); }
@@ -661,6 +671,248 @@ App.retryUnresolvedThumbs = async function (type, id) {
   } finally {
     s.retrying.delete(num);
   }
+};
+// ── Автопроверка плиток профиля ───────────────────────────────────────────
+// Заглушки «недоступен» и «не удалось проверить» берутся из двух разных ответов
+// источника, и у обеих был общий недостаток: починить их можно было только
+// вручную — кнопкой на каждой плитке (и то не у «недоступен») либо перезагрузкой
+// страницы. При неработающей сети это десятки нажатий на каждый пост.
+//
+// Здесь непроверенные id переспрашиваются автоматически и разом: пачками по
+// _thumbsBatch, то есть один HTTP-запрос на 100 постов вместо сотни запросов по
+// одному. Триггеры: отрисовка вкладки профиля, событие online, возврат фокуса и
+// таймер, пока есть что проверять.
+//
+// Два принципиальных ограничения:
+//  * backoff — без него приложение само долбит мёртвый API; интервал между
+//    попытками растёт от THUMB_RECHECK_MIN до THUMB_RECHECK_MAX;
+//  * лимит попыток для «недоступен» — источник ответил «поста нет», но такой
+//    вердикт уже бывал ложным (сайт проигнорировал список id, см.
+//    TestAdversarialPostsByIDsIgnoredIDListIsUnresolved). Такой id
+//    переспрашивается THUMB_MISSING_TRIES раз и только потом признаётся
+//    удалённым: держать его в очереди навечно — значит опрашивать источник из-за
+//    постов, которых уже нет.
+const THUMB_RECHECK_KEY = 'briefly_thumb_recheck';
+const THUMB_RECHECK_MIN = 30 * 1000;
+const THUMB_RECHECK_MAX = 5 * 60 * 1000;
+const THUMB_MISSING_TRIES = 3;
+
+App._thumbRecheck = App._thumbRecheck || { likes: {}, hides: {}, timer: 0 };
+
+// Состояние живёт в localStorage: незакрытая очередь должна пережить
+// перезагрузку страницы, иначе каждое открытие профиля снова опрашивало бы всё
+// подряд. Записи: { <id>: { t: <ms последней попытки>, n: <попытки> } }.
+App._loadThumbRecheck = function () {
+  let raw = null;
+  try { raw = localStorage.getItem(THUMB_RECHECK_KEY); } catch { /* приватный режим */ }
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+  for (const type of ['likes', 'hides']) {
+    const src = data && data[type];
+    this._thumbRecheck[type] = src && typeof src === 'object' ? src : {};
+  }
+};
+
+App._saveThumbRecheck = function () {
+  try {
+    localStorage.setItem(THUMB_RECHECK_KEY, JSON.stringify({
+      likes: this._thumbRecheck.likes, hides: this._thumbRecheck.hides,
+    }));
+  } catch { /* переполнено или приватный режим — не критично */ }
+};
+
+// id, которые ещё не удалось подтвердить, по каждому виду.
+App._pendingThumbIds = function (type) {
+  const bag = this._thumbRecheck && this._thumbRecheck[type];
+  return bag ? Object.keys(bag).map(Number).filter(n => Number.isFinite(n)) : [];
+};
+
+// Кладёт id в очередь перепроверки. isMissing=true — источник ответил «поста
+// нет»: такой id переспрашиваем ограниченное число раз, иначе он ушёл бы в
+// бесконечную очередь.
+App._queueThumbRecheck = function (type, ids, isMissing) {
+  if (!ids || !ids.length) return;
+  const bag = this._thumbRecheck[type] || (this._thumbRecheck[type] = {});
+  let changed = false;
+  for (const raw of ids) {
+    const id = Number(raw);
+    if (!Number.isFinite(id)) continue;
+    const prev = bag[id];
+    if (prev) { prev.n = (prev.n || 0) + (isMissing ? 1 : 0); changed = true; continue; }
+    bag[id] = { t: 0, n: isMissing ? 1 : 0 };
+    changed = true;
+  }
+  if (changed) this._saveThumbRecheck();
+};
+
+App._clearThumbRecheck = function (type, id) {
+  const bag = this._thumbRecheck && this._thumbRecheck[type];
+  if (bag && id != null && bag[id] != null) {
+    delete bag[id];
+    this._saveThumbRecheck();
+  }
+};
+
+// Массовый переспрос: забирает пачками по _thumbsBatch и подменяет заглушки
+// настоящими плитками НА СВОЁМ МЕСТЕ, чтобы сетка не пересобиралась и порядок
+// не прыгал. Ручной вызов (force) игнорирует backoff.
+App.recheckThumbs = async function (type, opts) {
+  const force = !!(opts && opts.force);
+  const s = this._thumbs && this._thumbs[type];
+  if (!s || !this._thumbRecheck) return 0;
+  const ids = this._pendingThumbIds(type);
+  if (!ids.length) { this._stopThumbRecheckTimer(); return 0; }
+
+  if (!force) {
+    const wait = this._thumbRecheckWait(type);
+    if (wait > 0) return 0;
+  }
+  if (s.rechecking) return 0;
+  s.rechecking = true;
+
+  const bag = this._thumbRecheck[type];
+  const now = Date.now();
+  let healed = 0;
+  try {
+    for (let start = 0; start < ids.length; start += this._thumbsBatch) {
+      const batch = ids.slice(start, start + this._thumbsBatch);
+      let data = null;
+      try {
+        data = await API.get(`/posts-by-ids?ids=${batch.join(',')}`);
+      } catch {
+        // Сеть/источник недоступны: сдвигаем время последней попытки, чтобы
+        // backoff рос, и оставляем очередь как есть — попробуем позже.
+        for (const id of batch) { const e = bag[id]; if (e) e.t = now; }
+        break;
+      }
+      const posts = (data && data.posts) || [];
+      const unresolved = new Set((data && data.unresolved) || []);
+      const found = new Set(posts.map(p => p && p.id).filter(Number.isFinite));
+      const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
+
+      for (const p of posts) {
+        if (this._replaceThumbPlaceholder(type, p, el)) healed++;
+        delete bag[p.id];
+      }
+      for (const id of batch) {
+        const e = bag[id];
+        if (!e) continue;
+        e.t = now;
+        if (found.has(id)) continue;
+        if (unresolved.has(id)) { e.n = e.n || 0; continue; }
+        // Источник ответил и пост не отдал — это не «не удалось проверить»,
+        // а отказ подтвердить пост. Счётчик попыток растёт здесь, а не только
+        // при первичной пометке: иначе «недоступен» так и не исчерпает лимит
+        // и очередь будет опрашивать источник до бесконечности.
+        const tries = (e.n || 0) + 1;
+        e.n = tries;
+        if (tries >= THUMB_MISSING_TRIES) delete bag[id];
+      }
+    }
+    this._saveThumbRecheck();
+  } finally {
+    s.rechecking = false;
+    this._applyThumbOpts(type);
+    this._syncThumbRecheckBar(type);
+    if (this._pendingThumbIds(type).length) this._armThumbRecheckTimer(); else this._stopThumbRecheckTimer();
+  }
+  return healed;
+};
+
+// Подменяет заглушку (missing/unresolved) плиткой поста — на её же месте.
+App._replaceThumbPlaceholder = function (type, post, el) {
+  const s = this._thumbs && this._thumbs[type];
+  if (!s || !post || post.id == null) return false;
+  const id = String(post.id);
+  const stale = (s.tiles || []).find(tile => tile.dataset && tile.dataset.pfId === id
+    && tile._pfPost && (tile._pfPost.missing || tile._pfPost.unresolved));
+  if (!stale) return false;
+  const tile = this._buildThumbTile(post, 0, type);
+  if (el && stale.parentNode) el.insertBefore(tile, stale); else if (el) el.appendChild(tile);
+  stale.remove();
+  s.tiles = (s.tiles || []).filter(x => x !== stale).concat([tile]);
+  s.posts = (s.posts || []).filter(p => Number(p.id) !== Number(post.id)).concat([post]);
+  if (s.missing) s.missing = s.missing.filter(x => Number(x) !== Number(post.id));
+  if (s.unresolved) s.unresolved = s.unresolved.filter(x => Number(x) !== Number(post.id));
+  return true;
+};
+
+// Сколько ещё ждать до следующей автопопытки: чем больше подряд неудач, тем
+// реже. Ручная кнопка и событие online ждут не ждут.
+App._thumbRecheckWait = function (type) {
+  const bag = this._thumbRecheck && this._thumbRecheck[type];
+  if (!bag) return 0;
+  const entries = Object.values(bag);
+  if (!entries.length) return 0;
+  const since = entries.map(e => Date.now() - ((e && e.t) || 0));
+  const last = Math.min(...since);
+  const n = Math.max(0, ...entries.map(e => (e && e.n) || 0));
+  const step = Math.min(THUMB_RECHECK_MAX, THUMB_RECHECK_MIN * Math.pow(2, Math.min(n, 4)));
+  return Math.max(0, step - last);
+};
+
+// Панель автоперепроверки: видно, сколько постов ждёт подтверждения, и есть
+// кнопка «проверить сейчас» для тех, кому не хочется ждать таймер. Прячется,
+// когда очередь пуста, — вкладка не должна кричать о внутренних делах.
+App._syncThumbRecheckBar = function (type) {
+  const box = document.getElementById(type === 'likes' ? 'likes-recheck' : 'hides-recheck');
+  if (!box || !this._thumbRecheck) return;
+  const n = this._pendingThumbIds(type).length;
+  box.hidden = n === 0;
+  const label = box.querySelector('.pf-recheck-count');
+  if (label) label.textContent = tf('pf.recheckCount', { n });
+  const btn = box.querySelector('[data-recheck-thumbs]');
+  if (btn) {
+    btn.disabled = !!((this._thumbs && this._thumbs[type] || {}).rechecking);
+    btn.textContent = this._thumbs && this._thumbs[type] && this._thumbs[type].rechecking
+      ? t('pf.rechecking') : t('pf.recheckNow');
+  }
+};
+
+// Глобальные триггеры. Сеть вернулась (online) — самое время переспросить всё
+// накопленное, поэтому здесь force. Возврат фокуса к вкладке — обычный
+// автоцикл с backoff. Всё это ленивое: подписка происходит один раз при
+// загрузке скрипта, а сама перепроверка — только если очередь не пуста.
+App.initThumbRecheck = function () {
+  if (this._thumbRecheckInit || typeof window === 'undefined' || !window.addEventListener) return;
+  this._thumbRecheckInit = true;
+  this._loadThumbRecheck();
+  window.addEventListener('online', () => this._kickThumbRecheck());
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        for (const type of ['likes', 'hides']) this.recheckThumbs(type);
+      }
+    });
+  }
+  for (const type of ['likes', 'hides']) {
+    const btn = document.querySelector(`#${type === 'likes' ? 'likes' : 'hides'}-recheck [data-recheck-thumbs]`);
+    if (btn) btn.addEventListener('click', () => this.recheckThumbs(type, { force: true }));
+  }
+};
+
+// Планировщик: держим таймер только пока есть очередь, чтобы пустой таймер не
+// жил вкладку зря. В тестах window.setInterval отсутствует — проверка на это же
+// не даёт постороннему коду поднять фоновый таймер.
+App._armThumbRecheckTimer = function () {
+  if (this._thumbRecheck.timer || typeof window === 'undefined') return;
+  if (typeof window.setInterval !== 'function') return;
+  this._thumbRecheck.timer = window.setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    for (const type of ['likes', 'hides']) this.recheckThumbs(type);
+  }, THUMB_RECHECK_MIN);
+};
+
+App._stopThumbRecheckTimer = function () {
+  if (!this._thumbRecheck.timer || typeof window === 'undefined') return;
+  if (typeof window.clearInterval === 'function') window.clearInterval(this._thumbRecheck.timer);
+  this._thumbRecheck.timer = 0;
+};
+
+// Точка входа для событий браузера: переспрашиваем обе вкладки сразу и без
+// backoff — смысл события «сеть вернулась» именно в том, чтобы дождаться её.
+App._kickThumbRecheck = function () {
+  for (const type of ['likes', 'hides']) this.recheckThumbs(type, { force: true });
 };
 
 App._appendThumbs = function (el, posts, type) {

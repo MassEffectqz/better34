@@ -40,9 +40,22 @@ function makeTile(id, post) {
     dataset: { pfId: String(id) },
     hidden: false,
     removed: false,
+    parent: null,
     _pfPost: post || { id },
     classList: makeClassList(),
-    remove() { this.removed = true; },
+    // Настоящий DOM отдаёт узел через parentNode — по нему код решает, что
+    // плитку надо вставить на место заглушки, а не в конец списка.
+    get parentNode() { return this.parent; },
+    remove() {
+      this.removed = true;
+      // Настоящий remove() отцепляет узел от родителя; без этого нельзя
+      // проверить, что подмена заглушки не оставляет её в сетке.
+      if (this.parent) {
+        const i = this.parent.children.indexOf(this);
+        if (i >= 0) this.parent.children.splice(i, 1);
+        this.parent = null;
+      }
+    },
   };
 }
 function makeList() {
@@ -57,9 +70,30 @@ function makeList() {
       const i = this.children.indexOf(c);
       if (i >= 0) this.children.splice(i, 1);
       this.children.push(c);
+      c.parent = this;
+      return c;
+    },
+    // Подмена заглушки плиткой идёт через insertBefore, чтобы новая плитка
+    // встала на своё место, а не в конец сетки.
+    insertBefore(c, ref) {
+      const i = this.children.indexOf(c);
+      if (i >= 0) this.children.splice(i, 1);
+      const at = ref ? this.children.indexOf(ref) : -1;
+      if (at < 0) this.children.push(c); else this.children.splice(at, 0, c);
+      c.parent = this;
       return c;
     },
   };
+}
+function makeRecheckBar() {
+  const bar = {
+    hidden: true,
+    _count: { textContent: '' },
+    _btn: { textContent: '', disabled: false },
+  };
+  bar.querySelector = (sel) => (sel === '.pf-recheck-count' ? bar._count
+    : sel === '[data-recheck-thumbs]' ? bar._btn : null);
+  return bar;
 }
 function makeTools() {
   const chip = (v) => ({ dataset: v, classList: makeClassList(), _attrs: {}, setAttribute(k, val) { this._attrs[k] = val; } });
@@ -91,6 +125,8 @@ const dom = {
   'hides-tools': makeTools(),
   'likes-selbar': makeSelbar(),
   'hides-selbar': makeSelbar(),
+  'likes-recheck': makeRecheckBar(),
+  'hides-recheck': makeRecheckBar(),
 };
 defG('document', {
   getElementById: (id) => dom[id] || null,
@@ -182,6 +218,126 @@ console.log('Профиль: лайки/скрытые — фильтры, со�
   const sel = html.match(/<button[^>]*data-act="selectMode"[^>]*>/g) || [];
   check('кнопка «Выбрать» — чип (как соседи в ряду)',
     sel.length === 2 && sel.every((s) => s.includes('pf-chip')), sel[0] || 'не найдена');
+}
+// ── 0в. Автоперепроверка плиток: очередь, backoff, лимит попыток ──────────
+// Пользователю не нужно жать «проверить ещё раз» на каждой заглушке: id
+// копятся в очереди и переспрашиваются пачками. Проверяем, что это не превращается
+// ни в «опросили каждый пост отдельным запросом», ни в вечный опрос источника.
+{
+  const reset = (a) => {
+    a._thumbRecheck = { likes: {}, hides: {}, timer: 0 };
+    a._thumbs = { likes: null, hides: null };
+    dom['likes-recheck'].hidden = true;
+  };
+  const stubApp = (getImpl) => {
+    const a = makeApp();
+    reset(a);
+    a.els.likesList = makeList();
+    a._thumbs.likes = { key: 'k', ids: [], posts: [], loaded: 0, token: 0, missing: [], tiles: [] };
+    // Настоящий _buildThumbTile требует полноценного DOM (картинка, иконки,
+    // esc по innerHTML); здесь проверяется логика очереди, а не рендер.
+    a._buildThumbTile = (post) => makeTile(post.id, post);
+    const calls = [];
+    API.get = async (url) => { calls.push(url); return getImpl(url, calls.length) || { posts: [] }; };
+    return { a, calls };
+  };
+
+  // Очередь набирается из обоих непроверенных множеств.
+  {
+    const { a } = stubApp(() => ({}));
+    a._queueThumbRecheck('likes', [1, 2], false);
+    a._queueThumbRecheck('likes', [3], true);
+    check('id в очереди после пометки', JSON.stringify(a._pendingThumbIds('likes')) === '[1,2,3]');
+    check('очередь живёт в localStorage', !!localStorage.getItem('briefly_thumb_recheck'));
+    const bag = JSON.parse(localStorage.getItem('briefly_thumb_recheck')).likes;
+    check('у «недоступен» счётчик попыток = 1, у прочих 0', bag['3'].n === 1 && bag['1'].n === 0);
+  }
+
+  // Один запрос на пачку, а не по одному на пост.
+  {
+    const { a, calls } = stubApp(() => ({}));
+    a._thumbsBatch = 100;
+    const many = Array.from({ length: 250 }, (_, i) => i + 1);
+    a._queueThumbRecheck('likes', many, false);
+    await a.recheckThumbs('likes', { force: true });
+    check('250 id ушли тремя запросами по 100, а не 250 запросами',
+      calls.length === 3, 'запросов: ' + calls.length);
+    check('в каждом запросе не больше _thumbsBatch id',
+      calls.every(u => (u.split('ids=')[1] || '').split(',').length <= 100));
+  }
+
+  // Заглушка подменяется плиткой на своём месте, id уходит из очереди.
+  {
+    const stale = makeTile(7, { id: 7, missing: true });
+    const other = makeTile(8, { id: 8 });
+    const { a } = stubApp(() => ({ posts: [{ id: 7, width: 100, height: 100, preview_url: 'https://x/p.jpg' }] }));
+    a._thumbs.likes.tiles = [stale, other];
+    a._thumbs.likes.missing = [7];
+    // Через appendChild, а не присваиванием children: remove() должен знать
+    // родителя, иначе заглушка осталась бы в сетке и проверка была бы фиктивной.
+    a.els.likesList.appendChild(stale);
+    a.els.likesList.appendChild(other);
+    a._queueThumbRecheck('likes', [7], true);
+    const healed = await a.recheckThumbs('likes', { force: true });
+    check('появившийся пост заменяет заглушку', healed === 1 && stale.removed === true, 'healed=' + healed);
+    check('id ушёл из очереди и из missing',
+      a._pendingThumbIds('likes').length === 0 && !a._thumbs.likes.missing.includes(7));
+    const kids = a.els.likesList.children;
+    check('в сетке осталась одна плитка на этот пост', kids.length === 2 && kids.indexOf(stale) < 0,
+      'узлов: ' + kids.length);
+    check('новая плитка встала на место заглушки, а не в конец',
+      kids[0] !== stale && kids[0] !== other && kids[1] === other, JSON.stringify(kids.map(k => k.dataset.pfId)));
+  }
+
+  // Сеть лежит: очередь сохраняется, время последней попытки сдвигается —
+  // иначе backoff не рос бы и приложение долбило бы источник впустую.
+  {
+    const { a } = stubApp(() => { throw new Error('offline'); });
+    a._queueThumbRecheck('likes', [42], false);
+    const healed = await a.recheckThumbs('likes', { force: true });
+    check('при обрыве сети очередь не теряется', a._pendingThumbIds('likes').join() === '42' && healed === 0);
+    check('время попытки сдвинуто (растёт backoff)', a._thumbRecheckWait('likes') > 0);
+    const wait = a._thumbRecheckWait('likes');
+    check('свежая попытка откладывает следующую', wait > 0, 'wait=' + wait);
+  }
+
+  // Источник продолжает говорить «поста нет»: id переспрашивается ограниченное
+  // число раз, иначе очередь навечно опрашивает источник из-за удалённых постов.
+  {
+    const { a } = stubApp(() => ({ posts: [] })); // ответ без постов и без unresolved
+    a._queueThumbRecheck('likes', [5], true);      // n = 1
+    await a.recheckThumbs('likes', { force: true });
+    check('после первой неудачи id ещё в очереди', a._pendingThumbIds('likes').join() === '5');
+    await a.recheckThumbs('likes', { force: true });
+    await a.recheckThumbs('likes', { force: true });
+    check('после лимита попыток id признан удалённым и убран из очереди',
+      a._pendingThumbIds('likes').length === 0, JSON.stringify(a._thumbRecheck.likes));
+  }
+
+  // Панель показывает очередь и прячется, когда пусто.
+  {
+    const { a } = stubApp(() => ({}));
+    const bar = dom['likes-recheck'];
+    a._queueThumbRecheck('likes', [1, 2, 3], false);
+    a._syncThumbRecheckBar('likes');
+    check('панель видна и показывает число', bar.hidden === false && bar._count.textContent.includes('3'),
+      JSON.stringify(bar._count));
+    a._thumbRecheck.likes = {};
+    a._syncThumbRecheckBar('likes');
+    check('пустая очередь прячет панель', bar.hidden === true);
+  }
+
+  // Ручная кнопка/событие online обходят backoff: ждать нечего, сеть только что
+  // вернулась.
+  {
+    const { a, calls } = stubApp(() => ({ posts: [] }));
+    a._queueThumbRecheck('likes', [9], false);
+    a._thumbRecheck.likes['9'].t = Date.now();
+    await a.recheckThumbs('likes');
+    check('автопопытка уважает backoff', calls.length === 0, 'запросов: ' + calls.length);
+    await a.recheckThumbs('likes', { force: true });
+    check('force игнорирует backoff', calls.length === 1, 'запросов: ' + calls.length);
+  }
 }
 // ── 1. Фильтры ────────────────────────────────────────────────────────────
 {
