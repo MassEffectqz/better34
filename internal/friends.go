@@ -75,13 +75,50 @@ type Friend struct {
 	// друга в обе стороны: и чтобы забрать его данные, и чтобы отдать свои.
 	// Отдельного «моего ключа для друга» не нужно: симметрия и так работает
 	// (у друга в его записи лежит наш ключ, он приходит с его запросом).
-	Key       string `json:"key"`
-	Nickname  string `json:"nickname,omitempty"`
-	Avatar    string `json:"avatar,omitempty"`
-	Username  string `json:"username,omitempty"`
-	AddedAt   string `json:"added_at"`
-	LastSync  string `json:"last_sync,omitempty"`
+	Key      string `json:"key"`
+	Nickname string `json:"nickname,omitempty"`
+	Avatar   string `json:"avatar,omitempty"`
+	Username string `json:"username,omitempty"`
+	AddedAt  string `json:"added_at"`
+	LastSync string `json:"last_sync,omitempty"`
+	// LastError — машиночитаемый код для UI (см. friendStatusErr), а не текст:
+	// показывать пользователю «friend_no_back» бесполезно.
 	LastError string `json:"last_error,omitempty"`
+	// Snapshot — что мы последний раз получили от друга. Нужен, чтобы показать
+	// его профиль: при обмене данные друга вливаются в НАШ профиль (общий
+	// альбом лайков), и по нему уже нельзя понять, что понравилось ему, а что
+	// нам. Поэтому храним его состояние отдельно — только чтение для UI.
+	Snapshot *FriendSnapshot `json:"snapshot,omitempty"`
+}
+
+// FriendSnapshot — профиль друга на момент последнего обмена: его лайки,
+// скрытия и теги. Только чтение: это зеркало его вкусов, а не редактируемая
+// копия. Хранится рядом с записью друга, чтобы не плодить файлы.
+type FriendSnapshot struct {
+	// SyncedAt — когда пришли эти данные (RFC3339).
+	SyncedAt string `json:"synced_at"`
+	// Nickname — как друг представился в последнем обмене (может отличаться
+	// от Nickname в записи: он обновляется при каждом успешном обмене).
+	Nickname string `json:"nickname,omitempty"`
+	// Likes — id постов, которые другу понравились.
+	Likes []int `json:"likes,omitempty"`
+	// Disliked — id постов, которые друг скрыл (у нас это кнопка «Дизлайк»).
+	Disliked []int `json:"disliked,omitempty"`
+	// FavTags — его избранные теги.
+	FavTags []string `json:"fav_tags,omitempty"`
+	// DislikedTags — теги с обратной связью «не интересно», по убыванию.
+	DislikedTags []friendDislikedTag `json:"disliked_tags,omitempty"`
+	// Collections — его альбомы (имя и число постов).
+	Collections []FriendSnapshotColl `json:"collections,omitempty"`
+	// CommentPosts — id постов, где друг оставил комментарии.
+	CommentPosts []int `json:"comment_posts,omitempty"`
+}
+
+// FriendSnapshotColl — коллекция друга в снимке: имя и сколько постов.
+// Сами посты не дублируем — их id и так есть в его лайках/коллекциях.
+type FriendSnapshotColl struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
 }
 
 // ID — устойчивый идентификатор записи (в UI, в SSE, в логах). Считаем от
@@ -402,6 +439,8 @@ func (s *FriendStore) Get(id string) (Friend, bool) {
 	if !ok {
 		return Friend{}, false
 	}
+	// Копия структуры; Snapshot остаётся общим указателем. Это безопасно:
+	// снимок после создания не меняется, noteSnapshot подменяет сам указатель.
 	return *f, true
 }
 
@@ -491,6 +530,64 @@ func (s *FriendStore) noteSync(id string, errMsg string) {
 	_ = s.save()
 }
 
+// noteSnapshot сохраняет профиль друга, полученный при обмене. Отдельный метод
+// от noteSync, потому что вызывается по горячему пути обмена: снимок нужен
+// всегда, а LastSync/LastError общий.
+//
+// Замена целиком, а не слияние: снимок — зеркало того, что друг прислал сейчас.
+// Накапливать его было бы неверно, ведь friend-данные приходят только
+// аддитивно, а лайки друга могли быть уже сняты у него.
+func (s *FriendStore) noteSnapshot(id string, snap *FriendSnapshot) {
+	if snap == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, ok := s.byID[id]
+	if !ok {
+		return
+	}
+	f.Snapshot = snap
+	_ = s.save()
+}
+
+// snapshotFrom переводит payload друга в снимок для UI.
+func snapshotFrom(in *friendPayload) *FriendSnapshot {
+	if in == nil {
+		return nil
+	}
+	snap := &FriendSnapshot{
+		SyncedAt: in.SyncedAt,
+		Nickname: in.Nickname,
+		FavTags:  in.FavTags,
+	}
+	// Лайки: временные метки не нужны, UI рисует сетку по id.
+	for _, l := range in.Likes {
+		if l.PostID > 0 {
+			snap.Likes = append(snap.Likes, l.PostID)
+		}
+	}
+	// «Дизлайк» у нас — это скрытие поста плюс штраф его тегам. Скрытые посты
+	// идёт в Disliked, штрафные теги — в DislikedTags: вместе они и есть
+	// «что другу не нравится». Его скрытые ТЕГИ не показываем — это личный
+	// фильтр ленты, а не вкус, и в профиле другу он ни к чему.
+	snap.Disliked = in.HiddenPosts
+	snap.DislikedTags = in.DislikedTags
+	for _, c := range in.Collections {
+		snap.Collections = append(snap.Collections, FriendSnapshotColl{
+			Name: c.Name, Count: len(c.Posts),
+		})
+	}
+	seen := make(map[int]bool)
+	for _, c := range in.Comments {
+		if c.PostID > 0 && !seen[c.PostID] {
+			seen[c.PostID] = true
+			snap.CommentPosts = append(snap.CommentPosts, c.PostID)
+		}
+	}
+	return snap
+}
+
 // ── Что именно обмениваем ────────────────────────────────────────────────────
 
 // friendLike — отметка «нравится» с временем (порядок лайков важен:
@@ -534,7 +631,23 @@ type friendPayload struct {
 	SyncedAt    string             `json:"synced_at"`
 	Likes       []friendLike       `json:"likes"`
 	Collections []friendCollection `json:"collections,omitempty"`
-	Comments    []friendComment    `json:"comments,omitempty"`
+	// HiddenPosts — посты, которые друг скрыл. У нас кнопка «Скрыть» (она же
+	// «Дизлайк» в интерфейсе) пишет и в hidden_posts, и в RecDisliked по тегам,
+	// поэтому «дизлайки» друга = скрытые посты + штрафные теги.
+	HiddenPosts []int    `json:"hidden_posts,omitempty"`
+	FavTags     []string `json:"fav_tags,omitempty"`
+	HiddenTags  []string `json:"hidden_tags,omitempty"`
+	// DislikedTags — теги с обратной связью «не интересно» (RecDisliked),
+	// по убыванию счётчика: их показываем в профиле друга.
+	DislikedTags []friendDislikedTag `json:"disliked_tags,omitempty"`
+	// Comments — комментарии, которые друг оставил у нас.
+	Comments []friendComment `json:"comments,omitempty"`
+}
+
+// friendDislikedTag — тег, которому друг отдавал «голоса против», со счётчиком.
+type friendDislikedTag struct {
+	Tag   string `json:"tag"`
+	Count int    `json:"count"`
 }
 
 const friendPayloadVersion = 1
@@ -597,12 +710,73 @@ func buildFriendPayload(instance, user, nickname, avatar string, p *Profile) *fr
 		colls = append(colls, friendCollection{Name: c.Name, Posts: posts, CreatedAt: c.CreatedAt})
 	}
 
+	// Скрытия и теги показываем в профиле друга: по ним видно вкус лучше,
+	// чем по одним лайкам. Порядок стабильный (сортировкой) — иначе список
+	// прыгал бы при каждом обмене и вкладка друзей мерцала бы.
+	hidden := make([]int, 0, len(p.HiddenPosts))
+	for id, v := range p.HiddenPosts {
+		if v {
+			hidden = append(hidden, id)
+		}
+	}
+	sort.Ints(hidden)
+	if len(hidden) > maxFriendLikes {
+		hidden = hidden[:maxFriendLikes]
+	}
+
 	return &friendPayload{
 		Version: friendPayloadVersion, App: "briefly", Instance: instance,
 		User: user, Nickname: nickname, Avatar: avatar,
 		SyncedAt: time.Now().UTC().Format(time.RFC3339),
 		Likes:    likes, Collections: colls, Comments: comments,
+		HiddenPosts:  hidden,
+		FavTags:      sortedTagKeys(p.FavTags),
+		HiddenTags:   sortedTagKeys(p.HiddenTags),
+		DislikedTags: topDislikedTags(p.RecDisliked),
 	}
+}
+
+// maxFriendDislikedTags ограничивает «голоса против»: больше сотни тегов в
+// профиле читать невозможно.
+const maxFriendDislikedTags = 100
+
+// topDislikedTags отдаёт теги с обратной связью по убыванию счётчика.
+// При равенстве сортируем по имени, иначе порядок скачет между обменами.
+func topDislikedTags(m map[string]int) []friendDislikedTag {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]friendDislikedTag, 0, len(m))
+	for tag, n := range m {
+		if n > 0 && strings.TrimSpace(tag) != "" {
+			out = append(out, friendDislikedTag{Tag: truncateRunes(tag, 80), Count: n})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Tag < out[j].Tag
+	})
+	if len(out) > maxFriendDislikedTags {
+		out = out[:maxFriendDislikedTags]
+	}
+	return out
+}
+
+// sortedTagKeys возвращает ключи карты тегов в стабильном порядке.
+func sortedTagKeys(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		if v && strings.TrimSpace(k) != "" {
+			out = append(out, truncateRunes(k, 80))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func truncateRunes(s string, max int) string {
@@ -892,6 +1066,10 @@ func syncOneFriend(f Friend, instance, user, nickname, avatar string, p *Profile
 			return st, err
 		}
 		st = got
+		// Снимок его вкусов сохраняем ДО отправки своих данных: он нужен,
+		// чтобы показать профиль друга, а после applyFriendPayload его лайки
+		// уже неотличимы от наших.
+		GetFriendStore(user).noteSnapshot(f.ID(), snapshotFrom(theirs))
 	} else {
 		// Не рвём обмен из-за одной стороны: свои данные всё равно отдадим,
 		// иначе один временно выключенный друг «замораживал» бы обмен.

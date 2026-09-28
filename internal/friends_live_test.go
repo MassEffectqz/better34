@@ -269,6 +269,25 @@ func TestTwoInstancesSync(t *testing.T) {
 	}
 
 	// РЎРїРёСЃРѕРє РґСЂСѓР·РµР№ Рё РѕС‚СЃСѓС‚СЃС‚РІРёРµ РѕС€РёР±РєРё РїРѕСЃР»Рµ СѓСЃРїРµС€РЅРѕРіРѕ РѕР±РјРµРЅР°.
+	// Вкусы друга (B): избранный тег, скрытый пост, «голоса против» и альбом.
+	// Без них снимок профиля был бы пустым и проверять было бы нечего.
+	apiJSON(t, "POST", baseB+"/api/fav-tag", cookieB, map[string]string{"tag": "b"}, nil)
+	apiJSON(t, "POST", baseB+"/api/hide/5555", cookieB, map[string]bool{"hidden": true}, nil)
+	// Два «голоса против» подряд: проверяем, что счётчик и сортировка по нему
+	// доехали до A, и что «ugly» остался первым.
+	apiJSON(t, "POST", baseB+"/api/recommend/dislike", cookieB, map[string]any{"tags": []string{"ugly"}}, nil)
+	apiJSON(t, "POST", baseB+"/api/recommend/dislike", cookieB, map[string]any{"tags": []string{"ugly"}}, nil)
+	apiJSON(t, "POST", baseB+"/api/recommend/dislike", cookieB, map[string]any{"tags": []string{"meh"}}, nil)
+	var collB struct {
+		ID string `json:"id"`
+	}
+	apiJSON(t, "POST", baseB+"/api/collection", cookieB, map[string]string{"name": "albumB"}, &collB)
+	apiJSON(t, "POST", baseB+"/api/collection/"+collB.ID+"/post", cookieB, map[string]any{"post_id": 888}, nil)
+	// Обмен ещё раз: снимок профиля обновляется только при sync, а вкусы B мы
+	// завели после прошлого. Без этого проверка смотрела бы на устаревший снимок.
+	apiJSON(t, "POST", baseA+"/api/friends/sync", cookieA, nil, nil)
+
+	// Список друзей и отсутствие ошибки после успешного обмена.
 	var listA struct {
 		Friends []friendView `json:"friends"`
 	}
@@ -318,6 +337,51 @@ func TestTwoInstancesSync(t *testing.T) {
 		}
 	}
 
+	// Профиль друга: снимок его вкусов должен прийти после обмена. Без него
+	// вкладка «Друзья» показывала бы пустоту, хотя обмен отработал.
+	{
+		var prof struct {
+			Friend struct {
+				Likes        []int    `json:"likes"`
+				Disliked     []int    `json:"disliked"`
+				FavTags      []string `json:"fav_tags"`
+				DislikedTags []struct {
+					Tag   string `json:"tag"`
+					Count int    `json:"count"`
+				} `json:"disliked_tags"`
+				Collections []struct {
+					Name  string `json:"name"`
+					Count int    `json:"count"`
+				} `json:"collections"`
+				SyncedAt string `json:"synced_at"`
+			} `json:"friend"`
+		}
+		code := apiJSON(t, "GET", baseA+"/api/friends/"+listA.Friends[0].ID+"/profile", cookieA, nil, &prof)
+		if code != 200 {
+			t.Fatalf("GET friend profile = %d, want 200", code)
+		}
+		if prof.Friend.SyncedAt == "" {
+			t.Error("в профиле друга нет synced_at: снимок не сохранился")
+		}
+		// Лайки B: 777 и 888 (см. выше) должны быть видны как его, плюс 9001,
+		// который приехал отдельным запросом «дверью».
+		if !containsID(prof.Friend.Likes, 777) || !containsID(prof.Friend.Likes, 888) {
+			t.Errorf("лайки друга в профиле: %v, ждали 777 и 888", prof.Friend.Likes)
+		}
+		if !containsID(prof.Friend.Disliked, 5555) {
+			t.Errorf("скрытое друга (5555) не в профиле: %v", prof.Friend.Disliked)
+		}
+		if !containsStr(prof.Friend.FavTags, "b") {
+			t.Errorf("избранный тег друга (b) не в профиле: %v", prof.Friend.FavTags)
+		}
+		if len(prof.Friend.DislikedTags) == 0 || prof.Friend.DislikedTags[0].Tag != "ugly" {
+			t.Errorf("штрафные теги друга: %+v, ждали первый ugly", prof.Friend.DislikedTags)
+		}
+		if len(prof.Friend.Collections) == 0 {
+			t.Error("альбомы друга не попали в профиль")
+		}
+	}
+
 	if code := apiJSON(t, "DELETE", baseA+"/api/friends/"+listA.Friends[0].ID, cookieA, nil, &del); code != 200 {
 		t.Errorf("A: delete friend = %d", code)
 	}
@@ -363,6 +427,16 @@ func friendDoorRequest(t *testing.T, method, url, key, host, from string, body a
 }
 
 func containsID(ids []int, want int) bool { return countID(ids, want) > 0 }
+
+// containsStr ищет тег в списке (для избранных тегов в профиле друга).
+func containsStr(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
 
 func countID(ids []int, want int) int {
 	n := 0

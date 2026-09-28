@@ -99,8 +99,23 @@ App.renderFriends = async function () {
         ${status}
       </span>
       <button class="btn-icon btn-icon-sm friend-del" data-id="${esc(f.id)}" title="${esc(t('friends.remove'))}" aria-label="${esc(t('friends.remove'))}">${icon('trash', 14)}</button>`;
+    // Вся строка открывает профиль друга: его лайки, дизлайки и теги.
+    // Кнопка корзины перехватывает клик сама (stopPropagation), иначе
+    // удаление ещё и открывало бы профиль того, кого убирают.
+    row.classList.add('friend-item-link');
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    const open = () => this.openFriendProfile(f.id);
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        open();
+      }
+    });
     const del = row.querySelector('.friend-del');
-    del.addEventListener('click', async () => {
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const ok = await this.confirmDialog({
         title: t('friends.removeTitle'),
         message: tf('friends.removeMsg', { name }),
@@ -120,6 +135,310 @@ App.renderFriends = async function () {
 };
 
 /** РџРѕРєР°Р·С‹РІР°РµС‚ РјРѕР№ РєРѕРґ РґР»СЏ РїРµСЂРµРґР°С‡Рё РґСЂСѓРіСѓ. */
+/**
+ * ── Профиль друга ───────────────────────────────────────────────────────────
+ * Клик по другу открывает его вкусы: лайки, дизлайки, теги, альбомы. Данные
+ * приходят одним снимком (/friends/:id/profile), а сами посты клиент добирает
+ * через общий _fetchPostsByIds — он умеет пачками и сам достраивает deferred.
+ *
+ * Кэш по id друга: переключение туда-обратно не должно дёргать сеть.
+ */
+const friendProfileCache = new Map();
+
+/** Сколько плиток рисуем за раз: остальное — кнопкой «показать ещё». */
+const FRIEND_PAGE = 60;
+
+App.openFriendProfile = async function (id) {
+  const box = $('friend-profile');
+  const list = $('friends-list');
+  if (!box) return;
+  if (list) list.classList.add('hidden');
+  box.classList.remove('hidden');
+  if (!this._friendProfile || this._friendProfile.id !== id) {
+    this._friendProfile = { id, data: null, tab: 'likes', shown: FRIEND_PAGE };
+  }
+  await this.renderFriendProfile();
+};
+
+/** Возврат к списку друзей. */
+App.closeFriendProfile = function () {
+  const box = $('friend-profile');
+  const list = $('friends-list');
+  if (box) box.classList.add('hidden');
+  if (list) list.classList.remove('hidden');
+  this._friendProfile = null;
+};
+
+App.renderFriendProfile = async function () {
+  const box = $('friend-profile');
+  if (!box) return;
+  const st = this._friendProfile;
+  if (!st || !st.id) return;
+  if (!st.data) {
+    let res = friendProfileCache.get(st.id);
+    if (!res) {
+      try {
+        res = await API.get(`/friends/${encodeURIComponent(st.id)}/profile`);
+        // Кэшируем только успех: при сетевой ошибке повторим при следующем клике.
+        friendProfileCache.set(st.id, res);
+      } catch {
+        res = { friend: { id: st.id, url: '', likes: [], disliked: [], fav_tags: [], disliked_tags: [], collections: [] } };
+      }
+    }
+    st.data = res;
+  }
+  const f = (st.data && st.data.friend) || {};
+  const name = f.nickname || f.url || '';
+
+  box.innerHTML = `
+    <div class="friend-profile-head">
+      <button id="btn-friend-back" class="btn btn-sm" title="${esc(t('friends.back'))}">
+        ${icon('chevronLeft', 14)} <span>${esc(t('friends.back'))}</span>
+      </button>
+      <div class="friend-profile-id">
+        <div class="friend-profile-name">${esc(name)}</div>
+        <div class="friend-profile-url">${esc(f.url || '')}</div>
+      </div>
+      <button id="btn-friend-profile-sync" class="btn btn-sm" title="${esc(t('friends.syncTitle'))}">
+        ${icon('refresh', 14)} <span>${esc(t('friends.sync'))}</span>
+      </button>
+    </div>
+    <div class="friend-profile-stats">${this._friendStatsHTML(f)}</div>
+    <div class="friend-profile-tabs" role="tablist"></div>
+    <div id="friend-profile-body" class="friend-profile-body"></div>`;
+
+  $('btn-friend-back').addEventListener('click', () => this.closeFriendProfile());
+  $('btn-friend-profile-sync').addEventListener('click', () => this._friendProfileSync(st));
+  await this.renderFriendProfileTabs();
+};
+
+/** Обмен по кнопке из профиля: сбрасываем кэш и перерисовываем. */
+App._friendProfileSync = async function (st) {
+  const btn = $('btn-friend-profile-sync');
+  if (btn) btn.disabled = true;
+  try {
+    await API.post('/friends/sync');
+    friendProfileCache.delete(st.id);
+    friendsCache = null;
+    st.data = null;
+    await this.renderFriendProfile();
+  } catch {
+    this.showToast(t('friends.syncFailed'));
+  } finally {
+    const again = $('btn-friend-profile-sync');
+    if (again) again.disabled = false;
+  }
+};
+
+/** Счётчики на шапке профиля: сколько всего у друга на каждой вкладке. */
+App._friendStatsHTML = function (f) {
+  const cells = [
+    [(f.likes || []).length, t('friends.tabLikes')],
+    [(f.disliked || []).length, t('friends.tabDisliked')],
+    [(f.fav_tags || []).length, t('friends.tabFavTags')],
+    [(f.collections || []).length, t('friends.tabCollections')],
+  ];
+  const when = f.synced_at ? tf('friends.synced', { when: whenText(f.synced_at) }) : t('friends.pending');
+  return cells.map(([n, label]) => `
+    <span class="friend-stat"><b>${esc(String(n))}</b><span>${esc(label)}</span></span>`).join('') +
+    `<span class="friend-stat friend-stat-when">${esc(when)}</span>`;
+};
+
+/** Кнопка вкладки с числом: число держим в data-tab, чтобы счётчики не спорили с id. */
+App._friendTabBtn = function (key, list, label) {
+  const st = this._friendProfile;
+  const n = (list || []).length;
+  const active = !!st && st.tab === key;
+  return `<button class="friend-tab${active ? ' active' : ''}" data-tab="${esc(key)}" role="tab" aria-selected="${active ? 'true' : 'false'}">${esc(label)} <span class="friend-tab-n">${esc(String(n))}</span></button>`;
+};
+
+App.renderFriendProfileTabs = async function () {
+  const st = this._friendProfile;
+  const body = $('friend-profile-body');
+  const box = $('friend-profile');
+  if (!st || !body || !box) return;
+  const f = (st.data && st.data.friend) || {};
+  const tabs = box.querySelector('.friend-profile-tabs');
+  tabs.innerHTML =
+    this._friendTabBtn('likes', f.likes, t('friends.tabLikes')) +
+    this._friendTabBtn('disliked', f.disliked, t('friends.tabDisliked')) +
+    this._friendTabBtn('favtags', f.fav_tags, t('friends.tabFavTags')) +
+    this._friendTabBtn('dislikedtags', f.disliked_tags, t('friends.tabDislikedTags')) +
+    this._friendTabBtn('collections', f.collections, t('friends.tabCollections'));
+  tabs.querySelectorAll('.friend-tab').forEach((el) => {
+    el.addEventListener('click', () => {
+      st.tab = el.dataset.tab;
+      st.shown = FRIEND_PAGE;
+      this.renderFriendProfileTabs();
+    });
+  });
+
+  body.innerHTML = '';
+  if (st.tab === 'favtags') return this._friendTags(body, f.fav_tags || [], 'fav');
+  if (st.tab === 'dislikedtags') return this._friendDislikedTags(body, f.disliked_tags || []);
+  if (st.tab === 'collections') return this._friendCollections(body, f.collections || []);
+  return this._friendPosts(body, st.tab === 'disliked' ? (f.disliked || []) : (f.likes || []));
+};
+
+/** Избранные теги друга: те же чипы, что в своём профиле. */
+App._friendTags = function (body, tags, kind) {
+  if (!tags.length) {
+    body.innerHTML = `<p class="profile-empty">${esc(t('friends.profileEmpty'))}</p>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  tags.forEach((tag) => {
+    const d = document.createElement('div');
+    // profile-tag-item fav|hidden — те же строки, что в своём профиле: свои
+    // классы выглядели бы иначе в светлой и тёмной теме.
+    d.className = `profile-tag-item ${kind === 'fav' ? 'fav' : 'hidden'}`;
+    d.title = tag;
+    d.innerHTML = `${icon(kind === 'fav' ? 'bookmark' : 'eye', 11)}<span>${esc(tag)}</span>`;
+    frag.appendChild(d);
+  });
+  body.appendChild(frag);
+};
+
+/** Штрафные теги: тег и счётчик «голосов против». */
+App._friendDislikedTags = function (body, tags) {
+  if (!tags.length) {
+    body.innerHTML = `<p class="profile-empty">${esc(t('friends.profileEmpty'))}</p>`;
+    return;
+  }
+  body.innerHTML = tags.map((d) => `
+    <div class="friend-dislike-row">
+      <span class="profile-tag-item hidden">${icon('eye', 11)}<span>${esc(d.tag)}</span></span>
+      <span class="friend-dislike-n">${esc(tf('friends.dislikeCount', { n: d.count }))}</span>
+    </div>`).join('');
+};
+
+/** Альбомы друга: имя и сколько постов. */
+App._friendCollections = function (body, colls) {
+  if (!colls.length) {
+    body.innerHTML = `<p class="profile-empty">${esc(t('friends.profileEmpty'))}</p>`;
+    return;
+  }
+  body.innerHTML = colls.map((c) => `
+    <div class="friend-coll-row">
+      <span class="friend-coll-name">${esc(c.name)}</span>
+      <span class="friend-coll-n">${esc(tf('friends.postsCount', { n: c.count }))}</span>
+    </div>`).join('');
+};
+
+/** Сетка постов друга: лайки или дизлайки, с догрузкой по кнопке. */
+App._friendPosts = async function (body, ids) {
+  if (!ids.length) {
+    body.innerHTML = `<p class="profile-empty">${esc(t('friends.profileEmpty'))}</p>`;
+    return;
+  }
+  const st = this._friendProfile;
+  const grid = document.createElement('div');
+  // profile-thumbs, а не выдуманный класс: колонки и правила плиток заданы
+  // именно для него, своими стилями мы бы получили несовместимую сетку.
+  grid.className = 'profile-thumbs friend-post-grid';
+  const more = document.createElement('button');
+  more.className = 'btn btn-sm friend-profile-more';
+  body.appendChild(grid);
+  body.appendChild(more);
+
+  const slice = ids.slice(0, st.shown);
+  // Скелетоны на время загрузки: сетка не прыгает, когда плитки доедут.
+  grid.innerHTML = slice.map(() => '<div class="pf-thumb-skeleton"></div>').join('');
+
+  let res;
+  try {
+    res = await this._fetchPostsByIds(slice);
+  } catch {
+    grid.innerHTML = `<p class="profile-empty">${esc(t('friends.postsFailed'))}</p>`;
+    more.classList.add('hidden');
+    return;
+  }
+  // Пока грузили, пользователь мог уйти к другому другу: в чужую сетку не рисуем.
+  if (!this._friendProfile || this._friendProfile.id !== st.id) return;
+  grid.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  res.posts.forEach((post) => frag.appendChild(this._friendTile(post)));
+  // Посты, которых нет ни у нас, ни на источнике (удалён, CDN отдал 404):
+  // показываем заглушку с id — видно, что запись учтена, а не молчаливая дыра.
+  (res.unresolved || []).forEach((id) => {
+    const tile = document.createElement('div');
+    tile.className = 'pf-thumb pf-broken pf-missing';
+    tile.title = tf('pf.postUnavailable', { id });
+    const fb = document.createElement('div');
+    fb.className = 'pf-fallback';
+    fb.textContent = tf('pf.missingTile', { id });
+    tile.appendChild(fb);
+    frag.appendChild(tile);
+  });
+  grid.appendChild(frag);
+  if (!res.posts.length && !(res.unresolved || []).length) {
+    grid.innerHTML = `<p class="profile-empty">${esc(t('friends.postsNone'))}</p>`;
+  }
+
+  const left = ids.length - st.shown;
+  more.classList.toggle('hidden', left <= 0);
+  if (left > 0) {
+    more.textContent = tf('friends.showMore', { n: Math.min(left, FRIEND_PAGE) });
+    more.onclick = () => {
+      st.shown += FRIEND_PAGE;
+      this.renderFriendProfileTabs();
+    };
+  }
+};
+
+/**
+ * Кандидаты превью по убыванию предпочтения. Логика повторяет профиль: у
+ * лайков друга preview_url на CDN часто протухает, а локальная миниатюра или
+ * оригинал живы, поэтому при ошибке загрузки перебираем следующего.
+ */
+const friendThumbCandidates = (post) => {
+  const out = [];
+  const push = (u) => { if (u && !out.includes(u)) out.push(u); };
+  const proxy = (u) => `/api/proxy?url=${encodeURIComponent(u)}&kind=preview`;
+  if (post.preview_url) push(proxy(post.preview_url));
+  if (post.downloaded && post.thumb_path) push(`/api/thumb/${post.id}`);
+  if (post.sample_url) push(proxy(post.sample_url));
+  if (post.file_url) push(proxy(post.file_url));
+  if (!out.length && post.downloaded) push(`/api/thumb/${post.id}`);
+  return out;
+};
+
+/** Одна плитка поста в профиле друга: превью + открытие по клику. */
+App._friendTile = function (post) {
+  const tile = document.createElement('div');
+  tile.className = 'pf-thumb';
+  tile.tabIndex = 0;
+  tile.dataset.pfId = String(post.id);
+  const img = document.createElement('img');
+  img.loading = 'lazy';
+  img.alt = '';
+  const srcs = friendThumbCandidates(post);
+  if (srcs.length) img.src = srcs[0];
+  tile.appendChild(img);
+  // Теги в подсказке: так же, как в ленте и в своей вкладке лайков.
+  if (post.tags) tile.title = post.tags;
+  // Перебор кандидатов: превью с CDN могло протухнуть, а локальная миниатюра
+  // жива. Без этого плитка друга молча осталась бы битой.
+  let attempt = 0;
+  img.addEventListener('error', () => {
+    if (attempt >= srcs.length) {
+      tile.classList.add('pf-broken');
+      return;
+    }
+    attempt++;
+    img.src = srcs[attempt];
+  });
+  const open = () => this.openPostById(post.id);
+  tile.addEventListener('click', open);
+  tile.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      open();
+    }
+  });
+  return tile;
+};
+
 App.showFriendCode = async function () {
   const box = $('friends-code-box');
   const out = $('friends-code');

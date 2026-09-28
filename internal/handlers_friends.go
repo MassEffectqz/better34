@@ -74,6 +74,9 @@ type friendView struct {
 	AddedAt  string `json:"added_at"`
 	LastSync string `json:"last_sync,omitempty"`
 	LastErr  string `json:"last_error,omitempty"`
+	// HasSnapshot — есть ли что показывать. Сам снимок в список НЕ кладём:
+	// он тяжёлый (до 5000 id), а список грузится при каждом открытии вкладки.
+	HasSnapshot bool `json:"has_snapshot,omitempty"`
 }
 
 func (f Friend) view() friendView {
@@ -81,6 +84,7 @@ func (f Friend) view() friendView {
 		ID: f.ID(), URL: f.URL, Nickname: f.Nickname, Avatar: f.Avatar,
 		Username: f.Username, AddedAt: f.AddedAt,
 		LastSync: f.LastSync, LastErr: f.LastError,
+		HasSnapshot: f.Snapshot != nil,
 	}
 }
 
@@ -125,6 +129,80 @@ func (h *Handler) AddFriend(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"friend": f.view()})
+}
+
+// friendProfileView — профиль друга для UI: счётчики, теги и id постов.
+//
+// Посты отдаём только id: клиент сам добирает их через /api/posts-by-ids,
+// где работает наш локальный кэш. Так картинки друзей рисуются без новых
+// запросов к сети, а снимок остаётся лёгким.
+type friendProfileView struct {
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	Nickname string `json:"nickname,omitempty"`
+	Avatar   string `json:"avatar,omitempty"`
+	LastSync string `json:"last_sync,omitempty"`
+	// SyncedAt — когда друг прислал эти данные (не когда мы последний раз
+	// стучались: обмен мог пройти, а данных не пришло).
+	SyncedAt     string               `json:"synced_at,omitempty"`
+	Likes        []int                `json:"likes"`
+	Disliked     []int                `json:"disliked"`
+	FavTags      []string             `json:"fav_tags"`
+	DislikedTags []friendDislikedTag  `json:"disliked_tags"`
+	Collections  []FriendSnapshotColl `json:"collections"`
+	CommentPosts []int                `json:"comment_posts"`
+}
+
+// GET /api/friends/:id/profile — профиль друга: его лайки, дизлайки и теги.
+//
+// Отдельный эндпоинт, а не поле в /api/friends: список открывается часто, а
+// снимок весит до 5000 id. Плюс он не должен попадать в localStorage.
+func (h *Handler) FriendProfile(c *gin.Context) {
+	user := c.GetString("briefly_user")
+	f, ok := GetFriendStore(user).Get(c.Param("id"))
+	if !ok {
+		friendErr(c, ErrFriendNotFound)
+		return
+	}
+	snap := f.Snapshot
+	if snap == nil {
+		// Данных ещё нет: отдаём пустой профиль, а не 404 — друг существует,
+		// просто обмена ещё не было. UI покажет подсказку «нажмите Обменяться».
+		c.JSON(http.StatusOK, gin.H{"friend": friendProfileView{
+			ID: f.ID(), URL: f.URL, Nickname: f.Nickname, Avatar: f.Avatar,
+			LastSync: f.LastSync,
+			Likes:    []int{}, Disliked: []int{}, FavTags: []string{},
+			DislikedTags: []friendDislikedTag{}, Collections: []FriendSnapshotColl{},
+			CommentPosts: []int{},
+		}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"friend": friendProfileView{
+		ID: f.ID(), URL: f.URL, Nickname: f.Nickname, Avatar: f.Avatar,
+		LastSync: f.LastSync, SyncedAt: snap.SyncedAt,
+		Likes:        nonNilInts(snap.Likes),
+		Disliked:     nonNilInts(snap.Disliked),
+		FavTags:      nonNilStrings(snap.FavTags),
+		DislikedTags: snap.DislikedTags,
+		Collections:  snap.Collections,
+		CommentPosts: nonNilInts(snap.CommentPosts),
+	}})
+}
+
+// nonNilInts и nonNilStrings: пустой слайс сериализуется в [] вместо null —
+// иначе клиенту пришлось бы отдельно проверять null на каждой вкладке.
+func nonNilInts(s []int) []int {
+	if s == nil {
+		return []int{}
+	}
+	return s
+}
+
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // DELETE /api/friends/:id — удалить друга.

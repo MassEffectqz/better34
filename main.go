@@ -172,6 +172,7 @@ func main() {
 		// Друзья: обмен между инстансами напрямую, без общего сервера.
 		api.GET("/friends", handler.ListFriends)
 		api.GET("/friends/code", handler.MyFriendCode)
+		api.GET("/friends/:id/profile", handler.FriendProfile)
 		api.POST("/friends", handler.AddFriend)
 		api.DELETE("/friends/:id", handler.DeleteFriend)
 		api.POST("/friends/sync", handler.SyncFriends)
