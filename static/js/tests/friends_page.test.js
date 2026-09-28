@@ -1,11 +1,16 @@
 // friend_page.test.js — страница профиля друга /friend/<id>[/<tab>]:
 // это ОТДЕЛЬНАЯ СТРАНИЦА со своим адресом, а не панель во вкладке «Друзья».
+// Раскладка: слева панель с аватаром, ником и вкладками, справа контент.
 //
 // Что здесь ловится:
 //  * маршрут не разбирается parseLocation -> прямая ссылка открывает ленту;
 //  * «назад» в браузере возвращает не на предыдущую вкладку, а на ленту
 //    (или вообще не возвращает страницу);
-//  * повторное открытие того же адреса плодит записи истории и ломает «назад».
+//  * повторное открытие того же адреса плодит записи истории и ломает «назад»;
+//  * в разметке осталась старая полоса счётчиков или потерялась боковая панель.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { App } from '../state.js';
 import '../friends.js';
 
@@ -72,5 +77,28 @@ function makeApp() {
 }
 
 const reset = () => { hist.calls = []; hist.state = null; bodyCls._s = new Set(); };
+
+// ── 0. Раскладка: панель слева, контент справа ──────────────────────────────
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+  const root = join(here, '..', '..');
+  const html = readFileSync(join(root, 'index.html'), 'utf8');
+  const friends = readFileSync(join(root, 'js', 'friends.js'), 'utf8');
+  const css = readFileSync(join(root, 'css', '04-panels.css'), 'utf8');
+
+  check('контейнер страницы друга вне вкладки «Друзья»',
+    /<div id="friend-profile"[^>]*><\/div>/.test(html) && !/id="tab-friends"[\s\S]{0,4000}id="friend-profile"/.test(html));
+  check('двухколоночная раскладка объявлена', /\.friend-layout\{display:grid;grid-template-columns:/.test(css));
+  check('боковая панель friend-side есть и в разметке, и в стилях',
+    friends.includes('class="friend-side"') && /\.friend-side\{/.test(css));
+  check('у вкладок боковая навигация friend-nav-item',
+    friends.includes('friend-nav-item') && /\.friend-nav-item\{/.test(css));
+  // Старая полоса счётчиков дублировала числа вкладок — её быть не должно.
+  check('старая полоса счётчиков удалена',
+    !friends.includes('friend-profile-stats') && !/\.friend-stat\{/.test(css));
+  // Аватар в шапке: адрес друга может прийти javascript:, фильтр обязателен.
+  check('аватар друга фильтруется по безопасным URL',
+    /f\.avatar && \/\^\(https\?:\\\/\\\/\|\\\/\|data:image\\\/\)\//.test(friends));
+}
 
 console.log('Страница профиля друга (/friend/<id>[/<tab>])\n');

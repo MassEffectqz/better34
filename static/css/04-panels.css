@@ -232,32 +232,60 @@
 
 /* ── Страница профиля друга (/friend/<id>[/<tab>]) ────────────────────────────
    Полноэкранная страница вместо ленты: свой адрес, «назад», перезагрузка.
-   Свои правила, а не переиспользование панели профиля — здесь другая ширина
-   и другая точка входа, а переписывать общие селекторы рискованно. */
-.friend-profile{position:fixed;inset:0;z-index:150;background:var(--bg);display:flex;flex-direction:column;padding:max(10px,env(safe-area-inset-top)) 16px 16px}
-.friend-profile-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-shrink:0}
+   Раскладка как у соседнего профиля — боковая панель с аватаром, ником и
+   вкладками слева, весь контент справа. */
+.friend-profile{position:fixed;inset:0;z-index:150;background:var(--bg)}
 /* Лента уходит, пока открыта страница друга: иначе её сетка выглядывала бы
    из-под полноэкранной секции при скролле. */
 body.friend-profile-open #header,body.friend-profile-open main{display:none}
-.friend-profile-id{flex:1;min-width:0}
-.friend-profile-name{font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.friend-profile-url{font-size:.66rem;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* Тело прокручиваемое, шапка и вкладки закреплены: при длинной сетке лайков
-   список счётчиков не должен уезжать за экран. */
-.friend-profile-stats{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;flex-shrink:0}
-.friend-stat{display:inline-flex;align-items:baseline;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px 7px;font-size:.68rem;color:var(--text-dim)}
-.friend-stat b{font-size:.8rem;color:var(--text-bright)}
-/* Время обмена прижато вправо и переносится: на телефоне иначе выдавливает
-   счётчики на вторую строку целиком. */
-.friend-stat-when{margin-left:auto}
-/* Вкладки прокручиваются, а не сжимаются: на телефоне пять вкладок не влезут. */
-.friend-profile-tabs{display:flex;gap:4px;overflow-x:auto;margin-bottom:10px;padding-bottom:2px;flex-shrink:0}
-.friend-tab{flex-shrink:0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 9px;font-size:.72rem;color:var(--text-dim);cursor:pointer;white-space:nowrap}
-.friend-tab.active{border-color:var(--accent);color:var(--text-bright);background:var(--surface3)}
-.friend-tab-n{color:var(--text-dim);font-size:.66rem}
-.friend-profile-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.friend-layout{display:grid;grid-template-columns:clamp(150px,24%,210px) minmax(0,1fr);height:100%}
+
+/* Боковая панель: аватар, ник, адрес, вкладки, обмен. Прокручивается, если
+   вкладок не влезло (на узком экране они идут в одну колонку). */
+.friend-side{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0;min-height:0;padding:14px 10px max(14px,env(safe-area-inset-bottom));background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;overscroll-behavior:contain}
+.friend-back{align-self:flex-start;color:var(--text-dim)}
+.friend-side-avatar{width:74px;height:74px;border-radius:50%;overflow:hidden;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+.friend-side-avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.friend-avatar-initials{display:flex;align-items:center;justify-content:center;width:100%;height:100%;color:var(--text-dim)}
+.friend-side-name{font-size:.85rem;font-weight:600;color:var(--text-bright);text-align:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Адрес — мелко и в одну строку с многоточием: он длинный, а панель узкая. */
+.friend-side-url{font-size:.62rem;color:var(--text-dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.friend-side-tabs{display:flex;flex-direction:column;gap:2px;width:100%;margin-top:4px;min-height:0}
+/* Пункт вкладки повторяет panel-nav-item панели профиля: тот же вид и то же
+   поведение при переполнении, поэтому свои стили не понадобились. */
+.friend-nav-item{flex:0 0 auto;min-width:0;min-height:38px;padding:8px 9px;background:none;border:0;border-left:2px solid transparent;border-radius:8px;color:var(--text-dim);cursor:pointer;font-size:.8rem;display:flex;align-items:center;gap:6px;text-align:left;transition:color var(--transition),background var(--transition),border-color var(--transition)}
+.friend-nav-item>span:first-of-type{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Наведения оборачиваем в (hover:hover): на тач-устройствах оно залипает после тапа и подсвечивает вкладку, по которой уже ушли. */
+@media(hover:hover){.friend-nav-item:hover{color:var(--text)}}
+.friend-nav-item.active{color:var(--accent);border-left-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.friend-nav-item.active .tab-badge{background:var(--accent-dim);color:#fff}
+.friend-side-foot{margin-top:auto;padding-top:10px;width:100%;display:flex;flex-direction:column;align-items:center;gap:6px}
+.friend-side-when{font-size:.62rem;color:var(--text-dim);text-align:center}
+.friend-side-sync{width:100%;justify-content:center}
+
+/* Контент справа прокручивается сам: боковая панель при этом неподвижна. */
+.friend-content{min-width:0;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:16px 20px max(20px,env(safe-area-inset-bottom))}
+.friend-profile-body{min-height:0}
 .friend-post-grid{gap:4px}
 .friend-profile-more{margin-top:10px;align-self:flex-start}
-.friend-dislike-row,.friend-coll-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:5px}
-.friend-dislike-n,.friend-coll-n{font-size:.68rem;color:var(--text-dim);flex-shrink:0}
-.friend-coll-name{font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.friend-dislike-row,.friend-coll-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px}
+.friend-dislike-n,.friend-coll-n{font-size:.7rem;color:var(--text-dim);flex-shrink:0}
+.friend-coll-name{font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Телефон: панель уходит вверх, вкладки — в горизонтальную ленту. Иначе
+   пять вкладок в узкой колонке съели бы весь экран. */
+@media(max-width:720px){
+  .friend-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .friend-side{border-right:0;border-bottom:1px solid var(--border);flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;overflow:visible}
+  .friend-side-avatar{width:44px;height:44px}
+  .friend-side-name,.friend-side-url{text-align:left;flex:1;min-width:0}
+  .friend-side-tabs{flex-direction:row;overflow-x:auto;width:100%;margin-top:4px;padding-bottom:2px}
+  .friend-nav-item{border-left:0;border-bottom:2px solid transparent;border-radius:6px;white-space:nowrap;min-height:36px}
+  .friend-nav-item>span:first-of-type{flex:0 0 auto}
+  .friend-nav-item.active{border-left:0;border-bottom-color:var(--accent)}
+  .friend-side-foot{flex-direction:row;align-items:center;gap:8px;margin-top:0;padding-top:0;width:auto}
+  .friend-side-when{white-space:nowrap}
+  .friend-side-sync{width:auto}
+  .friend-content{padding:14px 12px max(18px,env(safe-area-inset-bottom))}
+  .friend-nav-item{min-height:40px}
+}

@@ -152,6 +152,17 @@ const FRIEND_PAGE = 60;
 /** Вкладки профиля друга в порядке показа. */
 const FRIEND_TABS = ['likes', 'disliked', 'favtags', 'dislikedtags', 'collections'];
 
+/** Иконки вкладок. check:icons падает, если имени тут нет в utils.js. */
+const FRIEND_TAB_ICONS = {
+  likes: 'heart',
+  disliked: 'eyeOff',
+  favtags: 'hash',
+  // Штрафные теги — «сердце перечёркнуто»: отличает их от скрытых постов
+  // (eyeOff) без новой иконки в наборе.
+  dislikedtags: 'heartOff',
+  collections: 'folder',
+};
+
 /** Адрес страницы друга. Таб «likes» не пишем — это адрес по умолчанию. */
 function friendUrl(id, tab) {
   return tab && tab !== 'likes' ? `/friend/${id}/${tab}` : `/friend/${id}`;
@@ -233,26 +244,34 @@ App.renderFriendProfile = async function () {
   }
   const f = (st.data && st.data.friend) || {};
   const name = f.nickname || f.url || '';
+  // Аватар — только безопасные URL: никаких javascript: из чужого инстанса.
+  const avatarOK = f.avatar && /^(https?:\/\/|\/|data:image\/)/.test(f.avatar);
+  const avatar = avatarOK
+    ? `<img src="${esc(f.avatar)}" alt="">`
+    : `<span class="friend-avatar-initials">${icon('user', 20)}</span>`;
 
+  // Слева панель с аватаром, ником и вкладками (как соседний профиль),
+  // справа весь контент. Вкладки — с иконками и счётчиками, поэтому отдельная
+  // полоса со счётчиками больше не нужна.
   box.innerHTML = `
-    <div class="friend-profile-head">
-      <button id="btn-friend-back" class="btn btn-sm" title="${esc(t('friends.back'))}">
-        ${icon('chevronLeft', 14)} <span>${esc(t('friends.back'))}</span>
-      </button>
-      <div class="friend-profile-id">
-        <div class="friend-profile-name">${esc(name)}</div>
-        <div class="friend-profile-url">${esc(f.url || '')}</div>
-      </div>
-      <button id="btn-friend-profile-sync" class="btn btn-sm" title="${esc(t('friends.syncTitle'))}">
-        ${icon('refresh', 14)} <span>${esc(t('friends.sync'))}</span>
-      </button>
-    </div>
-    <div class="friend-profile-stats">${this._friendStatsHTML(f)}</div>
-    <div class="friend-profile-tabs" role="tablist"></div>
-    <div id="friend-profile-body" class="friend-profile-body"></div>`;
+    <div class="friend-layout">
+      <aside class="friend-side">
+        <button id="btn-friend-back" class="btn-icon friend-back" title="${esc(t('friends.back'))}" aria-label="${esc(t('friends.back'))}">${icon('chevronLeft', 16)}</button>
+        <div class="friend-side-avatar">${avatar}</div>
+        <div class="friend-side-name" title="${esc(name)}">${esc(name)}</div>
+        <div class="friend-side-url" title="${esc(f.url || '')}">${esc(f.url || '')}</div>
+        <nav class="friend-side-tabs" role="tablist"></nav>
+        <div class="friend-side-foot">
+          <span class="friend-side-when" id="friend-side-when"></span>
+          <button id="btn-friend-profile-sync" class="btn btn-sm friend-side-sync" title="${esc(t('friends.syncTitle'))}">${icon('refresh', 13)} <span>${esc(t('friends.sync'))}</span></button>
+        </div>
+      </aside>
+      <div class="friend-content"><div id="friend-profile-body" class="friend-profile-body"></div></div>
+    </div>`;
 
   $('btn-friend-back').addEventListener('click', () => this.closeFriendProfile());
   $('btn-friend-profile-sync').addEventListener('click', () => this._friendProfileSync(st));
+  this._friendSideWhen(f);
   await this.renderFriendProfileTabs();
 };
 
@@ -274,26 +293,23 @@ App._friendProfileSync = async function (st) {
   }
 };
 
-/** Счётчики на шапке профиля: сколько всего у друга на каждой вкладке. */
-App._friendStatsHTML = function (f) {
-  const cells = [
-    [(f.likes || []).length, t('friends.tabLikes')],
-    [(f.disliked || []).length, t('friends.tabDisliked')],
-    [(f.fav_tags || []).length, t('friends.tabFavTags')],
-    [(f.collections || []).length, t('friends.tabCollections')],
-  ];
-  const when = f.synced_at ? tf('friends.synced', { when: whenText(f.synced_at) }) : t('friends.pending');
-  return cells.map(([n, label]) => `
-    <span class="friend-stat"><b>${esc(String(n))}</b><span>${esc(label)}</span></span>`).join('') +
-    `<span class="friend-stat friend-stat-when">${esc(when)}</span>`;
+/** Время последнего обмена — мелкой строкой внизу боковой панели. */
+App._friendSideWhen = function (f) {
+  const el = $('friend-side-when');
+  if (!el) return;
+  el.textContent = f.synced_at ? tf('friends.synced', { when: whenText(f.synced_at) }) : t('friends.pending');
 };
 
-/** Кнопка вкладки с числом: число держим в data-tab, чтобы счётчики не спорили с id. */
+/**
+ * Вкладка в боковой панели: иконка, название и счётчик. Счётчик здесь же
+ * (tab-badge) — раньше числа дублировались ещё и отдельной полосой сверху.
+ */
 App._friendTabBtn = function (key, list, label) {
   const st = this._friendProfile;
   const n = (list || []).length;
   const active = !!st && st.tab === key;
-  return `<button class="friend-tab${active ? ' active' : ''}" data-tab="${esc(key)}" role="tab" aria-selected="${active ? 'true' : 'false'}">${esc(label)} <span class="friend-tab-n">${esc(String(n))}</span></button>`;
+  return `<button class="friend-nav-item${active ? ' active' : ''}" type="button" data-tab="${esc(key)}" role="tab" aria-selected="${active ? 'true' : 'false'}">
+    ${icon(FRIEND_TAB_ICONS[key] || 'user', 14)}<span>${esc(label)}</span><span class="tab-badge">${esc(String(n))}</span></button>`;
 };
 
 App.renderFriendProfileTabs = async function () {
@@ -302,7 +318,7 @@ App.renderFriendProfileTabs = async function () {
   const box = $('friend-profile');
   if (!st || !body || !box) return;
   const f = (st.data && st.data.friend) || {};
-  const tabs = box.querySelector('.friend-profile-tabs');
+  const tabs = box.querySelector('.friend-side-tabs');
   const lists = {
     likes: f.likes, disliked: f.disliked, favtags: f.fav_tags,
     dislikedtags: f.disliked_tags, collections: f.collections,
@@ -312,10 +328,12 @@ App.renderFriendProfileTabs = async function () {
     favtags: t('friends.tabFavTags'), dislikedtags: t('friends.tabDislikedTags'),
     collections: t('friends.tabCollections'),
   };
-  tabs.innerHTML = FRIEND_TABS.map((k) => this._friendTabBtn(k, lists[k], labels[k])).join('');
-  tabs.querySelectorAll('.friend-tab').forEach((el) => {
-    el.addEventListener('click', () => this._friendProfileTab(el.dataset.tab));
-  });
+  if (tabs) {
+    tabs.innerHTML = FRIEND_TABS.map((k) => this._friendTabBtn(k, lists[k], labels[k])).join('');
+    tabs.querySelectorAll('.friend-nav-item').forEach((el) => {
+      el.addEventListener('click', () => this._friendProfileTab(el.dataset.tab));
+    });
+  }
 
   body.innerHTML = '';
   if (st.tab === 'favtags') return this._friendTags(body, f.fav_tags || [], 'fav');
