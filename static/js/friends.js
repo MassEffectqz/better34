@@ -23,6 +23,25 @@ const $ = (id) => document.getElementById(id);
 let friendsCache = null;
 
 /** В«5 РјРёРЅСѓС‚ РЅР°Р·Р°РґВ» Рё РїРѕРґРѕР±РЅРѕРµ вЂ” С‡С‚РѕР±С‹ СЃС‚Р°С‚СѓСЃ С‡РёС‚Р°Р»СЃСЏ, Р° РЅРµ РєР°Рє РјРµС‚РєР° РІСЂРµРјРµРЅРё. */
+// Коды ошибок, которые сервер кладёт в last_error (см. friendStatusErr).
+// Раньше здесь показывался голый «friend_no_back» или «403» — пользователь
+// не понимал, что делать. Теперь это готовая подсказка.
+const FRIEND_ERR_KEYS = {
+  friend_no_back: 'friends.errNoBack',
+  friend_bad_key: 'friends.errBadKey',
+  friend_host_blocked: 'friends.errHostBlocked',
+  friend_forbidden: 'friends.errForbidden',
+  friend_too_big: 'friends.errTooBig',
+  friend_server_error: 'friends.errServer',
+};
+
+/** Текст ошибки обмена: известные коды переводим, неизвестные — общим текстом. */
+function friendErrText(raw) {
+  const key = FRIEND_ERR_KEYS[raw];
+  return key ? t(key) : t('friends.errOther');
+}
+
+/** «5 минут назад» и подобное: полный текст, если время разбирается. */
 function whenText(raw) {
   const ms = Date.parse(String(raw || '').replace(' ', 'T'));
   if (Number.isNaN(ms)) return String(raw || '').slice(0, 16).replace('T', ' ');
@@ -68,7 +87,7 @@ App.renderFriends = async function () {
       : `<span class="friend-avatar friend-avatar-empty">${icon('user', 15)}</span>`;
     const name = f.nickname || f.username || f.url;
     const status = f.last_error
-      ? `<span class="friend-status friend-status-err">${esc(f.last_error)}</span>`
+      ? `<span class="friend-status friend-status-err" title="${esc(f.last_error)}">${esc(friendErrText(f.last_error))}</span>`
       : (f.last_sync
         ? `<span class="friend-status">${esc(tf('friends.synced', { when: whenText(f.last_sync) }))}</span>`
         : `<span class="friend-status friend-status-wait">${esc(t('friends.pending'))}</span>`);

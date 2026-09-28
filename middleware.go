@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -293,9 +295,61 @@ func forceHTTPSEnabled() bool {
 	return v == "1" || v == "true" || v == "yes"
 }
 
+// isFriendDoor сообщает, что путь — «дверь» для чужих инстансов
+// (/api/friend/*). Туда стучат компьютеры друзей напрямую, а не браузер.
+func isFriendDoor(path string) bool {
+	return strings.HasPrefix(path, "/api/friend/")
+}
+
+// friendHostAllowed решает, пускать ли запрос к «двери».
+//
+// Проверка Host ловит DNS rebinding и обслуживает обычный UI. Но на «двери»
+// Host — это адрес ЭТОГО инстанса в VPN-сети (26.x.x.x, Tailscale, LAN),
+// и он не обязан попасть в список allowedHosts: тот по умолчанию собран из
+// адресов интерфейсов плюс localhost, а при явно заданном
+// BRIEFLY_ALLOWED_HOSTS сужается ещё сильнее. Тогда сосед по сети получил бы
+// 403 «host not allowed» раньше, чем предъявил ключ.
+//
+// Поэтому здесь пропускаем, когда Host — наш собственный рекламируемый адрес
+// (SelfURL) либо адрес источника соединения. Оба случая легитимны: в первом
+// мы сами объявили этот адрес друзьям, во втором запрос пришёл напрямую с
+// машины, которой этот адрес принадлежит. Подставной Host из браузера не
+// совпадёт ни с тем, ни с другим.
+func friendHostAllowed(c *gin.Context) bool {
+	if hostAllowed(c.Request) {
+		return true
+	}
+	host := hostOnly(c.Request.Host)
+	if host == "" {
+		return false
+	}
+	if self := hostOnly(internal.SelfURL()); self != "" && host == self {
+		return true
+	}
+	return host == c.ClientIP()
+}
+
+// hostOnly оставляет только хост без схемы, порта и IPv6-скобок, в нижнем регистре.
+func hostOnly(addr string) string {
+	s := strings.ToLower(strings.TrimSpace(addr))
+	if s == "" {
+		return ""
+	}
+	if u, err := url.Parse(s); err == nil && u.Host != "" {
+		s = u.Host
+	}
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		s = h
+	}
+	return strings.Trim(s, "[]")
+}
+
 func webSecurityMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !hostAllowed(c.Request) {
+		// Host проверяем всегда, КРОМЕ «двери» друзей: там Host — наш адрес
+		// в VPN-сети, и friendHostAllowed его пропускает (см. пояснение выше).
+		if !hostAllowed(c.Request) &&
+			!(isFriendDoor(c.Request.URL.Path) && friendHostAllowed(c)) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "host not allowed"})
 			return
 		}

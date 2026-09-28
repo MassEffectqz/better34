@@ -799,6 +799,44 @@ func friendRequest(method, url, key, from string, body []byte) (*http.Response, 
 	return friendHTTPClient.Do(req)
 }
 
+// friendStatusErr превращает код ответа чужого инстанса в машинный код для UI.
+//
+// Раньше здесь было «друг ответил 403», и пользователь видел голый номер без
+// единого слова о причине. 403 на приёме почти всегда означает одно и то же:
+// нас не добавили в ответ (friend_not_known), потому что добавление должно быть
+// взаимным. Код отдаём текстом, чтобы UI перевёл его на язык пользователя.
+func friendStatusErr(op string, status int, errCode string) error {
+	switch {
+	case status == http.StatusForbidden:
+		switch errCode {
+		case "friend_not_known":
+			return fmt.Errorf("friend_no_back")
+		case "host_not_allowed":
+			return fmt.Errorf("friend_host_blocked")
+		}
+		return fmt.Errorf("friend_forbidden")
+	case status == http.StatusUnauthorized:
+		return fmt.Errorf("friend_bad_key")
+	case status == http.StatusRequestEntityTooLarge:
+		return fmt.Errorf("friend_too_big")
+	case status >= 500:
+		return fmt.Errorf("friend_server_error")
+	default:
+		return fmt.Errorf("friend_status_%d", status)
+	}
+}
+
+// friendErrCode достаёт код из тела ответа (в нём всегда {"error": ...}).
+func friendErrCode(raw []byte) string {
+	var body struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(raw, &body) != nil {
+		return ""
+	}
+	return body.Error
+}
+
 // fetchFromFriend забирает payload друга.
 func fetchFromFriend(f Friend) (*friendPayload, error) {
 	resp, err := friendRequest(http.MethodGet, f.URL+"/api/friend/share", f.Key, f.URL, nil)
@@ -812,7 +850,7 @@ func fetchFromFriend(f Friend) (*friendPayload, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("друг ответил %d", resp.StatusCode)
+		return nil, friendStatusErr("share", resp.StatusCode, friendErrCode(raw))
 	}
 	var out friendPayload
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -834,9 +872,10 @@ func sendToFriend(f Friend, p *friendPayload) (int, error) {
 		return 0, err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	// Код ошибки читаем из тела: по нему UI скажет точную причину, а не «403».
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("друг ответил %d", resp.StatusCode)
+		return 0, friendStatusErr("ingest", resp.StatusCode, friendErrCode(raw))
 	}
 	return len(body), nil
 }

@@ -41,6 +41,52 @@ func TestHostAllowed(t *testing.T) {
 	}
 }
 
+// Регрессия: друг получал 403 «host not allowed» на /api/friend/share.
+// Причина — проверка Host: список allowedHosts содержит адреса СВОЕЙ машины,
+// а запрос от друга идёт на наш VPN-адрес 26.x.x.x, которого в списке нет.
+// Отсечение происходило ДО проверки ключа, поэтому выглядело как «друг не
+// добавился», хотя код был верен.
+func TestFriendDoorAllowsDirectFriend(t *testing.T) {
+	orig := allowedHosts
+	allowedHosts = []string{"localhost", "127.0.0.1", "::1"}
+	defer func() { allowedHosts = orig }()
+
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name     string
+		host     string
+		remoteIP string
+		want     bool
+	}{
+		{"друг стучится напрямую со своего VPN-адреса", "26.130.42.36:3000", "26.130.42.36", true},
+		{"то же без порта", "26.130.42.36", "26.130.130.42.36", false}, // опечатка в адресе
+		{"подставной Host (DNS rebinding)", "evil.example.com:3000", "26.130.42.36", false},
+		{"Host чужой, но это локальный адрес", "example.com:3000", "127.0.0.1", false},
+		{"свой адрес в списке", "127.0.0.1:3000", "10.0.0.5", true},
+	}
+	for _, tc := range cases {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/api/friend/share", nil)
+		c.Request.Host = tc.host
+		c.Request.RemoteAddr = tc.remoteIP + ":5555"
+		if got := friendHostAllowed(c); got != tc.want {
+			t.Errorf("%s: friendHostAllowed = %v, ждали %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// isFriendDoor должен узнавать только «дверь», но не пользовательские /api/friends.
+func TestIsFriendDoorOnlyPrivateDoor(t *testing.T) {
+	if !isFriendDoor("/api/friend/share") || !isFriendDoor("/api/friend/ingest") {
+		t.Error("«дверь» не распознана")
+	}
+	// /api/friends — наш собственный UI, он идёт с сессией и обычного браузера:
+	// ослабление проверки Host там недопустимо.
+	if isFriendDoor("/api/friends") || isFriendDoor("/api/friends/sync") {
+		t.Error("/api/friends не должен считаться «дверью»")
+	}
+}
+
 func TestHostAllowedWildcard(t *testing.T) {
 	orig := allowedHosts
 	allowedHosts = []string{".trycloudflare.com"}

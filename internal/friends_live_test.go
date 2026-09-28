@@ -38,15 +38,24 @@ func freePort(t *testing.T) string {
 // startInstance РїРѕРґРЅРёРјР°РµС‚ РёРЅСЃС‚Р°РЅСЃ РІ РѕС‚РґРµР»СЊРЅРѕРј РєР°С‚Р°Р»РѕРіРµ: СЃРІРѕСЏ Р‘Р”, СЃРІРѕР№ РїРѕСЂС‚.
 func startInstance(t *testing.T, bin, dir, port string) {
 	t.Helper()
+	startInstanceURL(t, bin, dir, port, "http://127.0.0.1:"+port)
+}
+
+// startInstanceURL — то же, но с заданным адресом, который инстанс объявляет
+// друзьям (BRIEFLY_FRIENDS_URL). Нужен, чтобы проверить случай, когда реальный
+// адрес инстанса НЕ входит в список разрешённых хостов: подставив адрес из
+// чужой VPN-сети, мы воспроизводим вид запроса от соседа по сети.
+func startInstanceURL(t *testing.T, bin, dir, port, friendsURL string) {
+	t.Helper()
 	cmd := exec.Command(bin)
 	cmd.Dir = dir
-	// BRIEFLY_FRIENDS_URL Р·Р°РґР°С‘С‚ Р°РґСЂРµСЃ СЏРІРЅРѕ: РІ С‚РµСЃС‚Рµ РїРѕР»Р°РіР°С‚СЊСЃСЏ РЅР°
-	// Р°РІС‚РѕРѕРїСЂРµРґРµР»РµРЅРёРµ РїРѕ СЃРµС‚РµРІС‹Рј РєР°СЂС‚Р°Рј РЅРµР»СЊР·СЏ (РІ CI РёС… РјРѕР¶РµС‚ РЅРµ Р±С‹С‚СЊ).
+	// BRIEFLY_FRIENDS_URL задаёт адрес прямо: автоопределение в тесте может
+	// подхватить адрес машины (в CI сеть может быть любой).
 	cmd.Env = append(os.Environ(),
 		"BRIEFLY_HOST=127.0.0.1",
 		"BRIEFLY_PORT="+port,
 		"BRIEFLY_TLS=0",
-		"BRIEFLY_FRIENDS_URL=http://127.0.0.1:"+port,
+		"BRIEFLY_FRIENDS_URL="+friendsURL,
 	)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start: %v", err)
@@ -142,6 +151,36 @@ type liveProfile struct {
 	Liked []int `json:"liked_posts"`
 }
 
+// TestFriendDoorForeignHost — то, что видел пользователь: сосед по VPN стучится
+// на адрес 26.x.x.x, а тест поднимает инстанс на 127.0.0.1. Проверка Host не
+// должна отсекать такой запрос раньше, чем будет предъявлен ключ.
+func TestFriendDoorForeignHost(t *testing.T) {
+	bin := os.Getenv("BRIEFLY_TEST_BIN")
+	if bin == "" {
+		t.Skip("BRIEFLY_TEST_BIN не задан — нужен собранный бинарник")
+	}
+	port := freePort(t)
+	// Адрес из чужой VPN-сети: он заведомо не принадлежит этой машине, поэтому
+	// не попадает в список разрешённых хостов. Именно из-за этого запрос от
+	// соседа раньше отсекался с 403 раньше проверки ключа.
+	startInstanceURL(t, bin, t.TempDir(), port, "http://26.99.99.99:"+port)
+	base := "http://127.0.0.1:" + port
+	cookie := registerAndLogin(t, base, "door")
+
+	var code struct {
+		Code string `json:"code"`
+	}
+	apiJSON(t, "GET", base+"/api/friends/code", cookie, nil, &code)
+	_, key, _, err := ParseFriendCode(code.Code)
+	if err != nil {
+		t.Fatalf("code not parsed: %v", err)
+	}
+	got := friendDoorRequest(t, "GET", base+"/api/friend/share", key, "26.99.99.99:"+port, base, nil, nil)
+	if got != http.StatusOK {
+		t.Errorf("door with foreign Host = %d, want 200 (было 403 host not allowed)", got)
+	}
+}
+
 func TestTwoInstancesSync(t *testing.T) {
 	bin := os.Getenv("BRIEFLY_TEST_BIN")
 	if bin == "" {
@@ -177,6 +216,13 @@ func TestTwoInstancesSync(t *testing.T) {
 		t.Fatalf("РєРѕРґС‹ РЅРµ friend-РєРѕРґС‹: %q / %q", codeA.Code, codeB.Code)
 	}
 	t.Logf("A: %sвЂ¦ B: %sвЂ¦", codeA.Code[:40], codeB.Code[:40])
+
+	// Ключ B понадобится ниже: обращаясь к «двери» B, мы авторизуемся тем
+	// ключом, который выдал ОН (он лежит у нас в записи друга).
+	_, keyB, _, perr := ParseFriendCode(codeB.Code)
+	if perr != nil {
+		t.Fatalf("code B not parsed: %v", perr)
+	}
 
 	// Р’Р·Р°РёРјРЅРѕРµ РґРѕР±Р°РІР»РµРЅРёРµ.
 	if code := apiJSON(t, "POST", baseA+"/api/friends", cookieA, map[string]string{"code": codeB.Code}, nil); code != 200 {
@@ -249,6 +295,29 @@ func TestTwoInstancesSync(t *testing.T) {
 	var del struct {
 		OK bool `json:"ok"`
 	}
+	// Дверь с VPN-адресом в Host (регрессия 403).
+	{
+		var payload struct {
+			OK bool `json:"ok"`
+		}
+		code := friendDoorRequest(t, "POST", baseB+"/api/friend/ingest",
+			keyB, "26.130.42.36:3000", baseA,
+			map[string]any{
+				"Version": 1, "App": "briefly", "Instance": baseA,
+				"User": "alice", "Likes": []map[string]any{{"post_id": 9001, "liked_at": 1}},
+			}, &payload)
+		if code != http.StatusOK {
+			t.Errorf("obmen s VPN-adresom v Host = %d, zhdal 200 (bylo 403)", code)
+		}
+		var profAfter struct {
+			Liked []int `json:"liked_posts"`
+		}
+		apiJSON(t, "GET", baseB+"/api/profile", cookieB, nil, &profAfter)
+		if !containsID(profAfter.Liked, 9001) {
+			t.Errorf("layk iz obmena ne primenilsya: %v", profAfter.Liked)
+		}
+	}
+
 	if code := apiJSON(t, "DELETE", baseA+"/api/friends/"+listA.Friends[0].ID, cookieA, nil, &del); code != 200 {
 		t.Errorf("A: delete friend = %d", code)
 	}
@@ -256,6 +325,41 @@ func TestTwoInstancesSync(t *testing.T) {
 	if len(listA.Friends) != 0 {
 		t.Errorf("РїРѕСЃР»Рµ СѓРґР°Р»РµРЅРёСЏ РґСЂСѓР·РµР№ %d, Р¶РґР°Р»Рё 0", len(listA.Friends))
 	}
+}
+
+// friendDoorRequest стучится на «дверь» инстанса с ЧУЖИМ Host-заголовком,
+// как это делает сосед по VPN-сети: он идёт на наш адрес 26.x.x.x, а мы
+// отвечаем на 127.0.0.1. Именно такой запрос отсекался проверкой Host с 403 —
+// старый тест гонял оба инстанса по 127.0.0.1 и этого не видел.
+func friendDoorRequest(t *testing.T, method, url, key, host, from string, body any, out any) int {
+	t.Helper()
+	var rdr io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, url, rdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("X-Briefly-Friend-Key", key)
+	// Заголовок отправителя: получатель сверяет его со своим списком друзей.
+	req.Header.Set("X-Briefly-Friend-From", from)
+	// Host — адрес инстанса в VPN-сети, а не тот, куда мы реально подключились.
+	req.Host = host
+	resp, err := friendHTTPClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if out != nil {
+		json.Unmarshal(raw, out)
+	}
+	return resp.StatusCode
 }
 
 func containsID(ids []int, want int) bool { return countID(ids, want) > 0 }

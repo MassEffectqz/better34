@@ -196,6 +196,8 @@
 
 /* ── Друзья: обмен между инстансами напрямую ───────────────────────────────── */
 .friends-note{font-size:.75rem;color:var(--text-dim);line-height:1.5;margin:0 0 10px}
+/* Подсказка про взаимность: важнее основной, но всё же приглушена. */
+.friends-note-mutual{margin:0 0 12px;padding:6px 8px;border-left:2px solid var(--accent);background:var(--surface2);border-radius:0 4px 4px 0}
 /* Ряд кнопок должен переноситься: на телефоне панель уже в одну колонку. */
 .friends-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 .friends-code-box{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:12px}
