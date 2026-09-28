@@ -230,23 +230,32 @@
 @media(hover:hover){.friend-item-link:hover{border-color:var(--accent);background:var(--surface3)}}
 .friend-item-link:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
-/* ── Профиль друга: его лайки, дизлайки, теги, альбомы ──────────────────────── */
-.friend-profile-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+/* ── Страница профиля друга (/friend/<id>[/<tab>]) ────────────────────────────
+   Полноэкранная страница вместо ленты: свой адрес, «назад», перезагрузка.
+   Свои правила, а не переиспользование панели профиля — здесь другая ширина
+   и другая точка входа, а переписывать общие селекторы рискованно. */
+.friend-profile{position:fixed;inset:0;z-index:150;background:var(--bg);display:flex;flex-direction:column;padding:max(10px,env(safe-area-inset-top)) 16px 16px}
+.friend-profile-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-shrink:0}
+/* Лента уходит, пока открыта страница друга: иначе её сетка выглядывала бы
+   из-под полноэкранной секции при скролле. */
+body.friend-profile-open #header,body.friend-profile-open main{display:none}
 .friend-profile-id{flex:1;min-width:0}
 .friend-profile-name{font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .friend-profile-url{font-size:.66rem;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.friend-profile-stats{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+/* Тело прокручиваемое, шапка и вкладки закреплены: при длинной сетке лайков
+   список счётчиков не должен уезжать за экран. */
+.friend-profile-stats{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;flex-shrink:0}
 .friend-stat{display:inline-flex;align-items:baseline;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px 7px;font-size:.68rem;color:var(--text-dim)}
 .friend-stat b{font-size:.8rem;color:var(--text-bright)}
 /* Время обмена прижато вправо и переносится: на телефоне иначе выдавливает
    счётчики на вторую строку целиком. */
 .friend-stat-when{margin-left:auto}
 /* Вкладки прокручиваются, а не сжимаются: на телефоне пять вкладок не влезут. */
-.friend-profile-tabs{display:flex;gap:4px;overflow-x:auto;margin-bottom:10px;padding-bottom:2px}
+.friend-profile-tabs{display:flex;gap:4px;overflow-x:auto;margin-bottom:10px;padding-bottom:2px;flex-shrink:0}
 .friend-tab{flex-shrink:0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 9px;font-size:.72rem;color:var(--text-dim);cursor:pointer;white-space:nowrap}
 .friend-tab.active{border-color:var(--accent);color:var(--text-bright);background:var(--surface3)}
 .friend-tab-n{color:var(--text-dim);font-size:.66rem}
-.friend-profile-body{min-height:80px}
+.friend-profile-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .friend-post-grid{gap:4px}
 .friend-profile-more{margin-top:10px;align-self:flex-start}
 .friend-dislike-row,.friend-coll-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:5px}

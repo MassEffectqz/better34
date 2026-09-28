@@ -137,36 +137,80 @@ App.renderFriends = async function () {
 /** РџРѕРєР°Р·С‹РІР°РµС‚ РјРѕР№ РєРѕРґ РґР»СЏ РїРµСЂРµРґР°С‡Рё РґСЂСѓРіСѓ. */
 /**
  * ── Профиль друга ───────────────────────────────────────────────────────────
- * Клик по другу открывает его вкусы: лайки, дизлайки, теги, альбомы. Данные
- * приходят одним снимком (/friends/:id/profile), а сами посты клиент добирает
- * через общий _fetchPostsByIds — он умеет пачками и сам достраивает deferred.
+ * Это отдельная страница с адресом /friend/<id>[/<tab>], а не панель во вкладке
+ * «Друзья»: по ней работают «назад» в браузере, перезагрузка и прямая ссылка.
  *
- * Кэш по id друга: переключение туда-обратно не должно дёргать сеть.
+ * Данные приходят одним снимком (/friends/:id/profile), а сами посты клиент
+ * добирает через общий _fetchPostsByIds — он умеет пачками и сам достраивает
+ * deferred. Кэш по id друга: переключение туда-обратно не должно дёргать сеть.
  */
 const friendProfileCache = new Map();
 
 /** Сколько плиток рисуем за раз: остальное — кнопкой «показать ещё». */
 const FRIEND_PAGE = 60;
 
-App.openFriendProfile = async function (id) {
+/** Вкладки профиля друга в порядке показа. */
+const FRIEND_TABS = ['likes', 'disliked', 'favtags', 'dislikedtags', 'collections'];
+
+/** Адрес страницы друга. Таб «likes» не пишем — это адрес по умолчанию. */
+function friendUrl(id, tab) {
+  return tab && tab !== 'likes' ? `/friend/${id}/${tab}` : `/friend/${id}`;
+}
+
+/**
+ * Открывает страницу профиля друга.
+ *
+ * opts.push !== false — добавить запись в историю. Из разбора URL (popstate,
+ * стартовая загрузка) передаём push:false, иначе «назад» на каждом шаге
+ * подменял бы историю новой записью и зациклил переходы.
+ */
+App.openFriendProfile = async function (id, tab, opts) {
   const box = $('friend-profile');
-  const list = $('friends-list');
   if (!box) return;
-  if (list) list.classList.add('hidden');
-  box.classList.remove('hidden');
+  const wantTab = FRIEND_TABS.includes(tab) ? tab : 'likes';
   if (!this._friendProfile || this._friendProfile.id !== id) {
-    this._friendProfile = { id, data: null, tab: 'likes', shown: FRIEND_PAGE };
+    this._friendProfile = { id, data: null, tab: wantTab, shown: FRIEND_PAGE };
+  } else {
+    this._friendProfile.tab = wantTab;
+  }
+  // Класс на body прячет ленту (см. CSS): страница друга отдельная, а не
+  // поверхность поверх сетки, иначе при скролле выглядывали бы обе.
+  document.body.classList.add('friend-profile-open');
+  if (opts === undefined || opts.push !== false) {
+    const url = friendUrl(id, wantTab);
+    if (url !== this._lastURL) {
+      this._lastURL = url;
+      history.pushState({ friendId: id, friendTab: wantTab }, '', url);
+    }
   }
   await this.renderFriendProfile();
 };
 
-/** Возврат к списку друзей. */
+/** Возврат к ленте: пушим историю, чтобы «назад» не вернул страницу друга. */
 App.closeFriendProfile = function () {
   const box = $('friend-profile');
-  const list = $('friends-list');
   if (box) box.classList.add('hidden');
-  if (list) list.classList.remove('hidden');
+  document.body.classList.remove('friend-profile-open');
   this._friendProfile = null;
+  // Возврат на ленту: postUrl(query, null) — канонический адрес, который
+  // понимает parseLocation (пустой запрос даёт «/»).
+  const back = this.postUrl(this.state.query, null);
+  if (this._lastURL && this._lastURL.startsWith('/friend/') && this._lastURL !== back) {
+    this._lastURL = back;
+    history.pushState({ query: this.state.query, postId: null }, '', back);
+  }
+};
+
+/** Смена вкладки: адрес меняется, поэтому «назад» листает по вкладкам. */
+App._friendProfileTab = async function (tab) {
+  const st = this._friendProfile;
+  if (!st || !st.id || st.tab === tab) return;
+  st.tab = tab;
+  st.shown = FRIEND_PAGE;
+  const url = friendUrl(st.id, tab);
+  this._lastURL = url;
+  history.pushState({ friendId: st.id, friendTab: tab }, '', url);
+  await this.renderFriendProfileTabs();
 };
 
 App.renderFriendProfile = async function () {
@@ -259,18 +303,18 @@ App.renderFriendProfileTabs = async function () {
   if (!st || !body || !box) return;
   const f = (st.data && st.data.friend) || {};
   const tabs = box.querySelector('.friend-profile-tabs');
-  tabs.innerHTML =
-    this._friendTabBtn('likes', f.likes, t('friends.tabLikes')) +
-    this._friendTabBtn('disliked', f.disliked, t('friends.tabDisliked')) +
-    this._friendTabBtn('favtags', f.fav_tags, t('friends.tabFavTags')) +
-    this._friendTabBtn('dislikedtags', f.disliked_tags, t('friends.tabDislikedTags')) +
-    this._friendTabBtn('collections', f.collections, t('friends.tabCollections'));
+  const lists = {
+    likes: f.likes, disliked: f.disliked, favtags: f.fav_tags,
+    dislikedtags: f.disliked_tags, collections: f.collections,
+  };
+  const labels = {
+    likes: t('friends.tabLikes'), disliked: t('friends.tabDisliked'),
+    favtags: t('friends.tabFavTags'), dislikedtags: t('friends.tabDislikedTags'),
+    collections: t('friends.tabCollections'),
+  };
+  tabs.innerHTML = FRIEND_TABS.map((k) => this._friendTabBtn(k, lists[k], labels[k])).join('');
   tabs.querySelectorAll('.friend-tab').forEach((el) => {
-    el.addEventListener('click', () => {
-      st.tab = el.dataset.tab;
-      st.shown = FRIEND_PAGE;
-      this.renderFriendProfileTabs();
-    });
+    el.addEventListener('click', () => this._friendProfileTab(el.dataset.tab));
   });
 
   body.innerHTML = '';

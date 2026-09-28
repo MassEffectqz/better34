@@ -157,6 +157,12 @@ export const App = {
       if (!this.state.profileOpen) this.toggleProfile();
       this._profileTabs?.selectKey(target.profileTab);
     }
+    // Прямая ссылка на профиль друга (/friend/<id>[/<tab>]): открываем страницу
+    // вместо ленты, иначе перезагрузка такой ссылки показывала бы пустую ленту.
+    if (target.friendId) {
+      go(this.openFriendProfile(target.friendId, target.friendTab, { push: false }));
+      return;
+    }
     this.applyInitialRoute(target);
     window.addEventListener('unhandledrejection', (e) => {
       console.error('Unhandled rejection:', e.reason);
@@ -217,6 +223,17 @@ export const App = {
     this._lastURL = path;
     const target = this.parseLocation(path);
     if (!target.matched) return;
+    // /friend/<id>[/<tab>] — страница профиля друга. Смена вкладки меняет URL,
+    // поэтому «назад» возвращает на предыдущую вкладку, а не выходит со страницы.
+    if (target.friendId) {
+      await this.openFriendProfile(target.friendId, target.friendTab, { push: false });
+      return;
+    }
+    // Страница друга была открыта, а в URL её уже нет: закрываем.
+    if (this._friendProfile) {
+      this.closeFriendProfile();
+      return;
+    }
     if (target.profileTab) {
       if (!this.state.profileOpen) this.toggleProfile();
       this._profileTabs?.selectKey(target.profileTab);
@@ -270,7 +287,13 @@ export const App = {
   parseLocation(path) {
     const p = path || '';
     if (p === '/' || p === '') return { query: '', postId: null, similarId: null, gridMode: null, profileTab: null, matched: true };
-    let m = p.match(/^\/profile(?:\/([a-z-]+))?$/);
+    let m;
+    // /friend/<id>[/<tab>] — страница профиля друга (его лайки, дизлайки, теги).
+    // Отдельная страница, а не панель во вкладке: у неё свой адрес, работает
+    // кнопка «назад» в браузере и она открывается по прямой ссылке.
+    m = p.match(/^\/friend\/([A-Za-z0-9_-]{1,64})(?:\/([a-z]+))?$/);
+    if (m) return { query: '', postId: null, similarId: null, gridMode: null, profileTab: null, friendId: m[1], friendTab: m[2] || 'likes', matched: true };
+    m = p.match(/^\/profile(?:\/([a-z-]+))?$/);
     if (m) return { query: '', postId: null, similarId: null, gridMode: null, profileTab: m[1] || 'presets', matched: true };
     // /grid/likes и /grid/hides — режим сетки из профиля.
     m = p.match(/^\/grid\/(likes|hides)$/);

@@ -26,6 +26,9 @@ App.onKeydown = function (e) {
     if (this.els.helpModal && !this.els.helpModal.classList.contains('hidden')) { this.hideHelp(); return; }
     if (viewerOpen && this.els.viewerContent.classList.contains('fullscreen')) { this.toggleFullscreen(); return; }
     if (viewerOpen) { this.closeViewer(); return; }
+    // Страница профиля друга полноэкранная: выходим из неё до профиля и
+    // настроек, иначе Esc закрывал бы то, что под ней, а её оставлял открытой.
+    if (this._friendProfile) { this.closeFriendProfile(); return; }
     if (profileOpen) { this.toggleProfile(); return; }
     if (settingsOpen) { this.toggleSettings(); return; }
     if (this.els.statsModal && !this.els.statsModal.classList.contains('hidden')) { this.hideStats(); return; }
