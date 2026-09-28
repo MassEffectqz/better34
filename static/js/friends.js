@@ -469,27 +469,56 @@ const friendThumbCandidates = (post) => {
 App._friendTile = function (post) {
   const tile = document.createElement('div');
   tile.className = 'pf-thumb';
+  tile.setAttribute('role', 'button');
   tile.tabIndex = 0;
   tile.dataset.pfId = String(post.id);
-  const img = document.createElement('img');
-  img.loading = 'lazy';
-  img.alt = '';
-  const srcs = friendThumbCandidates(post);
-  if (srcs.length) img.src = srcs[0];
-  tile.appendChild(img);
-  // Теги в подсказке: так же, как в ленте и в своей вкладке лайков.
+  tile.innerHTML = `<img src="" alt="" loading="lazy" decoding="async"><div class="pf-fallback">#${post.id}<span class="pf-err"></span></div>`;
   if (post.tags) tile.title = post.tags;
-  // Перебор кандидатов: превью с CDN могло протухнуть, а локальная миниатюра
-  // жива. Без этого плитка друга молча осталась бы битой.
-  let attempt = 0;
-  img.addEventListener('error', () => {
-    if (attempt >= srcs.length) {
-      tile.classList.add('pf-broken');
-      return;
+
+  const img = tile.querySelector('img');
+  const errEl = tile.querySelector('.pf-err');
+  const srcs = friendThumbCandidates(post);
+  if (img && srcs.length) {
+    // Перебор кандидатов: preview_url → локальная миниатюра → sample → original.
+    // У лайков друга превью с CDN часто протухает, а локальная жива.
+    // Смена src отменяет прошлый запрос («error» от aborted), поэтому режем
+    // устаревшие события по номеру попытки — как в своей вкладке лайков.
+    let attempt = 0;
+    let done = false;
+    img.dataset.attempt = '0';
+    const tryNext = () => {
+      if (done || attempt >= srcs.length) {
+        tile.classList.add('pf-broken');
+        if (errEl) errEl.textContent = t('pf.unavailable');
+        return;
+      }
+      img.dataset.attempt = String(++attempt);
+      img.src = srcs[attempt - 1];
+    };
+    img.addEventListener('load', () => {
+      if (String(attempt) !== img.dataset.attempt) return;
+      done = true;
+      // Класс loaded ОБЯЗАТЕЛЕН: .profile-thumbs img{opacity:0} и без него
+      // картинка грузится, но остаётся невидимой (было: пустая сетка).
+      img.classList.add('loaded');
+      tile.classList.remove('pf-broken');
+    });
+    img.addEventListener('error', () => {
+      if (done || String(attempt) !== img.dataset.attempt) return;
+      img.style.display = 'none';
+      tryNext();
+    });
+    // Слушатели навешиваем до tryNext: картинка из кэша может быть готова
+    // синхронно, и без проверки complete событие load прошло бы мимо нас.
+    tryNext();
+    if (img.complete && img.naturalWidth > 0) {
+      done = true;
+      img.classList.add('loaded');
     }
-    attempt++;
-    img.src = srcs[attempt];
-  });
+  } else if (srcs.length === 0) {
+    tile.classList.add('pf-broken');
+    if (errEl) errEl.textContent = t('pf.unavailable');
+  }
   const open = () => this.openPostById(post.id);
   tile.addEventListener('click', open);
   tile.addEventListener('keydown', (e) => {
