@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import '../profile.js';
+import { readAllCss } from './read-css.mjs';
 
 let passed = 0, failed = 0;
 function check(name, cond, detail) {
@@ -182,8 +183,7 @@ console.log('Профиль: лайки/скрытые — фильтры, со�
 // обязана остаться в CSS, иначе плитка сжимается в полоску, а картинка
 // обрезается в ноль — сетка выглядит сломанной.
 {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const css = fs.readFileSync(join(here, '..', '..', 'css', 'style.css'), 'utf8');
+  const css = readAllCss();
   const rule = (sel) => {
     const i = css.indexOf('\n' + sel);
     return i < 0 ? '' : css.slice(i, css.indexOf('}', i));
@@ -204,7 +204,7 @@ console.log('Профиль: лайки/скрытые — фильтры, со�
 {
   const here = dirname(fileURLToPath(import.meta.url));
   const html = fs.readFileSync(join(here, '..', '..', 'index.html'), 'utf8');
-  const css = fs.readFileSync(join(here, '..', '..', 'css', 'style.css'), 'utf8');
+  const css = readAllCss();
   // Классы, дающие кнопке полный вид сами по себе.
   const BASE = ['btn', 'btn-primary', 'preset-tag-btn'];
   const bare = [];

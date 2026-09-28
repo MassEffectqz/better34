@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,7 +31,41 @@ type Handler struct {
 const (
 	viewedWindow   = 3
 	viewedMaxFetch = 200
+
+	// Бюджет выборки постов по id для одного HTTP-ответа /posts-by-ids.
+	//
+	// Сайты, не понимающие списки id (safebooru, gelbooru), отвечают на КАЖДЫЙ
+	// id отдельным HTTP-запросом. Раньше один запрос клиента (вкладка «Лайки» —
+	// это сотни id) порождал сотни таких запросов, растянутых троттлингом
+	// сайта: клиент на телефоне отваливался по своему дедлайну (20с), сервер
+	// продолжал жечь лимит источника ещё минуту и забирал токены у обычного
+	// поиска ленты — тот тоже начинал отдавать таймаут. Симптом у пользователя
+	// был один и тот же: «превышено время ожидания».
+	//
+	// Теперь за ответ спрашивается ограниченное число id, а остальные
+	// возвращаются в deferred — клиент приходит за ними следующим запросом.
+	// Число подобрано так, чтобы пачка УСПЕЛА уложиться в idFetchBudget при
+	// боевом троттлинге сайта (idRatePerSecond = 5/с, burst 10): 40 id —
+	// это 30 запросов после burst, ~6 с. Взяли бы 60 — тесты показали, что
+	// бюджет успевает срезать хвост, т.е. лимит срабатывал бы чаще, чем нужно.
+	maxIDsPerFetch = 40
+	// idFetchBudget — общий дедлайн выборки внутри одного HTTP-запроса.
+	// Вдвое меньше клиентских 20с, чтобы ответ успел уйти, а не оборвался по
+	// дороге. Действует и как страховка на случай медленного источника.
+	idFetchBudget = 9 * time.Second
 )
+
+// searchPostsCtx — поиск с отменой, если провайдер её умеет. Интерфейс
+// Provider намеренно не расширяем: его реализуют стабы в тестах, а отмена
+// нужна лишь выборке по id. Провайдеры без SearchPostsCtx работают как раньше.
+func searchPostsCtx(ctx context.Context, p Provider, tags string, page, limit, minID int) ([]Rule34Post, error) {
+	if cs, ok := p.(interface {
+		SearchPostsCtx(context.Context, string, int, int, int) ([]Rule34Post, error)
+	}); ok {
+		return cs.SearchPostsCtx(ctx, tags, page, limit, minID)
+	}
+	return p.SearchPosts(tags, page, limit, minID)
+}
 
 func NewHandler() *Handler {
 	providers := map[string]Provider{
@@ -620,8 +656,17 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 	// «Лайки»/«Скрытые» трактует отсутствие в ответе как «поста больше нет» и
 	// зовёт живой пост недоступным. Отдаём отдельно.
 	unresolved := make([]int, 0, 8)
+	// deferred — id, до которых в этом запросе не дошла очередь: бюджет
+	// выборки исчерпан либо клиент отвалился. В отличие от unresolved это НЕ
+	// «поста нет» — про них ничего не известно, клиент придёт за ними позже.
+	deferred := make([]int, 0, 8)
 	if len(apiIDs) > 0 {
 		prov := h.provider()
+		// Отмена по жизни клиента: пока браузер жив, держим работу, иначе
+		// отдаём пустой ответ. Общий дедлайн — вдвое меньше клиентского, чтобы
+		// успеть сериализовать ответ, а не угробить его по дороге.
+		ctx, cancel := context.WithTimeout(c.Request.Context(), idFetchBudget)
+		defer cancel()
 		tryUpsert := func(p Rule34Post) {
 			upsertBatch = append(upsertBatch, &Post{
 				ID:          p.ID,
@@ -668,6 +713,12 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				if end > len(apiIDs) {
 					end = len(apiIDs)
 				}
+				// Клиент ушёл или бюджет исчерпан: остаток — в deferred, а не
+				// в unresolved (про эти id источник ничего не сказал).
+				if ctx.Err() != nil {
+					deferred = append(deferred, apiIDs[start:]...)
+					break
+				}
 				batch := apiIDs[start:end]
 				want := make(map[int]bool, len(batch))
 				for _, id := range batch {
@@ -677,10 +728,14 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				for i, id := range batch {
 					idTags[i] = strconv.Itoa(id)
 				}
-				posts, e := prov.SearchPosts("id:"+strings.Join(idTags, ","), 1, len(batch), 0)
+				posts, e := searchPostsCtx(ctx, prov, "id:"+strings.Join(idTags, ","), 1, len(batch), 0)
 				if e != nil {
 					// Источник не ответил — это не «постов нет», см. unresolved выше.
-					unresolved = append(unresolved, batch...)
+					if ctx.Err() != nil {
+						deferred = append(deferred, batch...)
+					} else {
+						unresolved = append(unresolved, batch...)
+					}
 					continue
 				}
 				// Сайт может ответить успешно, проигнорировав список id и отдав
@@ -705,22 +760,52 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				}
 			}
 		} else if prefix := providerSingleID(prov); prefix != "" {
-			// Сайт игнорирует списки id (safebooru): одиночные запросы
+			// Сайт игнорирует списки id (safebooru, gelbooru): одиночные запросы
 			// tags=id:N с ограниченным параллелизмом; порядок — как в запросе.
-			fetched := make(map[int]Rule34Post, len(apiIDs))
+			//
+			// Бюджет: за один HTTP-ответ у источника спрашивается не больше
+			// maxIDsPerFetch id. Раньше сюда уходили все id разом (вкладка
+			// «Лайки» — это сотни), т.е. сотни последовательных запросов,
+			// растянутых троттлингом сайта. Клиент на телефоне отваливался по
+			// своему дедлайну, а сервер продолжал опрашивать источник ещё
+			// минуту — и забирал токены общего троттлинга, от которых зависел
+			// обычный поиск ленты. Теперь непрошенные id возвращаются в
+			// deferred: это не «поста нет» (такое в unresolved), клиент просто
+			// придёт за ними следующим запросом.
+			ask := apiIDs
+			if len(ask) > maxIDsPerFetch {
+				deferred = append(deferred, ask[maxIDsPerFetch:]...)
+				ask = ask[:maxIDsPerFetch]
+			}
+			fetched := make(map[int]Rule34Post, len(ask))
 			var mu sync.Mutex
 			var wg sync.WaitGroup
 			sem := make(chan struct{}, 8)
-			for _, id := range apiIDs {
+			for _, id := range ask {
 				wg.Add(1)
 				go func(id int) {
 					defer wg.Done()
-					sem <- struct{}{}
+					// Не начатый запрос — это не отказ источника: клиент мог
+					// уйти раньше. Такие id тоже в deferred.
+					select {
+					case sem <- struct{}{}:
+					case <-ctx.Done():
+						mu.Lock()
+						deferred = append(deferred, id)
+						mu.Unlock()
+						return
+					}
 					defer func() { <-sem }()
-					posts, e := prov.SearchPosts(prefix+strconv.Itoa(id), 1, 1, 0)
+					posts, e := searchPostsCtx(ctx, prov, prefix+strconv.Itoa(id), 1, 1, 0)
 					if e != nil {
 						mu.Lock()
-						unresolved = append(unresolved, id)
+						// Отмена (клиент ушёл) — не «источник не ответил»,
+						// иначе живой пост был бы помечен недоступным.
+						if ctx.Err() != nil {
+							deferred = append(deferred, id)
+						} else {
+							unresolved = append(unresolved, id)
+						}
 						mu.Unlock()
 						return
 					}
@@ -736,7 +821,7 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 				}(id)
 			}
 			wg.Wait()
-			for _, id := range apiIDs {
+			for _, id := range ask {
 				if p, ok := fetched[id]; ok {
 					tryUpsert(p)
 				}
@@ -755,11 +840,17 @@ func (h *Handler) GetPostsByIDs(c *gin.Context) {
 	go warmPreviewCache(h, enriched)
 
 	slices.Sort(unresolved)
+	// deferred сортируется и уходит отдельным полем: клиент должен отличать
+	// «поста нет» (unresolved — можно признать удалённым) от «ещё не спросили»
+	// (deferred — придёт следующим запросом). Смешали бы — плитки профиля
+	// навечно показывали бы живые посты как удалённые.
+	slices.Sort(deferred)
 	c.JSON(http.StatusOK, gin.H{
 		"posts":      enriched,
 		"page":       1,
 		"limit":      len(enriched),
 		"unresolved": unresolved,
+		"deferred":   deferred,
 	})
 }
 
@@ -798,13 +889,6 @@ func (h *Handler) GetLocalPosts(c *gin.Context) {
 	}
 
 	db := GetDB()
-	var posts []*Post
-	if tags != "" {
-		posts = db.SearchDownloaded(tags)
-	} else {
-		posts = db.GetDownloaded()
-	}
-
 	profile := ProfileFor(c)
 	profile.mu.RLock()
 	hiddenLocal := make([]string, 0, len(profile.HiddenTags))
@@ -813,67 +897,38 @@ func (h *Handler) GetLocalPosts(c *gin.Context) {
 	}
 	profile.mu.RUnlock()
 
-	if len(hiddenLocal) > 0 {
-		filtered := make([]*Post, 0, len(posts))
-	outer:
-		for _, p := range posts {
-			tagSet := make(map[string]struct{}, 16)
-			for _, t := range strings.Fields(strings.ToLower(p.Tags)) {
-				tagSet[t] = struct{}{}
-			}
-			for _, ht := range hiddenLocal {
-				if _, ok := tagSet[ht]; ok {
-					continue outer
-				}
-			}
-			filtered = append(filtered, p)
-		}
-		posts = filtered
-	}
-
 	minID := GetConfig().GetMinID()
 	if midStr := c.Query("min_id"); midStr != "" {
 		if v, err := strconv.Atoi(midStr); err == nil {
 			minID = v
 		}
 	}
-	if minID > 0 {
-		filtered := posts[:0]
-		for _, p := range posts {
-			if p.ID >= minID {
-				filtered = append(filtered, p)
-			}
-		}
-		posts = filtered
-	}
 
-	// Фильтр «просмотрено» (история): viewed=1 — только просмотренные,
-	// viewed=0 — только непросмотренные (как «позже» с пометкой).
+	// viewed: 0 — только непросмотренные, 1 — только просмотренные, иначе -1 (любые).
+	viewed := -1
 	if v := c.Query("viewed"); v == "0" || v == "1" {
-		onlyViewed := v == "1"
-		filtered := posts[:0]
-		for _, p := range posts {
-			if db.IsViewed(p.ID) == onlyViewed {
-				filtered = append(filtered, p)
-			}
+		if v == "1" {
+			viewed = 1
+		} else {
+			viewed = 0
 		}
-		posts = filtered
 	}
 
-	start := (page - 1) * limit
-	if start >= len(posts) {
-		c.JSON(http.StatusOK, gin.H{"posts": []interface{}{}, "page": page, "limit": limit, "total": len(posts)})
-		return
-	}
+	// Всё (теги, скрытые теги, min_id, история просмотров, страница) уходит в
+	// SQL. Раньше здесь сначала читались ВСЕ скачанные посты со всеми
+	// колонками, потом в Go фильтровались и резалась страница, а «просмотрено»
+	// проверялось отдельным SELECT на каждый пост. На 6–10 тысячах постов это
+	// давало секунды ожидания на КАЖДЫЙ лист ленты.
+	offset := (page - 1) * limit
+	posts, total := db.SearchDownloadedPaged(LocalFilter{
+		Tags:   tags,
+		Hidden: hiddenLocal,
+		MinID:  minID,
+		Viewed: viewed,
+	}, limit, offset)
 
-	end := start + limit
-	if end > len(posts) {
-		end = len(posts)
-	}
-
-	pagePosts := posts[start:end]
-	var result []gin.H
-	for _, p := range pagePosts {
+	result := make([]gin.H, 0, len(posts))
+	for _, p := range posts {
 		thumbPath := ""
 		if p.ThumbPath != "" {
 			rel, _ := filepath.Rel("data", p.ThumbPath)
@@ -902,6 +957,8 @@ func (h *Handler) GetLocalPosts(c *gin.Context) {
 		"posts": result,
 		"page":  page,
 		"limit": limit,
-		"total": len(posts),
+		// total — сколько постов подошло под фильтры (а не размер страницы):
+		// клиент по нему решает, есть ли что грузить дальше.
+		"total": total,
 	})
 }

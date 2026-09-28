@@ -69,7 +69,17 @@ export const API = {
     const dl = this._deadline(ctl, this.mutationTimeoutMs);
     try {
       const r = await fetch(`/api${url}`, { method, signal: ctl.signal, ...init });
-      if (!r.ok) throw new Error(await this._err(r));
+      if (!r.ok) {
+        // Помечаем ошибку статусом: 4xx — это ответ сервера «запрос неверен/
+        // нет прав», повторять его бессмысленно, и главное — нельзя отдавать
+        // его в оффлайн-очередь. Иначе настоящая ошибка маскируется под
+        // «успешно отложено», а потом всплывает в общем виде «отклонено
+        // сервером действий» (так и выглядело добавление друга: 400 уходило
+        // в очередь и возвращало ok).
+        const e = new Error(await this._err(r));
+        /** @type {any} */ (e).status = r.status;
+        throw e;
+      }
       const ct = r.headers.get('content-type') || '';
       if (!ct.includes('application/json')) {
         console.error(`[API.${method}] Non-JSON response`, { url: `/api${url}`, status: r.status, contentType: ct });
@@ -78,7 +88,11 @@ export const API = {
       return r.json();
     } catch (err) {
       if (err && err.name === 'AbortError' && dl.timedOut) throw this._timeoutError();
-      if (err && err.name !== 'AbortError' && !err.timeout && await enqueueMutation(method, url, queueBody)) {
+      // 4xx — сервер ответил и отказал: запрос не станет хороше от повтора,
+      // поэтому в очередь его не кладём (иначе ошибка не видна вызывающему).
+      const st = err && /** @type {any} */ (err).status;
+      const clientError = typeof st === 'number' && st >= 400 && st < 500;
+      if (!clientError && err && err.name !== 'AbortError' && !err.timeout && await enqueueMutation(method, url, queueBody)) {
         return { ok: true, offline: true };
       }
       throw err;

@@ -1,0 +1,101 @@
+/* 01-header.css — каркас страницы, хедер, поиск с подсказками, меню, базовые кнопки.
+   Часть 2/9 набора better34.
+
+   Файл вырезан из бывшего единого style.css без перестановки правил,
+   поэтому каскад собирается ровно как раньше — порядок подключения задан
+   числовым префиксом и списком <link> в static/index.html (сверху вниз).
+   Правьте здесь, а не в соседних частях: specificity и порядок важны. */
+
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--surface)}
+::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--hover)}
+#app{display:flex;flex-direction:column;height:100vh;height:100dvh}
+.skip-link{position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;z-index:var(--z-tooltip)}
+.skip-link:focus{position:fixed;top:8px;left:8px;width:auto;height:auto;padding:8px 16px;background:var(--accent);color:#fff;border-radius:8px;font-size:14px;z-index:var(--z-tooltip)}
+#header{background:var(--surface);border-bottom:1px solid var(--border);padding:max(8px,env(safe-area-inset-top)) 16px 8px 16px;flex-shrink:0;z-index:100;position:relative}
+#header::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;background:linear-gradient(90deg,transparent,var(--accent),var(--accent-dim),transparent);opacity:.55;pointer-events:none;z-index:2}
+#header.offline::after{background:linear-gradient(90deg,transparent,var(--error),var(--error),transparent);opacity:.8}
+#header.offline .header-content::before{content:'● офлайн';color:var(--error);font-size:var(--font-xs);margin-left:auto;padding:2px 6px;border:1px solid var(--error);border-radius:var(--radius-sm);opacity:.8}
+.header-content{display:flex;align-items:center;gap:10px;max-width:1600px;margin:0 auto;position:relative}
+.header-content>nav{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0}
+.search-box{flex:1;position:relative;display:flex;align-items:center}
+.search-box.loading #search-input{color:transparent}
+.search-box.loading #search-input::placeholder{color:transparent}
+.search-box.loading::after{content:'';position:absolute;right:36px;top:50%;width:16px;height:16px;margin-top:-8px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+.search-icon{position:absolute;left:12px;color:var(--text-dim);pointer-events:none;flex-shrink:0}
+#search-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 32px 8px 34px;color:var(--text);font-size:.9rem;outline:none;transition:border-color var(--transition)}
+#search-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+#search-input::placeholder{color:var(--text-dim)}
+.search-clear{position:absolute;right:4px;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;border-radius:4px;display:flex;opacity:0;transition:opacity var(--transition)}
+.search-clear.visible{opacity:1}
+/* Страховка на случай забытого syncSearchClear(): :has() не даёт кнопке
+   остаться невидимой, когда в поле есть текст (Chrome 105+, Safari 15.4+,
+   Firefox 121+). Старые браузеры полагаются на JS-класс .visible. */
+.search-box:has(#search-input:not(:placeholder-shown)) .search-clear{opacity:1}
+.search-clear:hover{color:var(--text);background:var(--hover)}
+.suggestions,.history-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--surface2);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);max-height:200px;overflow-y:auto;display:none;z-index:200}
+.suggestions.active,.history-dropdown.active{display:block}
+.suggestion-item{padding:8px 16px;cursor:pointer;font-size:.85rem;color:var(--text-dim);transition:background var(--transition);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.suggestion-item:hover,.suggestion-item.active{background:var(--hover);color:var(--text)}
+.suggestion-count{color:var(--accent);font-size:.7rem;opacity:.8;flex-shrink:0}
+/* Счётчик из скачанной базы, а не с сайта: приглушаем, чтобы его не путали
+   с реальной популярностью тега. */
+.suggestion-count.local{color:var(--text-dim);opacity:.7}
+.header-actions{display:flex;gap:8px;flex-shrink:0}
+.btn-icon{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:1rem;transition:all var(--transition);flex-shrink:0}
+.btn-icon:hover{background:var(--hover);border-color:var(--accent-dim);transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.25)}
+.btn-icon:active{transform:translateY(0)}
+.btn-icon-sm{width:24px;height:24px}
+.viewer-hud-hidden .viewer-head,
+.viewer-hud-hidden .viewer-foot,
+.viewer-hud-hidden .nav-btn,
+.viewer-hud-hidden .viewer-mobile-actions,
+.viewer-hud-hidden .zoom-hud,
+.viewer-hud-hidden .slideshow-controls{opacity:0;visibility:hidden;pointer-events:none;transition:opacity .2s ease,visibility 0s linear .2s}
+.viewer-head,.viewer-foot,.viewer-mobile-actions,.zoom-hud{transition:opacity .2s ease,visibility .2s ease}
+.like-burst{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;color:var(--accent);pointer-events:none;filter:drop-shadow(0 2px 8px rgba(0,0,0,.5));animation:likeBurst .7s cubic-bezier(.2,.9,.3,1.2) forwards}
+.like-burst.unlike{color:var(--text-dim)}
+.like-burst svg{width:48px;height:48px;fill:currentColor}
+@keyframes likeBurst{0%{transform:translate(-50%,-50%) scale(.2);opacity:0}25%{transform:translate(-50%,-50%) scale(1.15);opacity:1}50%{transform:translate(-50%,-50%) scale(1)}100%{transform:translate(-50%,-58%) scale(1);opacity:0}}
+.ptr-indicator{position:sticky;top:6px;z-index:60;height:0;display:flex;justify-content:center;pointer-events:none}
+.ptr-indicator .ptr-spinner{width:32px;height:32px;border-radius:50%;background:var(--surface2);border:2px solid var(--border);border-top-color:var(--accent);display:flex;align-items:center;justify-content:center;color:var(--accent);transform:translateY(-10px);opacity:0;transition:opacity .15s,transform .15s;box-shadow:var(--shadow)}
+.ptr-indicator.active .ptr-spinner{opacity:1;transform:translateY(var(--pull,0px))}
+.ptr-indicator.refreshing .ptr-spinner svg{animation:ptr-spin .85s cubic-bezier(.55,.06,.28,.99) infinite;filter:drop-shadow(0 0 6px var(--accent))}
+@keyframes ptr-spin{to{transform:rotate(360deg)}}
+.ptr-indicator.refreshing{animation:ptr-bounce .4s cubic-bezier(.34,1.56,.64,1)}
+@keyframes ptr-bounce{0%{transform:scale(.92)}100%{transform:scale(1)}}
+
+.header-menu{position:absolute;top:100%;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:300;min-width:180px;padding:4px;margin-top:4px}
+.header-menu.hidden{display:none}
+.header-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;background:none;border:none;color:var(--text);font-size:.85rem;cursor:pointer;border-radius:var(--radius-sm);text-align:left;transition:background var(--transition)}
+.header-menu-item:hover{background:var(--hover)}
+.header-menu-item:hover svg{color:var(--accent)}
+.header-menu-item[data-action="logout"]:hover svg{color:var(--error)}
+.header-menu-item svg{flex-shrink:0}
+.header-menu-group+.header-menu-group{margin-top:4px;padding-top:4px;border-top:1px solid var(--border)}
+/* Группа «Фильтры» в меню: наполняется JS на мобилках, на десктопе скрыта */
+#header-menu-filters{display:none}
+.header-menu-title{padding:4px 12px 2px;font-size:.68rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim)}
+.grid-control{position:relative;flex-shrink:0}
+.grid-menu{position:absolute;top:calc(100% + 4px);left:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:300;padding:8px;min-width:180px}
+.grid-menu.hidden{display:none}
+.grid-menu-title{font-size:.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;padding:0 2px 6px}
+.grid-menu-opts{display:flex;gap:4px;flex-wrap:wrap}
+.grid-opt{flex:1;min-width:44px;padding:6px 4px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.82rem;cursor:pointer;transition:all var(--transition)}
+.grid-opt:hover{background:var(--hover)}
+.grid-opt.active{background:var(--accent);border-color:var(--accent);color:#fff}
+/* .btn — базовая (вторичная) кнопка. Раньше её не было: .btn-sm — модификатор
+   (padding/font-size), который сам по себе ничего не красит, и кнопки вроде
+   «Выбрать» в профиле и кнопок панели выделения висели на голом <button>
+   браузера. .btn идёт до .btn-sm, поэтому мелкие отступы побеждают. */
+.btn{background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 12px;font-size:.85rem;font-family:inherit;cursor:pointer;transition:background var(--transition),border-color var(--transition),color var(--transition)}
+.btn:hover{background:var(--hover);border-color:var(--accent-dim)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn:disabled:hover{background:var(--surface2);border-color:var(--border)}
+.btn-primary{background:var(--accent);color:#fff;border:none;border-radius:var(--radius);padding:10px 24px;font-size:.95rem;font-weight:600;cursor:pointer;transition:background var(--transition),transform var(--transition),box-shadow var(--transition);display:inline-flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 3px 12px color-mix(in srgb,var(--accent-dim) 28%,transparent)}
+.btn-primary:hover{background:var(--accent-dim);transform:translateY(-1px);box-shadow:0 6px 16px color-mix(in srgb,var(--accent-dim) 38%,transparent)}
+.btn-primary:active{transform:translateY(0)}
+.btn-primary svg{flex-shrink:0}
+.btn-sm{padding:6px 14px;font-size:.85rem}

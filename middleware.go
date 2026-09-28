@@ -335,8 +335,13 @@ func webSecurityMiddleware() gin.HandlerFunc {
 		}
 		legacyMode := authToken != "" && tokenMatches(c)
 		if strings.HasPrefix(c.Request.URL.Path, "/api") && !legacyMode {
+			// /api/friend/* — «дверь» для чужих инстансов. Сессии у друга
+			// нет и быть не может, поэтому путь пропускаем здесь: проверка
+			// ключа делается в обработщике (friendAuthorized). Пропуск безопасен:
+			// без верного ключа FriendShare/FriendIngest отвечают 401.
 			if strings.HasPrefix(c.Request.URL.Path, "/api/auth/") ||
 				strings.HasPrefix(c.Request.URL.Path, "/api/healthz") ||
+				strings.HasPrefix(c.Request.URL.Path, "/api/friend/") ||
 				c.Request.URL.Path == "/api/tags/popular" ||
 				c.Request.URL.Path == "/api/ready" {
 				c.Next()

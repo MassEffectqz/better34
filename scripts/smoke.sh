@@ -25,7 +25,12 @@ for _ in $(seq 1 40); do
   sleep 0.25
 done
 curl -fsS "http://127.0.0.1:$port/" | grep -q '<!DOCTYPE html>'
-curl -fsS "http://127.0.0.1:$port/static/css/style.css" >/dev/null
+# Стили отдаются по частям (static/css/*.css). Проверяем каждую: одна битая
+# ссылка = страница без части оформления, и поштучно это не заметить.
+for f in static/css/*.css; do
+  name=$(basename "$f")
+  curl -fsS "http://127.0.0.1:$port/static/css/$name" >/dev/null
+done
 curl -fsS "http://127.0.0.1:$port/static/js/dist/app.js" >/dev/null
 curl -fsS "http://127.0.0.1:$port/api/healthz" >/dev/null
 [[ -d "$tmp/data" ]]

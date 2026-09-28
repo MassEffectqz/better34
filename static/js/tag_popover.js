@@ -56,20 +56,35 @@ App.fetchTagPreview = function (tag) {
     .catch(() => null);
 };
 
-// fetchTagSourcePreview — превью с активного бору по тегу. Медленный сетевой
-// запрос, поэтому всплывашка не ждёт его: показывает локальную часть сразу и
-// доклеивает этот блок, когда он придёт.
-App.fetchTagSourcePreview = function (tag) {
+// TAG_COVERS — сколько обложек показываем в подсказке. Сетка 3×2, поэтому
+// шесть — это ровно две полные строки без «хвоста» из одного постника.
+const TAG_COVERS = 6;
+
+// fetchTagSourcePreview — превью с бору по тегу. Медленный сетевой запрос,
+// поэтому всплывашка не ждёт его: показывает локальную часть сразу и доклеивает
+// обложки, когда они придут.
+//
+// haveIds — id, уже показанные из библиотеки. Их пропускаем на сервере: после
+// прошлого превью их метаданные лежат в БД, бор вернул бы те же посты, и
+// «добор» до шести превратился бы в повтор одного и того же набора.
+// need — сколько обложек реально не хватает (limit=6 минус локальные): больше
+// не запрашиваем, чтобы не жечь лимит сайта на лишние картинки.
+App.fetchTagSourcePreview = function (tag, haveIds, need) {
   const name = String(tag || '').toLowerCase();
   if (!name.trim()) return Promise.resolve(null);
-  const key = tagCacheKey(this, tag);
+  const want = Math.max(1, Number(need) || TAG_COVERS);
+  // Ключ кэша включает need: ответ на «добавь одну» нельзя переиспользовать
+  // как ответ на «добавь шесть» — и наоборот.
+  const key = tagCacheKey(this, tag) + '|n' + want + '|x' + (haveIds || []).join('.');
   const hit = this._tagSourceCache.get(key);
   if (hit) return Promise.resolve(hit);
   // Офлайн идти на бор бессмысленно: сервер всё равно ничего не достанет, а
   // лишний запрос только отложит пустую всплывашку.
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve(null);
   const api = this.API || API;
-  const url = '/tags/' + encodeURIComponent(name) + '/source-preview?limit=6' + tagRatingParam(this);
+  let url = '/tags/' + encodeURIComponent(name) + '/source-preview?limit=' + TAG_COVERS +
+    '&need=' + want + tagRatingParam(this);
+  if (haveIds && haveIds.length) url += '&exclude=' + encodeURIComponent(haveIds.join(','));
   return api.get(url, { fresh: true })
     .then((d) => this._tagCachePut(this._tagSourceCache, key, d))
     .catch(() => null);
@@ -185,37 +200,44 @@ App.showTagPopover = function (tag, anchor) {
     }
     // Копия: d лежит в общем кэше, а пометка __searching — наша, личная.
     const data = Object.assign({}, d);
-    const empty = !(data.posts || []).length;
-    data.__searching = empty;
+    const local = data.posts || [];
+    // Цель — всегда TAG_COVERS обложек. Если в библиотеке их меньше (скачанных
+    // постов по тегу может быть 1, а может и 0), недостающие добираем с бору.
+    // Раньше бор трогали только при полной пустоте, и подсказка почти всегда
+    // показывала две-три картинки вместо шести.
+    const need = TAG_COVERS - local.length;
+    data.__searching = need > 0;
     paint(data);
-    if (!empty) return;
-    // На бор идём только там, где показывать нечего, и отдельным запросом:
-    // он занимает секунды, и в общем ответе он задерживал бы всю всплывашку.
-    this.fetchTagSourcePreview(tag).then((s) => {
-      if (!s || this._tagPopAnchor !== anchor) return;
+    if (need <= 0) return;
+    // На бор идём отдельным запросом: он занимает секунды, и в общем ответе он
+    // задерживал бы всю всплывашку. Локальные обложки при этом уже нарисованы.
+    this.fetchTagSourcePreview(tag, local.map((p) => p.id), need).then((s) => {
+      if (this._tagPopAnchor !== anchor) return;
       data.__searching = false;
-      data.source = (s.posts || []).length ? s : { site: s.site, posts: [] };
+      data.source = s ? { site: s.site, count: (s.posts || []).length, posts: s.posts || [] } : null;
       paint(data);
     });
   });
 };
 
-// tagPopoverGrid — мини-сетка обложек. fromSource=true для превью с бура:
-// такой пост не скачан, подпись и рамка другие, но он кликабелен — по клику
-// открывается во вьюере (метаданные сервер уже записал в БД).
-const tagPopoverGrid = (posts, fromSource) =>
-  '<div class="tag-pop-covers' + (fromSource ? ' tag-pop-covers-src' : '') + '">' +
+// tagPopoverGrid — мини-сетка обложек. Смешанная: часть постов из библиотеки
+// (скачанные), часть добрана с бура. Каждая ячейка помечена сама (p.src), а не
+// сетка целиком: подписи у них разные, и пунктир должен идти только вокруг
+// боровых. Боровая обложка кликабельна — по клику открывается во вьюере
+// (метаданные сервер уже записал в БД).
+const tagPopoverGrid = (posts) =>
+  '<div class="tag-pop-covers">' +
   posts.map((p) => {
     // У скачанных обложка ведёт на /api/thumb/:id (её кэширует SW, т.е. есть
     // офлайн), у найденных на бору — прямо на превью через прокси.
     // Пропорции картинки НЕ задаём: ячейка квадратная, картинка вписывается
     // целиком. Иначе высоты строк разъезжались, картинки обрезались, а сетка
     // меняла высоту по мере загрузки — и всплывашка прыгала под курсором.
-    const title = fromSource
+    const title = p.src
       ? t('tagPreview.sourceOpen', { id: p.id, site: p.site || '' })
       : t('tagPreview.openPost', { id: p.id });
-    return '<button type="button" class="tag-pop-cover" data-post="' + p.id + '"' +
-      ' title="' + esc(title) + '">' +
+    return '<button type="button" class="tag-pop-cover' + (p.src ? ' tag-pop-cover-src' : '') +
+      '" data-post="' + p.id + '" title="' + esc(title) + '">' +
       (p.thumb ? '<img loading="lazy" decoding="async" alt="" src="' + esc(p.thumb) + '">' : '') +
       '</button>';
   }).join('') + '</div>';
@@ -224,22 +246,33 @@ App.renderTagPopoverBody = function (d) {
   const head = '<div class="tag-pop-head">' + esc(d.tag) +
     (d.count ? ' <span class="tag-pop-count">' + esc(tp('tagPreview.posts', d.count)) + '</span>' : '') +
     '</div>';
-  // Показываем библиотеку; если по тегу у нас ничего нет — то, что нашлось
-  // на бору, с честной пометкой, что это не скачанные посты.
+  // Сетка одна: сначала скачанные, потом добранные с бору, всего TAG_COVERS.
+  // Раньше это была либо локальная сетка, либо боровая — и стоило иметь одну
+  // локальную обложку, чтобы остальные пять не показали вовсе.
   const src = d.source || null;
   const srcPosts = (src && src.posts) || [];
-  const covers = (d.posts || []).length
-    ? tagPopoverGrid(d.posts, false)
-    : srcPosts.length
-      ? '<div class="tag-pop-src-title">' + esc(tf('tagPreview.sourceTitle', { site: src.site })) +
-        ' <span class="tag-pop-src-note">' + esc(t('tagPreview.sourceNote')) + '</span></div>' +
-        tagPopoverGrid(srcPosts, true)
-      : '<div class="vc-empty">' + esc(
-        // Пока летит запрос на бор, пустое место занимает честная надпись:
-        // тишина выглядит как зависшая подсказка.
-        d.__searching ? t('tagPreview.searching')
-          : src ? tf('tagPreview.sourceEmpty', { site: src.site })
-            : t('tagPreview.noCovers')) + '</div>';
+  const covers = (() => {
+    const local = (d.posts || []).map((p) => Object.assign({}, p, { src: false }));
+    const extra = srcPosts.map((p) => Object.assign({}, p, { src: true }));
+    const all = local.concat(extra).slice(0, TAG_COVERS);
+    if (all.length) {
+      // Подпись про бор нужна, только если боровые ДОШЛИ до сетки. Иначе при
+      // шести локальных обложках подпись «не скачано» врала бы (лишние боровые
+      // мы отбросили по лимиту, а подсказка всё равно кричала бы про бор).
+      const shown = all.filter((p) => p.src).length;
+      const srcTitle = shown
+        ? '<div class="tag-pop-src-title">' + esc(tf('tagPreview.sourceTitle', { site: src.site })) +
+          ' <span class="tag-pop-src-note">' + esc(t('tagPreview.sourceNote')) + '</span></div>'
+        : '';
+      return srcTitle + tagPopoverGrid(all);
+    }
+    return '<div class="vc-empty">' + esc(
+      // Пока летит запрос на бор, пустое место занимает честная надпись:
+      // тишина выглядит как зависшая подсказка.
+      d.__searching ? t('tagPreview.searching')
+        : src ? tf('tagPreview.sourceEmpty', { site: src.site })
+          : t('tagPreview.noCovers')) + '</div>';
+  })();
   const rel = (d.related || []).length
     ? '<div class="tag-pop-related-row"><span class="tag-pop-related-title">' +
       esc(t('tagPreview.related')) + '</span>' +

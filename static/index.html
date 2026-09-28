@@ -12,7 +12,19 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="/static/css/style.css?v=__VERSION__">
+<!-- Порядок <link> = порядок каскада: части вырезаны из бывшего единого
+     style.css без перестановки правил, поэтому specificity сохранился.
+     Числовые префиксы имён задают этот же порядок (см. scripts/check-css-vars.mjs,
+     который требует, чтобы каждый .css был подключён). -->
+<link rel="stylesheet" href="/static/css/00-base.css?v=__VERSION__">
+<link rel="stylesheet" href="/static/css/01-header.css?v=__VERSION__">
+<link rel="stylesheet" href="/static/css/02-feed.css?v=__VERSION__">
+<link rel="stylesheet" href="/static/css/03-viewer.css?v=__VERSION__">
+<link rel="stylesheet" href="/static/css/04-panels.css?v=__VERSION__">
+<link rel="stylesheet" href="/static/css/05-dialogs.css?v=__VERSION__">
+<link rel="stylesheet" href="/static/css/06-overlays.css?v=__VERSION__">
+<link rel="stylesheet" href="/static/css/07-polish.css?v=__VERSION__">
+<link rel="stylesheet" href="/static/css/08-tournament.css?v=__VERSION__">
 </head>
 <body>
 <a href="#main" class="skip-link">Перейти к содержимому</a>
@@ -64,6 +76,7 @@
           <div class="header-menu-title" data-i18n="menu.search">Поиск</div>
           <button class="header-menu-item" data-action="random"><i data-lucide="shuffle" data-size="16"></i> <span data-i18n="menu.random">Случайный пост</span></button>
           <button class="header-menu-item" data-action="recommend"><i data-lucide="star" data-size="16"></i> <span data-i18n="menu.recommend">Рекомендации</span></button>
+          <button class="header-menu-item" data-action="tournament"><i data-lucide="trophy" data-size="16"></i> <span data-i18n="menu.tournament">Выбери лучшее</span></button>
           <button class="header-menu-item" data-action="presets"><i data-lucide="bookmark" data-size="16"></i> <span data-i18n="menu.presets">Пресеты</span></button>
           <button class="header-menu-item" data-action="grid"><i data-lucide="grid" data-size="16"></i> <span data-i18n="menu.grid">Плотность сетки</span></button>
         </div>
@@ -124,6 +137,7 @@
         <button class="btn-icon" id="viewer-like" title="Лайк" data-i18n-title="viewer.like" aria-label="Лайк (Q)" data-i18n-aria="viewer.likeAria"><i data-lucide="heart" data-size="20"></i></button>
         <button id="viewer-hide" class="btn-icon" title="Дизлайк" data-i18n-title="viewer.dislike" aria-label="Скрыть (E)" data-i18n-aria="viewer.dislikeAria"><i data-lucide="heartOff" data-size="20"></i></button>
         <button id="viewer-source" class="btn-icon hidden" title="Открыть на источнике (Ctrl — в новой вкладке)" data-i18n-title="viewer.sourceBtn" aria-label="Открыть на источнике" data-i18n-aria="viewer.sourceAria"><i data-lucide="externalLink" data-size="20"></i></button>
+        <button id="viewer-share" class="btn-icon" title="Поделиться" data-i18n-title="viewer.shareBtn" aria-label="Поделиться постом" data-i18n-aria="viewer.shareAria"><i data-lucide="share2" data-size="20"></i></button>
         <div class="collect-control">
           <button class="btn-icon" id="viewer-collect" title="В коллекцию" data-i18n-title="batch.collect" aria-label="В коллекцию" data-i18n-aria="batch.collect"><i data-lucide="folder" data-size="20"></i></button>
           <div id="collect-menu" class="collect-menu hidden"></div>
@@ -157,6 +171,7 @@
       <button class="viewer-mobile-toggle" id="viewer-mobile-toggle" title="Свернуть панель" data-i18n-title="viewer.mobileToggle" aria-label="Свернуть/развернуть панель" data-i18n-aria="viewer.mobileToggleAria"><i data-lucide="chevronDown" data-size="12"></i></button>
       <button class="btn-icon" id="viewer-like-mobile" title="Лайк" data-i18n-title="viewer.like" aria-label="Лайк (Q)" data-i18n-aria="viewer.likeAria"><i data-lucide="heart" data-size="20"></i></button>
       <button class="btn-icon" id="viewer-hide-mobile" title="Дизлайк" data-i18n-title="viewer.dislike" aria-label="Скрыть (E)" data-i18n-aria="viewer.dislikeAria"><i data-lucide="heartOff" data-size="20"></i></button>
+      <button class="btn-icon" id="viewer-share-mobile" title="Поделиться" data-i18n-title="viewer.shareBtn" aria-label="Поделиться постом" data-i18n-aria="viewer.shareAria"><i data-lucide="share2" data-size="20"></i></button>
       <button class="btn-icon" id="viewer-fullscreen-mobile" title="Свернуть полный просмотр" data-i18n-title="viewer.fsMin" aria-label="Свернуть полный просмотр (F)" data-i18n-aria="viewer.fsMinAria"><i data-lucide="minimize" data-size="24"></i></button>
     </div>
     </div>
@@ -191,6 +206,7 @@
         <button class="stat" type="button" data-panel-tab="hides" aria-controls="tab-hides" aria-selected="false"><span class="stat-icon"><i data-lucide="eyeOff"></i></span><span class="stat-num" id="st-hides">0</span><span class="stat-label" data-i18n="stat.hides">Скрыто</span></button>
         <button class="stat" type="button" data-panel-tab="collections" aria-controls="tab-collections" aria-selected="false"><span class="stat-icon"><i data-lucide="folder"></i></span><span class="stat-num" id="st-collections">0</span><span class="stat-label" data-i18n="tab.collections">Коллекции</span></button>
         <button class="stat" type="button" data-panel-tab="tags" aria-controls="tab-tags" aria-selected="false"><span class="stat-icon"><i data-lucide="hash"></i></span><span class="stat-num" id="st-tags">0</span><span class="stat-label" data-i18n="stat.tags">Теги</span></button>
+        <button class="stat" type="button" data-panel-tab="friends" aria-controls="tab-friends" aria-selected="false"><span class="stat-icon"><i data-lucide="users"></i></span><span class="stat-num" id="st-friends">0</span><span class="stat-label" data-i18n="stat.friends">Друзья</span></button>
       </div>
     </div>
     <div class="panel-layout-body">
@@ -279,6 +295,26 @@
           <button id="btn-collections-zip-all" class="btn btn-sm" title="Скачать ZIP из всех коллекций" data-i18n-title="collections.zipAll" data-i18n="collections.downloadAll">Скачать всё</button>
         </div>
         <div id="collections-list" class="collections-list"></div>
+      </div>
+      <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-friends">
+        <p class="friends-note" data-i18n="friends.note">Обмен напрямую между вашими компьютерами: лайки, коллекции и комментарии. Никакого общего сервера — каждая сторона хранит своё у себя.</p>
+        <div class="friends-actions">
+          <button id="btn-friends-add" class="btn-primary btn-sm"><i data-lucide="userPlus" data-size="14"></i> <span data-i18n="friends.add">Добавить друга</span></button>
+          <button id="btn-friends-code" class="btn btn-sm" title="Показать мой код" data-i18n-title="friends.codeTitle"><i data-lucide="qrCode" data-size="14"></i> <span data-i18n="friends.myCode">Мой код</span></button>
+          <button id="btn-friends-sync" class="btn btn-sm" title="Обменяться сейчас" data-i18n-title="friends.syncTitle"><i data-lucide="refresh" data-size="14"></i> <span data-i18n="friends.sync">Обменяться</span></button>
+        </div>
+        <div id="friends-add-form" class="friends-add-form hidden">
+          <input type="text" id="friends-add-input" placeholder="briefly-friend-v1:…" data-i18n-ph="friends.addHint" autocomplete="off" spellcheck="false">
+          <button id="btn-friends-add-confirm" class="btn btn-sm" data-i18n="friends.addConfirm">Добавить</button>
+        </div>
+        <div id="friends-code-box" class="friends-code-box hidden">
+          <div class="friends-code-label" data-i18n="friends.codeHint">Отправьте этот код другу — он вставит его у себя:</div>
+          <code id="friends-code" class="friends-code"></code>
+          <div class="friends-code-actions">
+            <button id="btn-friends-code-copy" class="btn btn-sm" data-i18n="friends.copyCode">Скопировать</button>
+          </div>
+        </div>
+        <div id="friends-list" class="friends-list"></div>
       </div>
       <div class="panel-tab-content profile-tab-content" role="tabpanel" id="tab-tags">
         <div class="tag-filter-row">
@@ -417,7 +453,7 @@
         </label>
         <div class="setting-group">
           <span class="setting-label"><span data-i18n="set.apikeys">API ключи</span> <span class="hint" data-i18n="set.apikeysHint">каждый ключ со своим user_id, чередуются</span></span>
-          <div id="api-keys-list"></div>
+          <form id="api-keys-list" onsubmit="return false;" autocomplete="off"></form>
           <button type="button" class="btn-primary btn-sm" id="btn-add-api-key"><i data-lucide="plus" data-size="14"></i> <span data-i18n="btn.addApi">Добавить API</span></button>
         </div>
         <label class="setting-group">
@@ -544,6 +580,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Мини-игра «выбери лучшее»: турнирная сетка 1 vs 1. -->
+  <div id="tournament-root" class="tr-root hidden" tabindex="-1"></div>
 
   <div id="help-modal" class="modal help-modal hidden">
     <div class="modal-backdrop" id="help-backdrop"></div>

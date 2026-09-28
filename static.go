@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -96,13 +97,36 @@ func staticFileExists(name string) bool {
 	return err == nil
 }
 
+// embeddedVersion хеширует входные точки статики. CSS разбит на части
+// (static/css/*.css), и перечислять их поимённо нельзя: забытый файл означал
+// бы, что его правка не меняет ?v= — браузер держал бы старую версию до
+// перезагрузки. Поэтому каталог обходится целиком, имена сортируются
+// (иначе порядок обхода давал бы «плавающий» хеш).
 func embeddedVersion() string {
 	h := sha256.New()
-	for _, name := range []string{"index.html", "js/dist/app.js", "css/style.css"} {
+	write := func(name string) {
 		if data, err := fs.ReadFile(embeddedStatic(), name); err == nil {
 			_, _ = h.Write([]byte(name))
 			_, _ = h.Write(data)
 		}
+	}
+	for _, name := range []string{"index.html", "js/dist/app.js"} {
+		write(name)
+	}
+	entries, err := fs.ReadDir(embeddedStatic(), "css")
+	if err != nil {
+		// Каталога нет — вкладывать нечего, хеш остаётся по index.html и бандлу.
+		return "embedded-" + hex.EncodeToString(h.Sum(nil))[:16]
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".css") {
+			names = append(names, "css/"+e.Name())
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		write(name)
 	}
 	return "embedded-" + hex.EncodeToString(h.Sum(nil))[:16]
 }

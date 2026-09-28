@@ -1,0 +1,298 @@
+/* 07-polish.css — доводка плиток, аудит/a11y, коллекции, светлая тема, печать и контраст.
+   Часть 8/9 набора better34.
+
+   Файл вырезан из бывшего единого style.css без перестановки правил,
+   поэтому каскад собирается ровно как раньше — порядок подключения задан
+   числовым префиксом и списком <link> в static/index.html (сверху вниз).
+   Правьте здесь, а не в соседних частях: specificity и порядок важны. */
+
+.panel-backdrop{position:fixed;inset:0;background:rgba(8,8,10,.44);backdrop-filter:blur(2px);z-index:480;opacity:0;pointer-events:none;transition:opacity .28s ease}
+.panel-backdrop.active{opacity:1;pointer-events:auto}
+.profile-hero::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:3px;background:linear-gradient(90deg,transparent,var(--accent),var(--accent-dim),transparent);opacity:.75;pointer-events:none;z-index:2}
+.stat{position:relative;overflow:hidden}
+.stat::before{content:'';position:absolute;inset:0;background:radial-gradient(110px 56px at 50% -18%,color-mix(in srgb,var(--accent) 16%,transparent),transparent 70%);opacity:0;transition:opacity var(--transition)}
+.stat:hover::before{opacity:1}
+.stat-icon{width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,var(--accent-dim),var(--accent));color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 10px rgba(0,0,0,.35);margin-bottom:3px}
+.stat-icon svg{width:14px;height:14px}
+.stat .stat-num{font-size:1.12rem;margin-top:2px}
+.pf-thumb .pf-open{position:absolute;inset:0;z-index:3;background:rgba(0,0,0,.22);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity var(--transition)}
+.pf-thumb:hover .pf-open{opacity:1}
+.pf-open-icon{width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.18);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;color:#fff;transform:scale(.85);transition:transform var(--transition)}
+.pf-thumb:hover .pf-open-icon{transform:scale(1)}
+.pf-open-icon svg{width:15px;height:15px}
+.pf-thumb .pf-dl{position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;border-radius:50%;background:var(--success);color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.pf-thumb .pf-dl svg{width:10px;height:10px}
+/* Метка «новое», быстрые действия и выбор на плитке */
+.pf-thumb .pf-new{position:absolute;top:4px;right:24px;z-index:2;background:var(--accent);color:#fff;font-size:.55rem;font-weight:700;letter-spacing:.04em;padding:2px 5px;border-radius:6px;pointer-events:none}
+.pf-thumb .pf-acts{position:absolute;top:4px;right:4px;z-index:4;display:none;gap:4px}
+.pf-thumb:hover .pf-acts,.pf-thumb:focus-within .pf-acts{display:flex}
+.pf-thumb .pf-act{width:22px;height:22px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(3px)}
+.pf-thumb .pf-act:hover{background:var(--accent);border-color:var(--accent)}
+.pf-thumb .pf-act svg{width:12px;height:12px}
+.pf-thumb .pf-sel{position:absolute;top:4px;left:4px;z-index:4;width:20px;height:20px;padding:0;border-radius:6px;border:1px solid rgba(255,255,255,.35);background:rgba(0,0,0,.5);color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer}
+.pf-thumb .pf-sel svg{width:12px;height:12px}
+.profile-thumbs.pf-selecting .pf-sel{display:flex}
+.profile-thumbs.pf-selecting .pf-dl{display:none}
+.pf-thumb.pf-checked{outline:2px solid var(--accent);outline-offset:-2px}
+.pf-thumb.pf-checked .pf-sel{background:var(--accent);border-color:var(--accent)}
+.pf-thumb.pf-hidden{display:none}
+/* Мобильный тач: hover не существует, поэтому hover-only элементы (полоса
+   действий, подпись с id) на тач-устройствах просто невидимы. Показываем их
+   всегда, а полосу действий уводим вниз плитки — в углу она спорила бы с
+   меткой «НОВОЕ» и не влезала в узкую колонку (3 кнопки по 36px). */
+@media(hover:none){
+  .pf-thumb .pf-acts{top:auto;bottom:0;left:0;right:0;display:flex;justify-content:center;gap:10px;padding:7px 4px;background:linear-gradient(transparent,rgba(0,0,0,.72))}
+  /* Сброс общего «крупные тапы» правила .panel-content button на оверлеях плитки:
+     иначе три кнопки по 44px не помещаются в плитку шириной ~105px. */
+  .pf-thumb .pf-act{width:36px;height:36px;min-height:0;min-width:0;border-radius:10px}
+  .pf-thumb .pf-act svg{width:17px;height:17px}
+  .pf-thumb .pf-sel{width:30px;height:30px;min-height:0;min-width:0;left:6px;top:6px}
+  .pf-thumb .pf-sel svg{width:15px;height:15px}
+  .pf-thumb .pf-bar{display:none}
+  .pf-thumb .pf-new{top:6px;right:6px}
+  .profile-thumbs.pf-selecting .pf-sel{width:34px;height:34px}
+}
+@media(max-width:600px){
+  /* Ряд чипов не должен съедать пол-экрана: горизонтальная прокрутка. */
+  .pf-tools-row:not(:last-child){flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+  .pf-tools-row:not(:last-child)::-webkit-scrollbar{display:none}
+  .pf-tools-row .pf-chip{flex:0 0 auto}
+  .pf-selbar{padding:8px;gap:8px}
+  .pf-selbar .btn-sm{flex:1 1 auto}
+}
+.profile-tag-item{box-shadow:0 1px 3px rgba(0,0,0,.16)}
+.profile-tag-item.fav{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,transparent),color-mix(in srgb,var(--accent) 5%,transparent));border-color:var(--accent-dim)}
+.profile-tag-item.hidden{background:linear-gradient(135deg,rgba(239,68,68,.16),rgba(239,68,68,.04));border-color:var(--error)}
+.profile-tag-item:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.22)}
+.profile-tag-item mark{background:var(--accent);color:#fff;border-radius:3px;padding:0 2px}
+.pf-more-spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:8px}
+.preset-menu-list{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;min-width:210px}
+.preset-menu-item{padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.82rem;cursor:pointer;text-align:left;display:flex;flex-direction:column;gap:2px;transition:background var(--transition)}
+.preset-menu-item:hover{background:var(--hover)}
+.preset-menu-item.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.preset-menu-item .pm-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preset-menu-item .pm-query{font-size:.7rem;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preset-menu-empty{padding:8px 12px;color:var(--text-dim);font-size:.8rem}
+.viewer-related{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
+.viewer-related .rel-title{font-size:.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.viewer-related .rel-row{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.rel-item{flex:0 0 82px;border-radius:6px;overflow:hidden;cursor:pointer;border:1px solid var(--border);position:relative;aspect-ratio:3/4;background:var(--surface2)}
+.rel-item img{width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;transition:transform .22s ease}
+.rel-item:hover img{transform:scale(1.07)}
+.rel-item:hover{border-color:var(--accent-dim)}
+.rel-item .rel-id{position:absolute;left:0;right:0;bottom:0;padding:3px 4px;font-size:.6rem;color:#eee;background:linear-gradient(transparent,rgba(0,0,0,.75));z-index:2}
+
+/* — дизайн-аудит: инлайн-стили → классы, клавиатурный фокус, тач, reduced motion — */
+.header-menu-item[data-action="logout"]{color:var(--error)}
+.preset-export-row{display:flex;gap:8px;margin-top:8px}
+.preset-tag-row,.preset-export-row,.collection-form,.setting-group,.alias-add-row{flex-wrap:wrap}
+.preset-export-row .btn-sm{flex:1 1 140px}
+.tag-mgmt+.tag-mgmt{margin-top:16px}
+.setting-hint{font-size:.7rem;color:var(--text-dim)}
+#btn-clean-db{background:var(--error)}
+#btn-clean-dups{background:var(--error)}
+#btn-save-settings{width:100%}
+#confirm-cancel{background:var(--surface3);color:var(--text)}
+#batch-hide{background:var(--error)}
+button:focus-visible,select:focus-visible,[role="button"]:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* a11y (#4): :focus-visible учитывает только клавиатурный ввод.
+   Чистый :focus (мышь/касание) тоже рисуем — иначе клавиатурные
+   пользователи с тач-устройством теряют индикатор фокуса. */
+button:focus,select:focus,[role="button"]:focus,[tabindex]:focus{outline:2px solid var(--accent);outline-offset:2px}
+button:focus:not(:focus-visible),select:focus:not(:focus-visible),[role="button"]:focus:not(:focus-visible),[tabindex]:focus:not(:focus-visible){outline:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+:focus:not(:focus-visible){outline:none}
+button,a{-webkit-tap-highlight-color:transparent}
+@media(hover:none){
+  .post-overlay,.pf-bar,.pf-open{opacity:1}
+  .pf-open-icon{transform:scale(1)}
+  /* На тач-устройствах hover нет — кнопки истории (удалить/закрепить)
+     должны быть видны всегда, иначе историю нельзя редактировать. */
+  .history-item .history-del{visibility:visible}
+  .history-del{padding:8px}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+}
+
+/* --- provider badge / rating toggle / query meta / feed progress --- */
+.brand{display:flex;align-items:center;gap:8px;background:none;border:none;padding:4px 8px 4px 2px;border-radius:var(--radius);cursor:pointer;color:var(--text);flex-shrink:0}
+.brand-logo{width:24px;height:24px;display:block;filter:drop-shadow(0 1px 3px rgba(0,0,0,.35))}
+/* Wordmark переиспользует фирменный стиль с экрана авторизации (.auth-name) */
+.brand .auth-name{font-size:1.02rem}
+.brand:hover .auth-name{color:var(--accent)}
+.provider-badge{display:flex;align-items:center;gap:5px;height:32px;padding:0 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-dim);font-size:.72rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:border-color var(--transition),color var(--transition)}
+.provider-badge:hover{border-color:var(--accent);color:var(--text)}
+.provider-badge i,.provider-badge svg{opacity:.6}
+.provider-menu-list{display:flex;flex-direction:column;min-width:140px}
+.provider-menu-item{display:flex;align-items:center;gap:8px;padding:8px 12px;background:none;border:none;color:var(--text);font-size:.78rem;text-align:left;cursor:pointer}
+.provider-menu-item:hover{background:var(--surface3)}
+.provider-menu-item.active{color:var(--accent)}
+.rating-toggle{display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.rt-btn{padding:7px 9px;background:none;border:none;color:var(--text-dim);font-size:.68rem;font-weight:600;cursor:pointer;line-height:1.4;transition:background var(--transition),color var(--transition)}
+.rt-btn:hover{color:var(--text)}
+.rt-btn.active{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--text)}
+.viewed-toggle{display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+/* Без этого правила класс hidden на переключателе ничего не делал: общих
+   .hidden в стилях нет, а .viewed-toggle задаёт display:flex. Из-за этого
+   «Все/Новое/Виденное» висели в онлайн-ленте, где фильтр не применим. */
+.viewed-toggle.hidden{display:none}
+.vt-btn{flex:1 1 0;padding:7px 9px;background:none;border:none;color:var(--text-dim);font-size:.68rem;font-weight:600;cursor:pointer;line-height:1.4;white-space:nowrap;transition:background var(--transition),color var(--transition)}
+.vt-btn:hover{color:var(--text)}
+.vt-btn.active{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--text)}
+.query-meta{position:absolute;right:34px;top:50%;transform:translateY(-50%);font-size:.62rem;line-height:1;color:var(--text-dim);pointer-events:none;background:var(--surface2);padding:3px 7px;border-radius:8px;border:1px solid var(--border);display:none}
+.query-meta.visible{display:block}
+.feed-progress{position:absolute;left:0;right:0;bottom:-1px;height:2px;overflow:hidden;opacity:0;transition:opacity .25s;pointer-events:none}
+.feed-progress.active{opacity:1}
+.feed-progress-bar{position:absolute;top:0;left:-40%;width:40%;height:100%;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:feedSlide 1s linear infinite}
+@keyframes feedSlide{to{left:110%}}
+@media(max-width:900px){.brand-name{display:none}}
+
+/* --- чипы запроса --- */
+.search-chips{flex-basis:100%;order:6;display:none;flex-wrap:wrap;gap:4px;padding:0 2px}
+.search-chips.has-chips{display:flex}
+.qc{display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:2px 4px 2px 10px;font-size:.72rem;color:var(--text);max-width:260px}
+.qc>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qc.neg{color:#fca5a5;border-color:rgba(248,113,113,.35)}
+.qc.neg:hover{border-color:rgba(248,113,113,.6)}
+.qc-x{border:none;background:none;color:var(--text-dim);cursor:pointer;font-size:.85rem;line-height:1;padding:0 5px;border-radius:50%}
+.qc-x:hover{color:var(--text);background:var(--surface3)}
+.qc-sep{color:var(--text-dim);font-size:.75rem;align-self:center;padding:0 3px;user-select:none}
+
+/* --- история: активная строка, закрепы, счётчики --- */
+.history-item.active{background:var(--hover);color:var(--text)}
+.history-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pin-mark{display:inline-flex;color:var(--accent);flex-shrink:0;margin-right:2px}
+.history-count{font-size:.68rem;color:var(--text-dim);background:var(--surface3);border-radius:999px;padding:1px 7px;flex-shrink:0}
+.hist-pin.pinned{color:var(--accent)}
+.history-item .history-del{visibility:hidden}
+.history-item:hover .history-del,.history-item.active .history-del{visibility:visible}
+
+/* --- глубина скролла + автоскрытие хедера --- */
+#scroll-progress{position:fixed;top:0;left:0;height:2px;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-dim));z-index:600;pointer-events:none;opacity:.9;transition:width .08s linear}
+#header{transition:transform .22s ease,margin-bottom .22s ease}
+#header.header-hidden{transform:translateY(-105%);margin-bottom:var(--hh,-58px)}
+
+/* --- коллекции: вкладка профиля --- */
+.collection-form{display:flex;gap:8px;margin-bottom:12px}
+.collection-form input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--text);font-size:.85rem;outline:none}
+.collection-form input:focus{border-color:var(--accent)}
+.collection-item{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;cursor:pointer;transition:all var(--transition);margin-bottom:6px;background:var(--surface2);border:1px solid var(--border)}
+.collection-item:hover{background:var(--hover);border-color:var(--accent-dim);transform:translateX(2px)}
+.collection-item .collection-ico{color:var(--accent);display:inline-flex;flex-shrink:0}
+.collection-item .collection-name{flex:1;font-size:.85rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.collection-item .collection-count{font-size:.72rem;color:var(--text-dim);background:var(--surface3);border-radius:10px;padding:2px 8px;flex-shrink:0}
+.collection-item .btn-icon-sm{opacity:0;transition:opacity var(--transition)}
+.collection-item:hover .btn-icon-sm,.collection-item:focus-within .btn-icon-sm{opacity:1}
+@media(hover:none){.collection-item .btn-icon-sm{opacity:1}}
+.collection-item .col-del:hover{color:var(--error);border-color:var(--error)}
+/* Мозаика обложек коллекции: сетка 2×2, одна обложка — во всю плитку */
+.collection-item .col-mosaic{width:38px;height:38px;flex-shrink:0;border-radius:7px;overflow:hidden;display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;gap:1px;background:var(--surface3);border:1px solid var(--border)}
+.collection-item .col-mosaic:only-child{grid-column:1/-1;grid-row:1/-1}
+.collection-item .col-mosaic img{width:100%;height:100%;object-fit:cover;display:block}
+.collection-item .btn-icon-sm[disabled]{opacity:.25;pointer-events:none}
+.collection-item .btn-icon-sm[disabled]:hover{color:inherit;border-color:inherit}
+
+/* --- меню «в коллекцию» во вьюере --- */
+.collect-control{position:relative;display:flex;flex-shrink:0}
+.collect-control .btn-icon{pointer-events:auto}
+.collect-menu{position:absolute;top:calc(100% + 8px);right:-6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:var(--z-toast);min-width:220px;max-width:min(280px,calc(100vw - 32px));max-height:min(320px,55vh);overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:2px}
+.collect-menu.hidden{display:none}
+.collect-menu-new{display:flex;gap:6px;margin-bottom:4px}
+.collect-menu-new input{flex:1;min-width:0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 10px;color:var(--text);font-size:.85rem;outline:none}
+.collect-menu-new input:focus{border-color:var(--accent)}
+.collect-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;background:none;border:none;border-radius:var(--radius-sm);color:var(--text);font-size:.83rem;text-align:left;cursor:pointer;transition:background var(--transition)}
+.collect-menu-item:hover{background:var(--hover)}
+.collect-menu-item.active{color:var(--accent)}
+.collect-menu-item .cm-check{width:15px;flex-shrink:0;display:inline-flex}
+.collect-menu-item .cm-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.collect-menu-item .cm-count{font-size:.7rem;color:var(--text-dim);flex-shrink:0}
+.collect-menu-empty{padding:8px 10px;font-size:.78rem;color:var(--text-dim)}
+
+/* Batch «в коллекцию»: полноэкранный оверлей с выбором коллекции */
+.batch-collect-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:var(--z-toast);display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(2px)}
+.batch-collect-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);width:100%;max-width:340px;max-height:min(420px,80vh);display:flex;flex-direction:column;padding:10px}
+.batch-collect-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.9rem;font-weight:600;padding:2px 2px 8px;color:var(--text)}
+.batch-collect-list{overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.batch-collect-list .collect-menu-item{padding:9px 10px}
+@media(hover:none){.batch-collect-panel{max-width:100%}}
+
+/* --- персональная активность в модалке статистики --- */
+.act-chart{display:flex;align-items:flex-end;gap:5px;height:90px;padding:8px 4px 0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius)}
+.act-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0}
+.act-col i{display:block;width:70%;max-width:22px;min-height:2px;background:linear-gradient(180deg,var(--accent),var(--accent-dim));border-radius:3px 3px 0 0;opacity:.9}
+.act-col span{font-size:.56rem;color:var(--text-dim);margin-top:4px;white-space:nowrap}
+
+/* --- брендовый логотип: заливка управляется темой --- */
+.brand-logo-bg{fill:#161616}
+
+/* --- полировка светлой темы --- */
+[data-theme="light"] ::selection{background:color-mix(in srgb,var(--accent) 25%,transparent)}
+[data-theme="light"] .toast{box-shadow:0 8px 28px rgba(0,0,0,.18),0 0 18px color-mix(in srgb,var(--accent) 10%,transparent)}
+[data-theme="light"] .profile-avatar{box-shadow:0 8px 24px rgba(0,0,0,.22)}
+[data-theme="light"] .post-card.focused{box-shadow:0 0 0 3px var(--accent),0 6px 16px rgba(0,0,0,.18)}
+[data-theme="light"] .viewer-backdrop{background:rgba(20,20,24,.88)}
+[data-theme="light"] .auth-card{background:linear-gradient(180deg,rgba(255,255,255,.65),rgba(255,255,255,.35)),color-mix(in srgb,var(--surface) 88%,transparent);box-shadow:0 0 0 1px rgba(0,0,0,.06),0 24px 60px rgba(0,0,0,.14)}
+[data-theme="light"] #header::after{opacity:.35}
+
+/* --- дропдауны: не вылезают за правый край на любых экранах --- */
+.grid-menu{right:0;left:auto}
+.suggestions,.history-dropdown{overscroll-behavior:contain}
+
+/* --- мобильные экраны: хедер и дропдауны --- */
+@media(max-width:640px){
+  /* Меню источника прижато к правому краю и не шире вьюпорта */
+  #provider-control .grid-menu{right:0;left:auto;max-width:calc(100vw - 20px)}
+  .collect-menu{right:-2px}
+}
+.alias-add-row{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.alias-add-row input{flex:1;min-width:0}
+.alias-add-row .alias-arrow{color:var(--text-dim);flex-shrink:0}
+.tag-aliases-list{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto}
+.alias-item{display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.8rem}
+.alias-item .alias-src{font-weight:600;color:var(--accent)}
+.alias-item .alias-dst{flex:1;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:600px){
+  /* Предотвращаем авто-зум iOS: поля ввода >= 16px */
+  .preset-form input,.collection-form input,#tag-filter,
+  .tag-input-row input,.setting-group input[type="text"],
+  .setting-group input[type="number"],.vc-form input,
+  .collect-menu-new input,.preset-rename{font-size:16px}
+  /* Модалки/меню не упираются в края */
+  .modal-content{width:94vw}
+  .act-col span{font-size:.52rem}
+}
+
+/* a11y (#4): фон, который скрывается от скринридеров (aria-hidden),
+.a11y-hidden{pointer-events:none;user-select:none;visibility:hidden;height:0;overflow:hidden}
+
+/* toggle-switch — чекбоксы в настройках */
+.toggle-switch{
+  display:inline-block;position:relative;width:40px;height:22px;
+}
+.toggle-switch input{opacity:0;width:0;height:0;}
+.toggle-slider{
+  position:absolute;cursor:pointer;inset:0;border-radius:11px;
+  background:var(--surface3);border:1px solid var(--border);
+  transition:background 200ms ease;
+}
+.toggle-slider:before{
+  content:"";position:absolute;height:16px;width:16px;left:3px;bottom:3px;
+  background:var(--text-dim);border-radius:50%;transition:.2s;
+}
+.toggle-switch input:checked + .toggle-slider{
+  background:var(--accent);
+}
+.toggle-switch input:checked + .toggle-slider:before{
+  background:var(--bg);transform:translateX(18px);
+}
+.setting-group{
+  display:flex;align-items:center;gap:12px;margin-bottom:12px;
+}
+.setting-hint{flex:1;font-size:12px;color:var(--text-dim);margin-top:2px;}
+
+@media(hover:none){.post-card:hover{transform:none;box-shadow:none}}
+@media print{#header,#footer,.viewer,.modal,.toast,.ptr-indicator,.search-box,.batch-bar{display:none !important}#main{padding:0;margin:0}.posts-grid{columns:2;gap:8px}.post-card{break-inside:avoid;border:1px solid #ccc}}
+@media(max-height:500px) and (orientation:landscape){.viewer-head{height:32px}.viewer-actions{gap:4px}}
+@media(prefers-contrast:more){:root{--border:rgba(255,255,255,.3);--surface2:#1a1a1a}.post-card{border:1px solid var(--border)}.btn{border:1px solid var(--border)}}
+

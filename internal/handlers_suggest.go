@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -361,12 +363,18 @@ func (h *Handler) TagPreview(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// GET /api/tags/:tag/source-preview?limit=6&rating=sfw
+// GET /api/tags/:tag/source-preview?limit=6&rating=sfw&exclude=1,2,3&need=6
 //
 // Превью с бору для тега, которого нет в библиотеке. Отдельный эндпоинт
 // намеренно: поиск в сети занимает секунды, и в общем ответе он задерживал
 // бы всплывашку целиком. Сбой источника — 502, а не пустой список: клиент
 // должен отличать «на бору ничего нет» от «бор недоступен».
+//
+// exclude — id, которые клиент уже показал из библиотеки: без них бор
+// вернёт те же посты (они лежат в БД метаданных после прошлого превью), и
+// добор до 6 обложек выродился бы в повтор одного и того же набора.
+// need — сколько обложек реально не хватает: обход лишних сайтов и лишний
+// limit на апстриме не нужны, когда клиенту не хватает одной картинки.
 func (h *Handler) TagSourcePreview(c *gin.Context) {
 	tag := normalizeTagParam(c.Param("tag"))
 	if tag == "" {
@@ -377,7 +385,16 @@ func (h *Handler) TagSourcePreview(c *gin.Context) {
 	if n, err := strconv.Atoi(c.Query("limit")); err == nil && n > 0 && n <= 12 {
 		limit = n
 	}
-	out := h.sourceTagPreview(tag, limit, c.Query("rating"))
+	if n, err := strconv.Atoi(c.Query("need")); err == nil && n > 0 && n < limit {
+		limit = n
+	}
+	exclude := map[int]bool{}
+	for _, raw := range strings.Split(c.Query("exclude"), ",") {
+		if id, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && id > 0 {
+			exclude[id] = true
+		}
+	}
+	out := h.sourceTagPreview(tag, limit, c.Query("rating"), exclude)
 	if out == nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "source_unavailable"})
 		return
@@ -389,62 +406,132 @@ func (h *Handler) TagSourcePreview(c *gin.Context) {
 // записываем в БД метаданными — иначе по клику открыть их нечем (пост-by-ids
 // смотрит в базу, а без строки вьюер не покажет теги), и поиск по такой строке
 // потом найдёт их локально. Сами файлы не скачиваются.
-func (h *Handler) sourceTagPreview(tag string, limit int, ratingMode string) *TagSourcePreview {
-	prov := h.provider()
-	if prov == nil {
+//
+// exclude — id, которые клиент уже показал: они уже в БД (см. выше), поэтому
+// бор вернёт их снова, а клиент получит меньше обложек, чем просил.
+func (h *Handler) sourceTagPreview(tag string, limit int, ratingMode string, exclude map[int]bool) *TagSourcePreview {
+	provs := h.previewProviders()
+	if len(provs) == 0 {
 		return nil
 	}
-	out := &TagSourcePreview{Site: prov.Name(), Query: tag}
+	// В режиме «все сайты» идём по провайдерам по очереди, пока не наберём
+	// нужное число обложек. Сайты опрашиваются последовательно, а не сразу все:
+	// всплывашка появляется по наведению, и лишние параллельные запросы в сеть
+	// пользователю не нужны — берём столько, сколько не хватило.
+	site := provs[0].Name()
+	query := tag
 	// Фильтр рейтинга — тот же, что у обычного поиска: превью не должно
 	// показывать то, что пользователь запретил показывать.
 	ratingTerms, ratingExcl := ratingFilter(ratingMode)
-	query := tag
 	if len(ratingTerms) > 0 {
 		query = strings.Join(ratingTerms, " ") + " " + tag
 	}
-	posts, err := prov.SearchPosts(query, 1, limit, 0)
-	if err != nil {
-		// Сеть/лимит: показывать «ничего не нашлось» было бы враньём —
-		// отдаём nil, и всплывашка честно скажет, что в библиотеке пусто.
-		log.Printf("tag preview: поиск %q на %s не удался: %v", tag, prov.Name(), err)
-		return nil
-	}
-	if len(ratingExcl) > 0 {
-		// Сайт мог обрезать хвост запроса — досчищаем локально, как это делает
-		// хендлер поиска. Нам хватает первых limit постов, а не полной страницы.
-		kept := make([]Rule34Post, 0, len(posts))
-		for _, p := range posts {
-			if !ratingExcl[strings.ToLower(p.Rating)] {
-				kept = append(kept, p)
+	out := &TagSourcePreview{Site: site, Query: tag}
+	var upserts []*Post
+	seen := make(map[int]bool, limit)
+	failed := 0
+	for _, prov := range provs {
+		if len(out.Posts) >= limit {
+			break
+		}
+		// Забираем с запасом: часть выдачи отсеется по рейтингу, часть без
+		// превью, часть — дубли уже показанного. Без запаса «добор до 6» мог
+		// бы вернуть 2 картинки вместо недостающих 4.
+		need := limit - len(out.Posts)
+		posts, err := prov.SearchPosts(query, 1, need*2+4, 0)
+		if err != nil {
+			// Сеть/лимит на одном сайте — не повод выбрасывать остальные: в
+			// режиме «все сайты» следующий может ответить. 502 отдаём только
+			// когда не ответил НИ ОДИН, иначе клиент не отличит «пусто» от
+			// «бор недоступен».
+			log.Printf("tag preview: поиск %q на %s не удался: %v", tag, prov.Name(), err)
+			failed++
+			continue
+		}
+		for i := range posts {
+			p := &posts[i]
+			if len(out.Posts) >= limit {
+				break
 			}
+			if exclude[p.ID] || seen[p.ID] {
+				continue
+			}
+			// Метаданные пишем ДО проверки превью и всем, кого источник
+			// ответил: по клику вьюеру нужны теги и файл, даже если обложки
+			// для сетки нет. Раньше этот апсерт стоял выше фильтра по thumb —
+			// переставив, мы потеряли бы пост из БД целиком.
+			seen[p.ID] = true
+			upserts = append(upserts, &Post{
+				ID: p.ID, Tags: p.Tags, FileURL: p.FileURL, PreviewURL: p.PreviewURL,
+				FileType: p.FileType, Width: p.Width, Height: p.Height,
+				FileSize: p.FileSize, Score: p.Score, Rating: p.Rating,
+				MD5: p.Hash, Source: prov.Name(),
+			})
+			// Сайт мог обрезать хвост запроса — досчищаем локально, как это
+			// делает хендлер поиска. Нам хватает первых limit постов, а не
+			// полной страницы.
+			if ratingExcl[strings.ToLower(p.Rating)] {
+				continue
+			}
+			thumb := sourcePreviewURL(p)
+			if thumb == "" {
+				continue // без превью в сетку нечего поставить
+			}
+			out.Posts = append(out.Posts, &TagPreviewPost{
+				ID: p.ID, Thumb: thumb, W: p.Width, H: p.Height, Site: prov.Name(),
+			})
 		}
-		posts = kept
-	}
-	if len(posts) == 0 {
-		return out
-	}
-	upserts := make([]*Post, 0, len(posts))
-	out.Posts = make([]*TagPreviewPost, 0, limit)
-	for i := range posts {
-		p := &posts[i]
-		upserts = append(upserts, &Post{
-			ID: p.ID, Tags: p.Tags, FileURL: p.FileURL, PreviewURL: p.PreviewURL,
-			FileType: p.FileType, Width: p.Width, Height: p.Height,
-			FileSize: p.FileSize, Score: p.Score, Rating: p.Rating,
-			MD5: p.Hash, Source: prov.Name(),
-		})
-		thumb := sourcePreviewURL(p)
-		if thumb == "" {
-			continue // без превью показывать нечего
-		}
-		out.Posts = append(out.Posts, &TagPreviewPost{
-			ID: p.ID, Thumb: thumb, W: p.Width, H: p.Height, Site: prov.Name(),
-		})
 	}
 	if len(upserts) > 0 {
 		GetDB().UpsertMetaMany(upserts)
 	}
+	if len(out.Posts) == 0 && failed == len(provs) {
+		// Ни один сайт не ответил — это «бор недоступен», а не «тега нет».
+		return nil
+	}
 	out.Count = len(out.Posts)
+	return out
+}
+
+// previewProviders — провайдеры для добора обложек: в режиме «все сайты»
+// идут все известные (активный — первым, чтобы «не скачано» называло то самое
+// место, куда пользователь смотрит), иначе только активный.
+func (h *Handler) previewProviders() []Provider {
+	if h.providers == nil {
+		return nil
+	}
+	active := h.provider()
+	if GetConfig().GetProvider() != allProvidersName {
+		if active == nil {
+			return nil
+		}
+		return []Provider{active}
+	}
+	seen := map[Provider]bool{}
+	out := make([]Provider, 0, len(h.providers))
+	add := func(p Provider) {
+		if p == nil || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	add(active)
+	for _, name := range multiProviderOrder {
+		add(h.providers[name])
+	}
+	// Плагинные сайты (data/providers.json) в multiProviderOrder не входят —
+	// добираем детерминированно по имени, как это делает хендлер поиска.
+	extra := make([]string, 0, 4)
+	for name := range h.providers {
+		if !slices.Contains(multiProviderOrder, name) {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(extra)
+	for _, name := range extra {
+		add(h.providers[name])
+	}
 	return out
 }
 

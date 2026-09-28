@@ -51,6 +51,9 @@ console.log('offline-очередь: isQueueable, enqueueMutation, flushOfflineQ
     ['POST', '/download/77'], ['POST', '/settings'], ['POST', '/db/clean'],
     ['POST', '/dups/clean'], ['POST', '/recommend/abc'], ['POST', '/profile'],
     ['POST', '/rename/1'], ['POST', '/remote/push'],
+    // Добавление друга — разовое действие: откладывать нельзя (иначе 400
+    // уйдёт в очередь и вернёт «успешно отложено»).
+    ['POST', '/friends'], ['POST', '/friends/sync'],
   ];
   for (const [m, e] of notQueueable) {
     check(`не очередится: ${m} ${e}`, (await enqueueMutation(m, e, {})) === false);

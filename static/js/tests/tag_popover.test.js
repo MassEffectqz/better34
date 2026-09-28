@@ -76,13 +76,28 @@ a.API = { get: (u) => {
   check('быстрый запрос не трогает источник', !/source-preview/.test(urls[0]), urls[0]);
 
   // Превью с бору — отдельный запрос и отдельный кэш.
-  const src = await a.fetchTagSourcePreview('blue_hair');
+  const src = await a.fetchTagSourcePreview('blue_hair', [], 6);
   check('источник: свой эндпоинт и обложки с сайта',
     /source-preview/.test(urls[1]) && src.site === 'rule34' && src.posts.length === 1, urls[1]);
-  await a.fetchTagSourcePreview('BLUE_HAIR');
+  await a.fetchTagSourcePreview('blue_hair', [], 6);
   check('кэш источника: повторов нет', urls.filter((u) => /source-preview/.test(u)).length === 1,
     'calls=' + urls.length);
-  check('сбой источника → null', (await a.fetchTagSourcePreview('broken')) === null);
+  check('сбой источника → null', (await a.fetchTagSourcePreview('broken', [], 6)) === null);
+
+  // Добор до шести: клиент сообщает, сколько не хватает, и какие id уже
+  // показаны — иначе бор вернёт те же посты и сетка распадётся на дубли.
+  a._tagSourceCache.clear();
+  await a.fetchTagSourcePreview('extra', [11, 12], 4);
+  const topup = urls[urls.length - 1];
+  check('добор: в запросе need и exclude',
+    /need=4/.test(topup) && /exclude=11%2C12/.test(topup), topup);
+  // need входит в ключ кэша: ответ на «добавь одну» нельзя переиспользовать
+  // как ответ на «добавь шесть».
+  a._tagSourceCache.clear();
+  await a.fetchTagSourcePreview('extra', [], 6);
+  check('кэш не путает разные need',
+    urls[urls.length - 1] !== topup && /need=6/.test(urls[urls.length - 1]),
+    urls[urls.length - 1]);
 
   // Повторный запрос того же тега — из кэша, без похода в сервер. Считаем
   // именно быстрые запросы: источник проверяется отдельно.
@@ -130,9 +145,47 @@ a.API = { get: (u) => {
     /rule34/.test(fromSrc) && /не скачано|not downloaded/i.test(fromSrc), fromSrc.slice(0, 200));
   check('источник: обложки кликабельны и несут id',
     /data-post="101"/.test(fromSrc) && /data-post="102"/.test(fromSrc), fromSrc.slice(0, 300));
-  check('источник: сетка помечена как нескачанная', /tag-pop-covers-src/.test(fromSrc), fromSrc.slice(0, 200));
+  check('источник: сетка помечена как нескачанная', /tag-pop-cover-src/.test(fromSrc), fromSrc.slice(0, 200));
   check('источник: локальная пустота не показывается',
     !/нет скачанных|No downloaded/i.test(fromSrc), fromSrc.slice(0, 200));
+
+  // ГЛАВНОЕ: смешанная сетка. Одна локальная обложка не должна отменять
+  // остальные пять — раньше при непустой локальной части бор вообще не
+  // спрашивался, и подсказка показывала 1–2 картинки вместо шести.
+  {
+    const mixed = a.renderTagPopoverBody({
+      tag: 'mostly_undownloaded', count: 3,
+      posts: [{ id: 11, thumb: '/api/thumb/11', width: 800, height: 600 }],
+      related: [],
+      source: {
+        site: 'rule34', count: 5,
+        posts: [21, 22, 23, 24, 25].map(id => ({
+          id, thumb: '/api/proxy?url=' + id + '&kind=preview', width: 800, height: 600, site: 'rule34',
+        })),
+      },
+    });
+    const covers = (mixed.match(/data-post="/g) || []).length;
+    check('сетка добрана до шести обложек', covers === 6, 'обложек: ' + covers);
+    check('боровые обложки помечены поштучно, а не сетка целиком',
+      (mixed.match(/tag-pop-cover-src/g) || []).length === 5,
+      'помечено: ' + (mixed.match(/tag-pop-cover-src/g) || []).length);
+    check('подпись про бор есть, раз в сетке есть боровые',
+      /не скачано|not downloaded/i.test(mixed), mixed.slice(0, 200));
+  }
+
+  // Локальных уже шесть — бор не нужен вовсе, и подписи про бор быть не должно.
+  {
+    const full = a.renderTagPopoverBody({
+      tag: 'full', count: 6,
+      posts: [1, 2, 3, 4, 5, 6].map(id => ({ id, thumb: '/api/thumb/' + id, width: 8, height: 8 })),
+      related: [], source: { site: 'rule34', count: 2, posts: [{ id: 7, thumb: '/x.jpg' }] },
+    });
+    check('шести локальных хватает — лишние боровые отброшены',
+      (full.match(/data-post="/g) || []).length === 6,
+      'обложек: ' + (full.match(/data-post="/g) || []).length);
+    check('подпись про бор не показывается зря',
+      !/не скачано|not downloaded/i.test(full), full.slice(0, 200));
+  }
 
   // Бор ответил, но по тегу у него тоже ничего нет — говорим про это прямо.
   const srcNone = a.renderTagPopoverBody({
@@ -182,7 +235,10 @@ a.API = { get: (u) => {
   a.showTagPopover('blue_hair', anchor);
   check('позиция посчитана сразу (по заглушке)', places === 1, 'places=' + places);
   await new Promise((r) => setTimeout(r, 0));
-  check('позиция пересчитана после прихода данных', places === 2, 'places=' + places);
+  // Третья перерисовка — это добор с бору: одной локальной обложке не хватает
+  // до шести, поэтому подсказка идёт на источник. Раньше при непустой локальной
+  // части бор не спрашивался вовсе, и на экране оставалась одна картинка.
+  check('позиция пересчитана после данных и после добора с бору', places === 3, 'places=' + places);
   check('всплывашка наполнена содержимым', /data-post="1"/.test(pop.innerHTML), pop.innerHTML.slice(0, 120));
 
   // Два этапа: в библиотеке пусто → показываем «ищу», потом доклеиваем блок с

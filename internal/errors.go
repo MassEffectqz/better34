@@ -43,6 +43,7 @@ var (
 	ErrSourceCommentsFetch = &AppError{Code: "source_comments_failed", Message: "не удалось загрузить комментарии источника", Status: http.StatusBadGateway}
 	ErrSourceAuthFailed    = &AppError{Code: "source_auth_failed", Message: "источник отклонил API-ключ", Status: http.StatusBadGateway}
 	ErrSourceRateLimited   = &AppError{Code: "source_rate_limited", Message: "источник временно ограничил запросы, попробуйте позже", Status: http.StatusTooManyRequests}
+	ErrTournamentNotEnough = &AppError{Code: "tournament_not_enough_posts", Message: "не хватает постов для турнира такого размера", Status: http.StatusBadRequest}
 )
 
 // AbortWithError код —.abort with AppError, frontend переводит по code.

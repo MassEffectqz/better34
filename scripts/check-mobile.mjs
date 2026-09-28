@@ -14,7 +14,16 @@ const read = (p) => readFileSync(join(root, p), 'utf8');
 const problems = [];
 const note = (msg) => problems.push(msg);
 
-const css = read('static/css/style.css');
+// CSS разбит на части (static/css/*.css). Проверки ниже регекспят по всему
+// набору сразу — @media-блоки, hover-only правила и т.п. иначе «терялись» бы
+// в первой попавшейся части. Склеиваем в порядке имён: числовые префиксы
+// задают порядок каскада, и именно он нужен для проверок вроде mediaBlock.
+const cssDir = join(root, 'static/css');
+const css = readdirSync(cssDir)
+  .filter((f) => f.endsWith('.css'))
+  .sort()
+  .map((f) => readFileSync(join(cssDir, f), 'utf8'))
+  .join('\n');
 const html = read('static/index.html');
 const apiJs = read('static/js/api.js');
 const middleware = read('middleware.go');

@@ -281,6 +281,153 @@ func TestTagSourcePreviewFallsBackWhenLibraryEmpty(t *testing.T) {
 	}
 }
 
+// exclude: посты, уже показанные клиенту из библиотеки, не должны повторяться
+// в доборе. После прошлого превью их метаданные лежат в БД, поэтому бор вернул
+// бы те же самые — и «добор до шести» превратился бы в повтор одного набора.
+func TestTagSourcePreviewSkipsExcludedIDs(t *testing.T) {
+	sp := &stubTagProvider{name: "rule34", posts: []Rule34Post{
+		{ID: 101, PreviewURL: "https://i/101.jpg", Width: 8, Height: 8},
+		{ID: 102, PreviewURL: "https://i/102.jpg", Width: 8, Height: 8},
+		{ID: 103, PreviewURL: "https://i/103.jpg", Width: 8, Height: 8},
+	}}
+	ts, _ := setupTagPreviewRouterProv(t, sp)
+	got, code := fetchTagSource(t, ts, "/api/tags/x/source-preview?limit=6&exclude=101,102")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d", code)
+	}
+	if len(got.Posts) != 1 || got.Posts[0].ID != 103 {
+		ids := []int{}
+		for _, p := range got.Posts {
+			ids = append(ids, p.ID)
+		}
+		t.Errorf("обложки=%v, ждали только [103] — уже показанные повторяться не должны", ids)
+	}
+}
+
+// need: клиент сообщает, сколько обложек не хватает, и лишнего не запрашиваем.
+// Иначе «не хватает одной» оборачивалось бы полной выдачей с апстрима.
+func TestTagSourcePreviewRespectsNeed(t *testing.T) {
+	sp := &stubTagProvider{name: "rule34", posts: []Rule34Post{
+		{ID: 101, PreviewURL: "https://i/101.jpg", Width: 8, Height: 8},
+		{ID: 102, PreviewURL: "https://i/102.jpg", Width: 8, Height: 8},
+		{ID: 103, PreviewURL: "https://i/103.jpg", Width: 8, Height: 8},
+		{ID: 104, PreviewURL: "https://i/104.jpg", Width: 8, Height: 8},
+	}}
+	ts, _ := setupTagPreviewRouterProv(t, sp)
+	got, code := fetchTagSource(t, ts, "/api/tags/x/source-preview?limit=6&need=2")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d", code)
+	}
+	if len(got.Posts) != 2 {
+		t.Errorf("need=2 вернул %d обложек, want 2", len(got.Posts))
+	}
+}
+
+// Мусорные значения need не ломают ответ: клиент берёт их из localStorage, где
+// могло остаться что-то от прошлой версии.
+func TestTagSourcePreviewIgnoresBadNeed(t *testing.T) {
+	sp := &stubTagProvider{name: "rule34", posts: []Rule34Post{
+		{ID: 101, PreviewURL: "https://i/101.jpg", Width: 8, Height: 8},
+	}}
+	ts, _ := setupTagPreviewRouterProv(t, sp)
+	for _, q := range []string{"need=0", "need=-5", "need=abc", "need=999", "need="} {
+		got, code := fetchTagSource(t, ts, "/api/tags/x/source-preview?limit=6&"+q)
+		if code != http.StatusOK {
+			t.Errorf("%s: status=%d, want 200", q, code)
+			continue
+		}
+		if len(got.Posts) != 1 {
+			t.Errorf("%s: обложек=%d, want 1", q, len(got.Posts))
+		}
+	}
+}
+
+// В режиме «все сайты» добор идёт по провайдерам по очереди, пока не наберётся
+// нужное число обложек. Первый сайт дал мало — второй должен был дополнить, а не
+// оставить подсказку с двумя картинками вместо шести.
+func TestTagSourcePreviewTopsUpAcrossProviders(t *testing.T) {
+	first := &stubTagProvider{name: "rule34", posts: []Rule34Post{
+		{ID: 101, PreviewURL: "https://i/101.jpg", Width: 8, Height: 8},
+		{ID: 102, PreviewURL: "https://i/102.jpg", Width: 8, Height: 8},
+	}}
+	second := &stubTagProvider{name: "gelbooru", posts: []Rule34Post{
+		{ID: 201, PreviewURL: "https://i/201.jpg", Width: 8, Height: 8},
+		{ID: 202, PreviewURL: "https://i/202.jpg", Width: 8, Height: 8},
+		{ID: 203, PreviewURL: "https://i/203.jpg", Width: 8, Height: 8},
+		{ID: 204, PreviewURL: "https://i/204.jpg", Width: 8, Height: 8},
+	}}
+	ts := multiProviderServer(t, first, second)
+	got, code := fetchTagSource(t, ts, "/api/tags/x/source-preview?limit=6")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d", code)
+	}
+	if len(got.Posts) != 6 {
+		ids := []int{}
+		for _, p := range got.Posts {
+			ids = append(ids, p.ID)
+		}
+		t.Errorf("добор не дошёл до шести: %d обложек %v", len(got.Posts), ids)
+	}
+	if second.calls == 0 {
+		t.Error("второй провайдер не опрошен, хотя первому не хватило обложек")
+	}
+	// Подписи: сайт назван тот, с которого начали, у каждой обложки — свой.
+	if got.Site != "rule34" {
+		t.Errorf("site=%q, want rule34 (активный идёт первым)", got.Site)
+	}
+	var fromSecond int
+	for _, p := range got.Posts {
+		if p.Site == "gelbooru" {
+			fromSecond++
+		}
+	}
+	if fromSecond != 4 {
+		t.Errorf("обложек со второго сайта=%d, want 4", fromSecond)
+	}
+}
+
+// Первый сайт не ответил, второй ответил — отдаём что есть, а не 502: три
+// обложки лучше пустой подсказки. 502 остаётся только для случая «не ответил
+// НИ ОДИН сайт», иначе клиент не отличит «пусто» от «бор недоступен».
+func TestTagSourcePreviewPartialResultsWhenFirstSiteFails(t *testing.T) {
+	broken := &stubTagProvider{name: "rule34", err: errors.New("сеть легла")}
+	working := &stubTagProvider{name: "gelbooru", posts: []Rule34Post{
+		{ID: 301, PreviewURL: "https://i/301.jpg", Width: 8, Height: 8},
+	}}
+	ts := multiProviderServer(t, broken, working)
+	got, code := fetchTagSource(t, ts, "/api/tags/x/source-preview?limit=6")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 — второй сайт ответил, подсказка не должна быть пустой", code)
+	}
+	if len(got.Posts) != 1 || got.Posts[0].ID != 301 {
+		t.Errorf("обложки=%v, ждали [301] со второго сайта", got.Posts)
+	}
+}
+
+// multiProviderServer — роутер в режиме «все сайты» с заданными провайдерами.
+// Режим и провайдеры живут в конфиге и в хендлере, поэтому каждый тест собирает
+// своё окружение (общий конфиг пакетных тестов трогать нельзя).
+func multiProviderServer(t *testing.T, provs ...Provider) *httptest.Server {
+	t.Helper()
+	h := &Handler{providers: map[string]Provider{}}
+	for _, p := range provs {
+		h.providers[p.Name()] = p
+	}
+	if _, ok := h.providers[defaultProviderName]; !ok && len(provs) > 0 {
+		h.providers[defaultProviderName] = provs[0]
+	}
+	r := gin.New()
+	r.GET("/api/tags/:tag/source-preview", h.TagSourcePreview)
+	ts := httptest.NewServer(r)
+	t.Cleanup(ts.Close)
+
+	cfg := GetConfig()
+	prev := cfg.GetProvider()
+	cfg.SetProvider("all")
+	t.Cleanup(func() { cfg.SetProvider(prev) })
+	return ts
+}
+
 // Главное разделение: быстрый /preview не ходит на бор НИКОГДА. Иначе наведение
 // на любой тег без скачанных постов ждало бы сетевого поиска целиком.
 func TestTagPreviewNeverHitsSource(t *testing.T) {

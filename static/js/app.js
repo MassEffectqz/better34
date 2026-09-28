@@ -10,6 +10,8 @@ import './feed.js';
 import './keyboard.js';
 import './profile.js';
 import './collections.js';
+import './friends.js';
+import './tournament.js';
 import './settings.js';
 import './aliases.js';
 import './social.js';
@@ -43,5 +45,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   // Кнопки «библиотека офлайн» и банкер «нет сети».
   if (typeof App.bindOfflineLibraryUI === 'function') App.bindOfflineLibraryUI();
+  if (typeof App.bindFriendsUI === 'function') App.bindFriendsUI();
   App.init();
 });

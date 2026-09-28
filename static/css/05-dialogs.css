@@ -1,0 +1,77 @@
+/* 05-dialogs.css — панель над лентой: режимы, чипы, настройки, ключи API.
+   Часть 6/9 набора better34.
+
+   Файл вырезан из бывшего единого style.css без перестановки правил,
+   поэтому каскад собирается ровно как раньше — порядок подключения задан
+   числовым префиксом и списком <link> в static/index.html (сверху вниз).
+   Правьте здесь, а не в соседних частях: specificity и порядок важны. */
+
+.mode-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:linear-gradient(160deg,var(--surface3),var(--surface) 70%);border-radius:var(--radius);border:1px solid var(--accent-dim);margin-bottom:12px;font-size:.85rem;color:var(--text-dim);position:relative;overflow:hidden}
+.mode-bar::before{content:'';position:absolute;top:-90%;right:-10%;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--accent) 16%,transparent),transparent 70%);pointer-events:none}
+.mode-bar>*{position:relative;z-index:1}
+.mode-bar.hidden{display:none}
+.mode-bar .mode-bar-text{flex:1}
+
+.filter-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 12px;margin-bottom:12px;background:linear-gradient(160deg,var(--surface3),var(--surface) 80%);border:1px solid var(--border);border-radius:var(--radius);font-size:.8rem}
+.filter-chips.hidden{display:none}
+.fc-label{font-size:.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin-right:2px}
+.fc-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;font-size:.78rem;transition:all var(--transition);max-width:240px}
+.fc-chip:hover{background:var(--hover);border-color:var(--accent-dim)}
+.fc-chip .fc-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fc-chip .fc-ico{display:inline-flex;flex-shrink:0}
+.fc-chip .fc-x{display:inline-flex;opacity:.45;flex-shrink:0}
+.fc-chip svg{width:10px;height:10px;flex-shrink:0}
+.fc-chip:hover .fc-x{opacity:1}
+.fc-chip.fc-plus{border-color:var(--accent-dim);color:var(--accent)}
+.fc-chip.fc-minus{border-color:var(--error);color:var(--error)}
+.fc-chip.fc-hidden{border-color:var(--error);color:var(--error);text-decoration:line-through}
+.fc-chip.fc-fav{border-color:var(--accent-dim);color:var(--accent)}
+
+.empty-actions{display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap}
+.empty-actions .btn-danger{background:var(--error)}
+.empty-actions .btn-danger:hover{background:var(--error);filter:brightness(.9)}
+
+.confirm-body{padding:16px 20px;font-size:.9rem;color:var(--text)}
+.confirm-actions{display:flex;justify-content:flex-end;gap:8px;padding:0 20px 16px}
+.confirm-actions .btn-danger{background:var(--error)}
+
+.help-modal .modal-content{max-width:640px;width:90vw}
+.help-body{padding:16px 20px;max-height:60vh;overflow-y:auto}
+.help-group{margin-bottom:14px}
+.help-group h3{font-size:.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.help-row{display:flex;align-items:center;gap:8px;font-size:.85rem;padding:3px 0}
+.help-keys{display:inline-flex;gap:4px;margin-left:auto;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+.kbd{background:var(--surface2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:1px 7px;font-size:.72rem;color:var(--text);font-family:Consolas,monospace;white-space:nowrap}
+
+.dups-info{font-size:.78rem;color:var(--text-dim)}
+.dups-info.error{color:var(--error)}
+.dups-info.hidden,#btn-clean-dups.hidden{display:none}
+
+
+.settings-panel.hidden{transform:translateX(103%)}
+#settings-panel .panel-tab-content.active{display:flex;flex-direction:column;gap:16px}
+.setting-group{display:flex;flex-direction:column;gap:6px}
+.setting-label{font-size:.85rem;color:var(--text-dim)}
+.setting-group input[type="text"],.setting-group input[type="number"],.setting-group input[type="password"]{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;color:var(--text);font-size:.9rem;outline:none;transition:border-color var(--transition)}
+.setting-group input:focus{border-color:var(--accent)}
+.checkbox-group{flex-direction:row;align-items:center;gap:10px}
+.checkbox-group input[type="checkbox"]{accent-color:var(--accent);width:18px;height:18px}
+
+
+#api-keys-list{display:flex;flex-direction:column;gap:8px}
+/* Ключ API — самая длинная строка здесь (у гелбоору это ~140 символов), поэтому
+   он забирает основную долю свободного места, а не «1fr на всех». На прежней
+   сетке (90px 1fr 90px 28px) при неширокой панели именно он схлопывался
+   первым: соседи были зафиксированы, и на ключ оставалось несколько символов.
+   minmax(0,…) у обоих краёв — иначе длинное имя ключа распирало бы ряд. */
+.api-key-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(150px,2.4fr) minmax(0,1fr) 28px;gap:6px;align-items:center}
+.api-key-row input{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text);font-size:.85rem;outline:none;transition:border-color var(--transition);min-width:0;width:100%}
+.api-key-row input:focus{border-color:var(--accent)}
+/* Ключ не должен переноситься на две строки: в API он всегда одной строкой, и
+   перенос делал бы высоту ряда прыгающей при наборе. */
+.api-key-row .api-key-value{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.api-key-row .btn-icon{width:28px;height:28px;font-size:.8rem}
+.api-key-row .btn-icon:hover{color:var(--error);border-color:var(--error)}
+@media(max-width:480px){.api-key-row{grid-template-columns:1fr;grid-auto-flow:row}.api-key-row .btn-icon{justify-self:start}}
+
+

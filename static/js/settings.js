@@ -34,7 +34,7 @@ App.renderAPIKeys = function (keys) {
     row.className = 'api-key-row';
     row.innerHTML = `
       <input type="text" class="api-key-name" placeholder="${t('set.apiKeyName')}" value="${esc(k.name || '')}">
-      <input type="password" class="api-key-value" placeholder="${t('set.apiKeyValue')}" value="${esc(k.api_key || '')}" spellcheck="false">
+      <input type="password" class="api-key-value" placeholder="${t('set.apiKeyValue')}" value="${esc(k.api_key || '')}" spellcheck="false" autocomplete="off">
       <input type="text" class="api-key-uid" placeholder="user_id" value="${esc(k.user_id || '')}" spellcheck="false">
       <button type="button" class="btn-icon btn-icon-sm" title="${t('btn.delete')}">${icon('x', 13)}</button>`;
     row.querySelector('.api-key-name').addEventListener('input', e => { list[i].name = e.target.value; });

@@ -16,6 +16,10 @@ App.onKeydown = function (e) {
 
   if (this.els.confirmModal && !this.els.confirmModal.classList.contains('hidden')) return;
 
+  // Турнир «выбери лучшее» занимает весь экран: пока он открыт, клавиши
+  // обслуживают только игру, иначе стрелки листали бы ленту под оверлеем.
+  if (this.state.tournamentOpen) { this.tournamentKey(e); return; }
+
   if (e.key === '?' && !isInput && !viewerOpen) { e.preventDefault(); this.toggleHelp(); return; }
 
   if (e.key === 'Escape') {
@@ -73,6 +77,10 @@ App.onKeydown = function (e) {
     else if (code === 'Minus' || code === 'KeyE') { e.preventDefault(); this.toggleHideCurrent(); }
     else if (code === 'KeyZ') { e.preventDefault(); this.toggleViewerZoom(); }
     else if (code === 'KeyR') { e.preventDefault(); this.toggleInvert(); }
+    // S — поделиться. Отдельная буква, а не Ctrl+C: копирование ссылки
+    // в буфер привязано к буферу обмена, из которого на телефоне ещё надо
+    // куда-то вставлять вручную.
+    else if (code === 'KeyS') { e.preventDefault(); this.sharePost(); }
     return;
   }
 

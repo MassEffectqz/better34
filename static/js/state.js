@@ -22,7 +22,7 @@ export const App = {
   state: {
     /** @type {Post[]} */ posts: [], page: 1, loading: false, hasMore: true, query: '',
     isLocal: false, viewerOpen: false, viewerIndex: 0, recommendActive: false,
-    settingsOpen: false, profileOpen: false,
+    settingsOpen: false, profileOpen: false, tournamentOpen: false,
     downloadQueue: new Set(), downloading: new Set(), focusedIndex: -1,
     profile: { liked_posts: [], hidden_posts: [], presets: [], fav_tags: [], hidden_tags: [] },
     selected: new Set(), slideshowActive: false, slideshowSpeed: 3000, minId: null, hoveredIndex: -1,
@@ -106,6 +106,7 @@ export const App = {
       confirmModal: _('confirm-modal'), confirmTitle: _('confirm-title'), confirmMessage: _('confirm-message'),
       confirmOk: _('confirm-ok'), confirmCancel: _('confirm-cancel'), confirmClose: _('confirm-close'), confirmBackdrop: _('confirm-backdrop'),
       helpModal: _('help-modal'), helpBody: _('help-body'), helpClose: _('help-close'), helpBackdrop: _('help-backdrop'),
+      tournamentRoot: _('tournament-root'),
       btnFindDups: _('btn-find-dups'), btnCleanDups: _('btn-clean-dups'), btnMergeDups: _('btn-merge-dups'), dupsInfo: _('dups-info'),
       viewerCollect: _('viewer-collect'), collectMenu: _('collect-menu'),
       collectionName: _('collection-name'), btnCreateCollection: _('btn-create-collection'), collectionsList: _('collections-list'), tbCollections: _('tb-collections'),
@@ -113,7 +114,8 @@ export const App = {
       batchZip: _('batch-zip'),
       btnExportProfile: _('btn-export-profile'), btnImportProfile: _('btn-import-profile'), profileImportFile: _('profile-import-file'),
       btnQRLogin: _('btn-qr-login'),
-      viewerSource: _('viewer-source'), backToTop: _('back-to-top'),
+      viewerSource: _('viewer-source'), viewerShare: _('viewer-share'),
+      viewerShareM: _('viewer-share-mobile'), backToTop: _('back-to-top'),
     };
     this.loadTheme();
           this.loadGridSetting();
@@ -384,6 +386,9 @@ export const App = {
     e.viewerFullscreen.addEventListener('click', () => this.toggleFullscreen());
     e.viewerLike.addEventListener('click', () => this.toggleLikeCurrent());
     e.viewerHide.addEventListener('click', () => this.toggleHideCurrent());
+    // Поделиться: системное меню на телефоне, копирование ссылки на десктопе.
+    if (e.viewerShare) e.viewerShare.addEventListener('click', () => { this.sharePost(); });
+    if (e.viewerShareM) e.viewerShareM.addEventListener('click', () => { this.sharePost(); });
     if (e.viewerLikeM) e.viewerLikeM.addEventListener('click', () => this.toggleLikeCurrent());
     if (e.viewerHideM) e.viewerHideM.addEventListener('click', () => this.toggleHideCurrent());
     if (e.viewerFullscreenM) e.viewerFullscreenM.addEventListener('click', () => this.toggleFullscreen());
@@ -414,6 +419,7 @@ export const App = {
       else if (action === 'unmark-viewed') go(this.unmarkViewed());
       else if (action === 'random') go(this.randomPost());
       else if (action === 'recommend') this.recommendFeed();
+      else if (action === 'tournament') this.openTournament();
       else if (action === 'grid') this.cycleGridDensity();
       else if (action === 'help') this.toggleHelp();
       else if (action === 'presets') this.openPresetsSubmenu();
@@ -639,6 +645,9 @@ export const App = {
       if (tab === 'likes' || tab === 'hides') {
         this.renderThumbs(tab, this.state.profile[tab === 'likes' ? 'liked_posts' : 'hidden_posts']);
       }
+      // Список друзей тянем при открытии вкладки: чаще всего он и не нужен,
+      // а запрос на каждый клик по профилю — лишний.
+      if (tab === 'friends' && typeof this.renderFriends === 'function') this.renderFriends();
       if (!initial && this.state.profileOpen) this.pushProfileRoute(tab);
     });
     this.bindPanelTabs('settingsPanel', 'stab-');
@@ -1091,13 +1100,57 @@ export const App = {
     }
   },
 
-  /** Посты по id: из локальной БД, а недостающие — точечно с источника. */
-  async _fetchPostsByIds(ids) {
-    if (!ids || !ids.length) return [];
-    try {
-      const d = await API.get(`/posts-by-ids?ids=${ids.join(',')}`);
-      return (d && d.posts) || [];
-    } catch { return []; }
+  /**
+   * Посты по списку id: из локальной БД, а недостающие — точечно с источника.
+   *
+   * Сервер за один HTTP-ответ спрашивает источник не больше пачки id, а
+   * остальные отдаёт в `deferred`: у сайтов, не понимающих списки id, каждый
+   * пост — отдельный запрос, и пачка в сотню id не укладывается в дедлайн
+   * телефона. Поэтому идём по `deferred` следом, пока не переберём весь
+   * список — иначе вкладка «Лайки» показала бы первые двадцать постов из
+   * четырёхсот и молча выкинула остальные.
+   *
+   * opts.onBatch(posts, unresolved) зовётся после каждой пачки: вызывающий
+   * может дорисовывать сетку по мере поступления, а не ждать конца.
+   * opts.maxPasses ограничивает число заходов — страховка от бесконечного
+   * круга, если сервер упорно возвращает те же deferred.
+   */
+  async _fetchPostsByIds(ids, opts) {
+    if (!ids || !ids.length) return { posts: [], unresolved: [] };
+    const o = opts || {};
+    const want = [];
+    for (const raw of ids) {
+      const n = Number(raw);
+      if (Number.isFinite(n)) want.push(n);
+    }
+    const posts = [];
+    const unresolved = new Set();
+    const seen = new Set();
+    let queue = want;
+    const maxPasses = Math.min(o.maxPasses || 40, Math.max(1, Math.ceil(want.length / 10) + 5));
+    for (let pass = 0; pass < maxPasses && queue.length; pass++) {
+      const batch = queue;
+      queue = [];
+      let data;
+      try {
+        data = await API.get(`/posts-by-ids?ids=${batch.join(',')}`, o.getOpts);
+      } catch (err) {
+        // Сеть или источник недоступны. Часть постов могла прийти в прошлых
+        // пачках — отдаём её, не устраивая виджера с пустой лентой.
+        if (!posts.length) throw err;
+        break;
+      }
+      if (!data) break;
+      for (const p of data.posts || []) {
+        if (!p || seen.has(p.id)) continue;
+        seen.add(p.id);
+        posts.push(p);
+      }
+      for (const id of data.unresolved || []) unresolved.add(Number(id));
+      queue = (data.deferred || []).map(Number).filter(n => Number.isFinite(n));
+      if (o.onBatch) o.onBatch(posts, [...unresolved]);
+    }
+    return { posts, unresolved: [...unresolved] };
   },
 
   /**
@@ -1109,8 +1162,8 @@ export const App = {
     if (postId == null) return false;
     let idx = this.state.posts.findIndex(p => p.id === postId);
     if (idx < 0) {
-      const posts = await this._fetchPostsByIds([postId]);
-      const post = posts.find(p => p && p.id === postId);
+      const r = await this._fetchPostsByIds([postId]);
+      const post = r.posts.find(p => p && p.id === postId);
       if (!post) { this.showToast(tf('viewer.postUnavailable', { id: postId }), 'error'); return false; }
       idx = this.state.posts.push({ ...post, _index: this.state.posts.length }) - 1;
     }
@@ -1268,12 +1321,10 @@ export const App = {
     return Date.now() - this._lastUserInput < 4000;
   },
 
-  panelSide() {
-    const grid = document.querySelector('.posts-grid');
-    if (!grid) return 0;
-    const cr = grid.getBoundingClientRect().right;
-    return Math.max(0, window.innerWidth - cr);
-  },
+  // Ширина панели настроек больше не зависит от того, где кончается сетка
+  // постов (бывший panelSide): на широком мониторе сетка уходила влево, и
+  // «свободный бок» оказывался больше вьюера — панель уезжала за экран.
+  // Теперь обе панели считаются от ширины окна.
 
   profilePanelMaxWidth() {
     const viewport = window.innerWidth || document.documentElement.clientWidth || 1440;
@@ -1285,20 +1336,33 @@ export const App = {
       const viewport = window.innerWidth || document.documentElement.clientWidth || 1440;
       return Math.min(this.profilePanelMaxWidth(), Math.max(560, Math.round(viewport * 0.35)));
     }
-    // Панель настроек сохраняет прежнюю более компактную ширину.
-    const side = this.panelSide();
-    const lo = 420;
-    const v = Math.round(side * 0.55);
-    return Math.min(Math.max(v, lo), Math.max(lo, Math.round(side * 0.92)));
+    // Панель настроек шире профильной: вкладка «Сеть» кладёт в ряд четыре поля
+    // (имя ключа, сам ключ, user_id, кнопка удаления), и при узкой панели ключ
+    // сжимался до нескольких символов — его невозможно ни прочитать, ни
+    // проверить глазами перед сохранением.
+    const viewport = window.innerWidth || document.documentElement.clientWidth || 1440;
+    return Math.min(this.settingsPanelMaxWidth(), Math.max(560, Math.round(viewport * 0.42)));
+  },
+
+  settingsPanelMaxWidth() {
+    const viewport = window.innerWidth || document.documentElement.clientWidth || 1440;
+    // Верхняя граница не может быть шире окна: на 420px экранчике панель в 620px
+    // уехала бы за правый край, и правый край — это кнопка закрытия.
+    // CSS дублирует это через max-width:calc(100vw - 24px), но и inline-стиль
+    // не должен задавать заведомо нечитаемое значение.
+    return Math.min(Math.max(620, Math.round(viewport * 0.94)), Math.max(320, viewport - 24));
   },
 
   clampPanelWidth(w, panelKey = 'settingsPanel') {
     if (panelKey === 'profilePanel') {
       return Math.min(Math.max(w, 420), this.profilePanelMaxWidth());
     }
-    const side = this.panelSide();
-    const lo = 340, hi = Math.max(360, Math.round(side * 0.94));
-    return Math.min(Math.max(w, lo), hi);
+    // Нижняя граница 460, а не 340: уже на 340 поле ключа схлопывалось в
+    // обрывок. Тянем мышью панель уже — сохраняется именно она, и без этой
+    // границы старая узкая настройка жила бы в localStorage вечно. На узком
+    // экране граница уступает вьюпорту (см. settingsPanelMaxWidth).
+    const hi = this.settingsPanelMaxWidth();
+    return Math.min(Math.max(w, Math.min(460, hi)), hi);
   },
 
   applyPanelWidth() {
@@ -1456,6 +1520,15 @@ export const App = {
       else if (d.type === 'result') applyResult(d);
       else if (d.type === 'comment' && this._onCommentEvent) this._onCommentEvent(d.post_id);
       else if (d.type === 'remote' && d.id > 0) this.onRemotePost(d.id);
+      // Обмен с друзьями принёс новые лайки/коллекции/комментарии: обновляем
+      // профиль и вкладку «Друзья», иначе счётчики разошлись бы с данными.
+      else if (d.type === 'friends') {
+        if (typeof this.loadProfile === 'function') this.loadProfile();
+        if (typeof this.renderFriends === 'function') this.renderFriends();
+        if (this.state.profileOpen && this._profileTabs) {
+          this.showToast(t('friends.incoming'));
+        }
+      }
       else if (d.type === 'post_saved' && this.state.isLocal && this.state.autoRefreshFeed) {
         this.loadPosts(true);
       }
@@ -1485,8 +1558,7 @@ export const App = {
         const idx = this.state.posts.findIndex(p => p.id === id);
         if (idx >= 0) { this.openViewer(idx); return; }
       }
-      const d = await API.get(`/posts-by-ids?ids=${id}`);
-      const posts = d.posts || [];
+      const { posts } = await this._fetchPostsByIds([id]);
       if (!posts.length) { this.showToast(`Пост #${id} не найден локально`, 'error'); return; }
       const saved = this.state.posts;
       this.state.posts = posts.concat(saved.filter(p => p.id !== id));

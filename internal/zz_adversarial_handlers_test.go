@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,73 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// newIDBudgetProvider — gelbooru-клиент на поддельном dapi, отвечающий на
+// одиночный запрос tags=id:N именно этим постом. Счётчик нужен тестам, чтобы
+// видеть, сколько раз сервер дёрнул источник на один HTTP-ответ клиента.
+func newIDBudgetProvider(t *testing.T, calls *atomic.Int64) *booruClient {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		raw := strings.TrimSpace(r.URL.Query().Get("id"))
+		if raw == "" {
+			raw = strings.TrimSpace(strings.TrimPrefix(r.URL.Query().Get("tags"), "id:"))
+		}
+		if raw == "" {
+			w.Write([]byte("[]"))
+			return
+		}
+		w.Write([]byte(`[{"id":` + strconv.Itoa(atoiOr(raw, 0)) +
+			`,"file_url":"","preview_url":"","tags":"a b","width":10,"height":10}]`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cl := NewGelbooruClient()
+	cl.spec.apiURL = srv.URL
+	cl.httpClient.Store(&http.Client{})
+	seedTestKeys(cl, []APICredential{{Name: "t", APIKey: "fake-key", UserID: "1"}})
+	cl.cache = newBooruCache(filepath.Join(t.TempDir(), "sc.json"))
+	cl.breaker.failures = 0
+	cl.breaker.openUntil = time.Time{}
+
+	// provider() смотрит активного провайдера в конфиге: без этого тест ушёл
+	// бы в nil и объявил все id unresolved.
+	cfg := GetConfig()
+	prev := cfg.GetProvider()
+	cfg.SetProvider("gelbooru")
+	t.Cleanup(func() { cfg.SetProvider(prev) })
+	return cl
+}
+
+type byIDsResponse struct {
+	Posts []struct {
+		ID int `json:"id"`
+	} `json:"posts"`
+	Unresolved []int `json:"unresolved"`
+	Deferred   []int `json:"deferred"`
+}
+
+func callByIDs(t *testing.T, h *Handler, req *http.Request) byIDsResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+	h.GetPostsByIDs(c)
+	var resp byIDsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (body: %s)", err, w.Body.String())
+	}
+	return resp
+}
+
+// idListURL — /posts-by-ids?ids=… для последовательного диапазона id.
+func idListURL(from, n int) string {
+	parts := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		parts = append(parts, strconv.Itoa(from+i))
+	}
+	return "/posts-by-ids?ids=" + strings.Join(parts, ",")
+}
 
 // G5: CleanDuplicates игнорирует заголовок подтверждения X-Confirm-Dupes
 // (handlers_extra.go: `_ = c.GetHeader(...)`) — POST /api/dups/clean удаляет
@@ -292,4 +361,177 @@ func TestAdversarialDownloaderDoubleClose(t *testing.T) {
 		}
 	}()
 	d.Close()
+}
+
+// РЕГРЕССИЯ (2026-09): клиентский дедлайн на телефоне — 20с, троттлинг сайта —
+// единицы запросов в секунду. Сайты, не понимающие списки id (gelbooru,
+// safebooru), отвечают на КАЖДЫЙ id отдельным запросом, поэтому «спросить у
+// источника все id разом» — это сотни запросов на один ответ: клиент
+// отваливался по таймауту, сервер продолжал жечь лимит источника и забирал
+// токены у обычного поиска ленты (тот тоже отдавал «превышено время
+// ожидания» — симптом был один и тот же).
+//
+// Ожидание: за один HTTP-ответ у источника спрашивается не больше
+// maxIDsPerFetch id, остальные возвращаются в deferred. deferred — НЕ
+// unresolved: про них источник ничего не сказал, клиент придёт следом.
+// Смешали бы — живые посты вкладки «Лайки» навечно стали бы «удалёнными».
+func TestPostsByIDsBudgetsSourceFetchAndDefersRest(t *testing.T) {
+	var calls atomic.Int64
+	cl := newIDBudgetProvider(t, &calls)
+	h := &Handler{providers: map[string]Provider{"gelbooru": cl}}
+
+	// Диапазон id уникален для пакета: БД общая на весь прогон, и запись
+	// соседнего теста сделала бы эти id «найденными в локальной БД».
+	const from = 7010000
+	const n = maxIDsPerFetch + 25
+	resp := callByIDs(t, h, httptest.NewRequest("GET", idListURL(from, n), nil))
+
+	if got := int(calls.Load()); got > maxIDsPerFetch {
+		t.Errorf("источник опрошен %d раз за один ответ, бюджет %d — клиент не дождётся", got, maxIDsPerFetch)
+	}
+	if len(resp.Deferred) != n-maxIDsPerFetch {
+		t.Errorf("deferred=%d, ждали %d", len(resp.Deferred), n-maxIDsPerFetch)
+	}
+	deferred := map[int]bool{}
+	for _, id := range resp.Deferred {
+		deferred[id] = true
+	}
+	for _, id := range resp.Unresolved {
+		if deferred[id] {
+			t.Errorf("id %d одновременно в unresolved и deferred — клиент не сможет его переспросить", id)
+		}
+	}
+	// Спрошенные id обязаны вернуться постами: бюджет режет только остаток.
+	got := map[int]bool{}
+	for _, p := range resp.Posts {
+		got[p.ID] = true
+	}
+	for i := 0; i < n; i++ {
+		id := from + i
+		if deferred[id] {
+			continue
+		}
+		if !got[id] {
+			t.Errorf("пост %d спросили, но не отдали (deferred=%v)", id, resp.Deferred)
+		}
+	}
+}
+
+// Бюджет должен резать ХВОСТ списка, а не случайное подмножество: клиент идёт
+// по id от начала и дорисовывает по мере поступления. Если бы сервер отдавал
+// разбросанный набор, начало списка (свежие лайки) отсутствовало бы в гриде,
+// хотя id формально «запрошены».
+func TestPostsByIDsDefersTailNotRandomSubset(t *testing.T) {
+	var calls atomic.Int64
+	cl := newIDBudgetProvider(t, &calls)
+	h := &Handler{providers: map[string]Provider{"gelbooru": cl}}
+
+	const from = 7020000
+	const n = maxIDsPerFetch + 10
+	resp := callByIDs(t, h, httptest.NewRequest("GET", idListURL(from, n), nil))
+
+	if len(resp.Deferred) == 0 {
+		t.Fatal("deferred пуст — бюджет не сработал, тест бессмысленен")
+	}
+	if last := from + n - 1; resp.Deferred[len(resp.Deferred)-1] != last {
+		t.Errorf("deferred должен кончаться хвостом списка (%d): %v", last, resp.Deferred)
+	}
+	got := map[int]bool{}
+	for _, p := range resp.Posts {
+		got[p.ID] = true
+	}
+	if !got[from] {
+		t.Errorf("первый id %d должен был вернуться — клиент рисует список с начала", from)
+	}
+	if got[from+n-1] {
+		t.Errorf("хвост списка (%d) не должен попадать в посты — он в deferred", from+n-1)
+	}
+}
+
+// Клиент отключился (закрыл вкладку / ушёл по своему таймауту). Сервер не
+// должен продолжать опрашивать источник: он жёг бы лимит сайта впустую и
+// отбирал его у живых клиентов. Непрошенные id помечаются deferred, а не
+// unresolved — источник не сказал, что поста нет, его просто не спросили.
+func TestPostsByIDsStopsOnClientCancel(t *testing.T) {
+	var calls atomic.Int64
+	cl := newIDBudgetProvider(t, &calls)
+	h := &Handler{providers: map[string]Provider{"gelbooru": cl}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // клиент ушёл до начала выборки
+
+	const n = 10
+	req := httptest.NewRequest("GET", idListURL(7030000, n), nil).WithContext(ctx)
+	resp := callByIDs(t, h, req)
+
+	if got := int(calls.Load()); got > maxIDsPerFetch {
+		t.Errorf("после отмены клиента источник опрошен %d раз — работа не остановлена", got)
+	}
+	if len(resp.Deferred)+len(resp.Unresolved) != n {
+		t.Errorf("часть id потеряна: deferred=%v unresolved=%v", resp.Deferred, resp.Unresolved)
+	}
+	deferred := map[int]bool{}
+	for _, id := range resp.Deferred {
+		deferred[id] = true
+	}
+	for _, id := range resp.Unresolved {
+		if deferred[id] {
+			t.Errorf("id %d попал и в deferred, и в unresolved", id)
+		}
+	}
+}
+
+// Отмена по контексту — не поломка источника. Иначе ушедший клиент открывал
+// брейкер, и на следующие полминуты поиск ленты получал «API временно
+// недоступен» в дополнение к таймауту.
+func TestSearchPostsCtxCancelDoesNotOpenBreaker(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	cl := NewRule34Client()
+	cl.spec.apiURL = srv.URL
+	cl.httpClient.Store(&http.Client{})
+	seedTestKeys(cl, []APICredential{{Name: "t", APIKey: "k"}})
+	cl.cache = newBooruCache(filepath.Join(t.TempDir(), "sc.json"))
+	cl.breaker.failures = 0
+	cl.breaker.openUntil = time.Time{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := cl.SearchPostsCtx(ctx, "cancel_probe_tag", 1, 10, 0); err == nil {
+		t.Fatal("ожидалась ошибка отменённого запроса")
+	}
+	cl.breaker.mu.Lock()
+	allow := time.Now().After(cl.breaker.openUntil)
+	fails := cl.breaker.failures
+	cl.breaker.mu.Unlock()
+	if !allow || fails != 0 {
+		t.Errorf("отмена по контексту не должна штрафовать источник: allow=%v failures=%d", allow, fails)
+	}
+}
+
+// isIDLookup: только чистый «id:N» (включая пакетную форму) относится к
+// выборке по id. Обычный поиск, где «id:» — часть тега, должен идти по
+// общему ведру, иначе выборка по id тихо ускорила бы весь трафик к сайту.
+func TestIsIDLookup(t *testing.T) {
+	for _, tc := range []struct {
+		tags string
+		want bool
+	}{
+		{"id:123", true},
+		{"id:1,2,3", true},
+		{" id:42 ", true},
+		{"", false},
+		{"id:", false},
+		{"cat", false},
+		{"cat id:5", false},
+		{"id:something", false},
+		{"sorted:id:asc", false},
+	} {
+		if got := isIDLookup(tc.tags); got != tc.want {
+			t.Errorf("isIDLookup(%q) = %v, want %v", tc.tags, got, tc.want)
+		}
+	}
 }

@@ -687,6 +687,15 @@ func jitteredBackoff(attempt int) time.Duration {
 var (
 	apiRatePerSecond = 2.5
 	apiRateBurst     = 5.0
+	// Выборка постов по id идёт через ОТДЕЛЬНОЕ ведро. Пока она делила
+	// троттлинг с поиском, одна выборка профиля (сотня id, каждый —
+	// отдельный запрос: gelbooru не понимает списки id) съедала все токены
+	// сайта, и обычный поиск ленты вставал в очередь — клиент на телефоне
+	// получал таймаут вместо выдачи. Ведро поиска остаётся прежним, т.е.
+	// суммарная частота на сайт выросла, но интерактивный поиск больше не
+	// голодает.
+	idRatePerSecond = 5.0
+	idRateBurst     = 10.0
 )
 
 // logAPIKeyDebug — включается BRIEFLY_DEBUG_API=1. Лог [api-key-check]
@@ -703,13 +712,24 @@ type rateLimiter struct {
 }
 
 func newRateLimiter() *rateLimiter {
-	return &rateLimiter{tokens: apiRateBurst, last: time.Now(), perSec: apiRatePerSecond, burst: apiRateBurst}
+	return newRateLimiterAt(apiRatePerSecond, apiRateBurst)
+}
+
+func newRateLimiterAt(perSec, burst float64) *rateLimiter {
+	return &rateLimiter{tokens: burst, last: time.Now(), perSec: perSec, burst: burst}
 }
 
 // Wait nil-безопасен: клиенты из тестов с limiter=nil не троттлятся.
 func (r *rateLimiter) Wait() {
+	_ = r.WaitCtx(context.Background())
+}
+
+// WaitCtx — Wait с отменой. Ожидание токена — тоже часть работы: клиент,
+// ушедший по своему дедлайну, не должен висеть в троттлинге и потом
+// отправить запрос в источник.
+func (r *rateLimiter) WaitCtx(ctx context.Context) error {
 	if r == nil {
-		return
+		return nil
 	}
 	for {
 		r.mu.Lock()
@@ -722,11 +742,28 @@ func (r *rateLimiter) Wait() {
 		if r.tokens >= 1 {
 			r.tokens--
 			r.mu.Unlock()
-			return
+			return nil
 		}
 		wait := time.Duration((1 - r.tokens) / r.perSec * float64(time.Second))
 		r.mu.Unlock()
-		time.Sleep(wait)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// sleepCtx — пауза перед ретраем с учётом отмены. false означает «контекст
+// убит, ретрай бессмысленен».
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 
@@ -999,7 +1036,11 @@ type booruClient struct {
 	sf          singleflightGroup
 	suggSF      suggestFlightGroup
 	limiter     *rateLimiter
-	cache       *booruCache
+	// idLimiter — отдельное ведро для выборки постов по id (см. idRatePerSecond).
+	// Нужно, чтобы сотня одиночных запросов профиля не отбирала токены у
+	// интерактивного поиска ленты.
+	idLimiter *rateLimiter
+	cache     *booruCache
 
 	suggMu sync.Mutex
 	suggM  map[string]suggestionCacheEntry
@@ -1010,9 +1051,10 @@ type booruClient struct {
 
 func newBooruClient(spec siteSpec) *booruClient {
 	c := &booruClient{
-		spec:    spec,
-		suggM:   make(map[string]suggestionCacheEntry),
-		limiter: newRateLimiter(),
+		spec:      spec,
+		suggM:     make(map[string]suggestionCacheEntry),
+		limiter:   newRateLimiterAt(apiRatePerSecond, apiRateBurst),
+		idLimiter: newRateLimiterAt(idRatePerSecond, idRateBurst),
 	}
 	var legacy []string
 	if spec.name == defaultProviderName {
@@ -1047,6 +1089,11 @@ func buildAPIHTTPClient() *http.Client {
 	}
 }
 
+// proxyDeadPause — на столько перестаём пробовать прокси после неудачного
+// dial. Мёртвый прокси не «чинится» сам, а проверка его на каждом соединении
+// съедала dial-таймаут каждого запроса; прямое соединение при этом работало.
+const proxyDeadPause = 5 * time.Minute
+
 func buildTransport() *http.Transport {
 	transport := NewResolveTransport()
 	raw := GetConfig().GetProxyURL()
@@ -1076,11 +1123,22 @@ func buildTransport() *http.Transport {
 
 	warnMu := new(sync.Mutex)
 	lastWarn := new(time.Time)
+	// Пауза после неудачного dial: мёртвый прокси иначе проверялся на КАЖДОМ
+	// соединении, и каждый запрос сперва честно ждал i/o timeout (3с), а уже
+	// потом шёл напрямую. На пачке в сотню одиночных запросов это превращалось
+	// в минуты чистого ожидания. Теперь после первой неудачи прокси
+	// пропускается на proxyDeadPause — прямое соединение работает, а вернуться
+	// можно, просто сохранив настройку заново (или по истечении паузы).
+	var deadUntil atomic.Int64
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if time.Now().UnixNano() < deadUntil.Load() {
+			return origDial(ctx, network, addr)
+		}
 		conn, err := dialer.Dial(network, addr)
 		if err == nil {
 			return conn, nil
 		}
+		deadUntil.Store(time.Now().Add(proxyDeadPause).UnixNano())
 		// Мёртвый прокси раньше молча отбрасывал трафик на прямой канал:
 		// в журнале оставались только загадочные обрывы «удалённой стороной»,
 		// и непонятно было, что прокси вообще не работает. Логируем откаты
@@ -1092,7 +1150,8 @@ func buildTransport() *http.Transport {
 		}
 		warnMu.Unlock()
 		if loud {
-			log.Printf("[proxy] socks %s недоступен (%v) — откат на прямое соединение", u.Host, err)
+			log.Printf("[proxy] socks %s недоступен (%v) — откат на прямое соединение на %s",
+				u.Host, err, proxyDeadPause)
 		}
 		return origDial(ctx, network, addr)
 	}
@@ -1132,6 +1191,17 @@ func (c *booruClient) HTTPClient() *http.Client {
 }
 
 func (c *booruClient) SearchPosts(tags string, page, limit, minID int) ([]Rule34Post, error) {
+	return c.SearchPostsCtx(context.Background(), tags, page, limit, minID)
+}
+
+// SearchPostsCtx — поиск с отменой по контексту. Выборка постов по id
+// (см. GetPostsByIDs) у сайтов вроде gelbooru — это сотня отдельных
+// запросов; без отмены клиент, ушедший по своему дедлайну, оставлял сервер
+// жечь лимит источника ещё на минуту и блокировать поиск ленты.
+//
+// isIDLookup выбирает отдельное ведро троттлинга: сотня одиночных запросов
+// иначе отбирает все токены сайта у интерактивного поиска.
+func (c *booruClient) SearchPostsCtx(ctx context.Context, tags string, page, limit, minID int) ([]Rule34Post, error) {
 	pid := page - 1
 
 	if c.spec.supportsSort && !strings.Contains(tags, "sort:") {
@@ -1163,20 +1233,56 @@ func (c *booruClient) SearchPosts(tags string, page, limit, minID int) ([]Rule34
 		return nil, fmt.Errorf("%s API временно недоступен — слишком много ошибок подряд, пауза %dс", c.spec.name, int(breakerCoolDown.Seconds()))
 	}
 
-	return c.sf.Do(ckey, func() ([]Rule34Post, error) {
+	limiter := c.limiter
+	if isIDLookup(tags) {
+		limiter = c.idLimiter
+	}
+
+	run := func() ([]Rule34Post, error) {
 		if posts, ok := c.cache.get(ckey); ok {
 			return posts, nil
 		}
-		posts, err := c.fetchPosts(ckey, tags, pid, limit, minID)
+		posts, err := c.fetchPostsCtx(ctx, ckey, tags, pid, limit, minID, limiter)
 		if err != nil {
 			if !errors.Is(err, errAPIAuth) && !errors.Is(err, errAPI403) && !errors.Is(err, errAPITransient) {
-				c.breaker.Fail(c.spec.name)
+				// Отмена по контексту — не поломка источника: винить его и
+				// открывать брейкер из-за ушедшего клиента незачем.
+				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					c.breaker.Fail(c.spec.name)
+				}
 			}
 		} else {
 			c.breaker.Success()
 		}
 		return posts, err
-	})
+	}
+
+	posts, err := c.sf.Do(ckey, run)
+	// singleflight делит один сетевой запрос на всех ожидающих, и отмену
+	// первого ушедшего клиента наследуют остальные. Если наш контекст ещё
+	// жив, а ошибка — отмена чужого, повторяем запрос сами.
+	if err != nil && ctx.Err() == nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		posts, err = c.sf.Do(ckey, run)
+	}
+	return posts, err
+}
+
+// isIDLookup — запрос выборки постов по id (tags=id:123). Такой запрос на
+// gelbooru уходит отдельным HTTP-вызовом, поэтому у него свой троттлинг.
+func isIDLookup(tags string) bool {
+	t := strings.TrimSpace(tags)
+	if !strings.HasPrefix(t, "id:") {
+		return false
+	}
+	rest := strings.TrimSpace(t[3:])
+	// Только цифры (и запятые у пакетной формы) — иначе это обычный поиск,
+	// в котором «id:» встретился как часть тега.
+	for _, r := range rest {
+		if (r < '0' || r > '9') && r != ',' {
+			return false
+		}
+	}
+	return rest != ""
 }
 
 // refreshSearch обновляет устаревший кэш фоном (SWR). Ошибки не важны:
@@ -1190,7 +1296,7 @@ func (c *booruClient) refreshSearch(ckey, tags string, pid, limit, minID int) {
 		if posts, ok := c.cache.get(ckey); ok {
 			return posts, nil
 		}
-		posts, err := c.fetchPosts(ckey, tags, pid, limit, minID)
+		posts, err := c.fetchPosts(ckey, tags, pid, limit, minID, c.limiter)
 		if err != nil {
 			if !errors.Is(err, errAPIAuth) && !errors.Is(err, errAPI403) && !errors.Is(err, errAPITransient) {
 				c.breaker.Fail(c.spec.name)
@@ -1202,7 +1308,11 @@ func (c *booruClient) refreshSearch(ckey, tags string, pid, limit, minID int) {
 	})
 }
 
-func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Rule34Post, error) {
+func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int, limiter *rateLimiter) ([]Rule34Post, error) {
+	return c.fetchPostsCtx(context.Background(), ckey, tags, pid, limit, minID, limiter)
+}
+
+func (c *booruClient) fetchPostsCtx(ctx context.Context, ckey, tags string, pid, limit, minID int, limiter *rateLimiter) ([]Rule34Post, error) {
 	baseV := url.Values{}
 	baseV.Set("page", "dapi")
 	baseV.Set("s", "post")
@@ -1270,8 +1380,13 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 				c.spec.name, restTags, keyTail(key), userID, attempt, attempts)
 		}
 
-		c.limiter.Wait()
-		req, err := http.NewRequest("GET", reqURL, nil)
+		// Троттлинг и сам HTTP-запрос идут под контекстом: клиент, ушедший по
+		// своему дедлайну, не должен заставить сервер дожидаться токена и потом
+		// ещё выслать запрос в источник.
+		if err := limiter.WaitCtx(ctx); err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1280,11 +1395,16 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 
 		resp, err := c.HTTPClient().Do(req)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			c.keys.report(key, false, "network")
 			lastErr = fmt.Errorf("API request failed: %w", err)
 			if attempt < attempts {
 				log.Printf("API retry %d/%d for %q: %v", attempt, attempts, restTags, err)
-				time.Sleep(jitteredBackoff(attempt))
+				if !sleepCtx(ctx, jitteredBackoff(attempt)) {
+					return nil, ctx.Err()
+				}
 			}
 			continue
 		}
@@ -1292,11 +1412,16 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			c.keys.report(key, false, "read")
 			lastErr = fmt.Errorf("failed to read API response: %w", err)
 			if attempt < attempts {
 				log.Printf("API retry %d/%d for %q: %v", attempt, attempts, restTags, err)
-				time.Sleep(jitteredBackoff(attempt))
+				if !sleepCtx(ctx, jitteredBackoff(attempt)) {
+					return nil, ctx.Err()
+				}
 			}
 			continue
 		}
@@ -1310,7 +1435,9 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 			if attempt < attempts {
 				log.Printf("API key ...%s rejected (%d), switching key (attempt %d/%d)",
 					keyTail(key), resp.StatusCode, attempt+1, attempts)
-				time.Sleep(150 * time.Millisecond)
+				if !sleepCtx(ctx, 150*time.Millisecond) {
+					return nil, ctx.Err()
+				}
 			}
 			continue
 		case resp.StatusCode == 429:
@@ -1326,7 +1453,9 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 					}
 				}
 				log.Printf("API retry %d/%d for %q: status 429 (sleep %s)", attempt, attempts, restTags, delay)
-				time.Sleep(delay)
+				if !sleepCtx(ctx, delay) {
+					return nil, ctx.Err()
+				}
 			}
 			continue
 		case resp.StatusCode >= 500:
@@ -1335,7 +1464,9 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 			if attempt < attempts {
 				delay := jitteredBackoff(attempt)
 				log.Printf("API retry %d/%d for %q: status %d (sleep %s)", attempt, attempts, restTags, resp.StatusCode, delay)
-				time.Sleep(delay)
+				if !sleepCtx(ctx, delay) {
+					return nil, ctx.Err()
+				}
 			}
 			continue
 		case resp.StatusCode != 200:
@@ -1353,6 +1484,11 @@ func (c *booruClient) fetchPosts(ckey, tags string, pid, limit, minID int) ([]Ru
 			bodyStr := strings.TrimSpace(string(body))
 			if len(bodyStr) > 200 {
 				bodyStr = bodyStr[:200]
+			}
+			if strings.Contains(bodyStr, "Too deep") {
+				// Gelbooru выдаёт plain text «Too deep! Pull it back some.» при offset > 20000.
+				// Это не авария API, а выход за пределы доступных постов: отдаём пустой результат.
+				return []Rule34Post{}, nil
 			}
 			if strings.Contains(bodyStr, "Missing authentication") || strings.Contains(bodyStr, "error") {
 				return nil, fmt.Errorf("API error: %s", bodyStr)

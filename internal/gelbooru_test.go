@@ -264,6 +264,29 @@ func TestGelbooruAuthKeyRotationOn401(t *testing.T) {
 	}
 }
 
+// При выходе за предел offset > 20000 Gelbooru отдаёт plain-text строку «Too deep! Pull it back some.»
+// с кодом 200. Это не должно ронять брейкер или вызывать ошибку: клиент получает пустой результат.
+func TestGelbooruTooDeepReturnsEmptyWithoutBreaker(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Too deep! Pull it back some. Holy fuck."))
+	}))
+	defer srv.Close()
+
+	c := newTestGelbooru(srv.URL)
+	seedTestKeys(c, []APICredential{{Name: "k", APIKey: "key", UserID: "uid"}})
+	posts, err := c.SearchPosts("test", 1000, 32, 0)
+	if err != nil {
+		t.Fatalf("expected nil error on Too deep, got: %v", err)
+	}
+	if len(posts) != 0 {
+		t.Errorf("expected 0 posts on Too deep, got: %d", len(posts))
+	}
+	if !c.breaker.Allow() {
+		t.Errorf("breaker should remain open/allowed after Too deep offset response")
+	}
+}
+
 // Hotlink-защита CDN gelbooru: прокси обязан ставить Referer по хосту
 // апстрима, иначе 302 → hotlink.php.
 func TestProxyRefererPerHost(t *testing.T) {

@@ -53,6 +53,10 @@ function isQueueable(endpoint, method) {
   if (e.startsWith('/profile') && !e.startsWith('/profile/meta')) return false;
   if (e.startsWith('/rename')) return false;
   if (e.startsWith('/remote/')) return false;
+  // Друзья: добавление — разовое действие, откладывать бессмысленно. Повтор
+  // только вводил бы в заблуждение («успешно отложено»), а потом выбрасывался
+  // бы с 400 (уже добавлен) — пользователь не понимал бы, что произошло.
+  if (e.startsWith('/friends')) return false;
   return true;
 }
 

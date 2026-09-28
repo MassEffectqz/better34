@@ -2,11 +2,212 @@ package internal
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// Эталон «как было до оптимизации»: выборка всех скачанных постов, затем
+// фильтрация в Go. Сверяем с ним постраничный путь — правка меняет КАК выбираем,
+// а не ЧТО выбираем, и это надо доказать на данных со всеми комбинациями
+// фильтров, а не только на пустой базе.
+func localExpected(t *testing.T, db *PostDB, f LocalFilter) []*Post {
+	t.Helper()
+	all := db.SearchDownloaded(f.Tags)
+	kept := make([]*Post, 0, len(all))
+	for _, p := range all {
+		skip := false
+		for _, h := range f.Hidden {
+			for _, t := range splitTags(p.Tags) {
+				if t == h {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		if f.MinID > 0 && p.ID < f.MinID {
+			continue
+		}
+		if f.Viewed >= 0 && db.IsViewed(p.ID) != (f.Viewed == 1) {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	// Порядок как в эталоне: SearchDownloaded сортирует по id DESC.
+	return kept
+}
+
+func splitTags(s string) []string {
+	var out []string
+	cur := ""
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' {
+			if cur != "" {
+				out = append(out, lowerASCII(cur))
+				cur = ""
+			}
+			continue
+		}
+		cur += string(r)
+	}
+	if cur != "" {
+		out = append(out, lowerASCII(cur))
+	}
+	return out
+}
+
+func lowerASCII(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'A' && b[i] <= 'Z' {
+			b[i] += 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+func idsOf(posts []*Post) []int {
+	out := make([]int, 0, len(posts))
+	for _, p := range posts {
+		out = append(out, p.ID)
+	}
+	return out
+}
+
+func eqInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Выборка локальной библиотеки: пагинация, скрытые теги, min_id и история
+// просмотров уезжают в SQL. Проверяем, что набор постов на каждой странице и
+// total совпадают с эталонной фильтрацией в Go.
+func TestSearchDownloadedPagedMatchesFilterSemantics(t *testing.T) {
+	db := NewPostDB(filepath.Join(t.TempDir(), "p.db"))
+	defer db.Close()
+
+	// 12 скачанных постов с разными тегами, 3 НЕ скачанных — их в выдаче быть
+	// не должно ни при каких фильтрах.
+	for i := 1; i <= 12; i++ {
+		tags := "common"
+		switch i % 4 {
+		case 0:
+			tags += " blue_hair"
+		case 1:
+			tags += " solo"
+		case 2:
+			tags += " blue_hair solo"
+		}
+		if i%6 == 0 {
+			tags += " ugly"
+		}
+		db.UpsertMeta(&Post{ID: i, Tags: tags, FileURL: fmt.Sprintf("https://x/%d.jpg", i)})
+		db.SetDownloaded(i, fmt.Sprintf("data/save/%d.jpg", i), fmt.Sprintf("thumbs/%d.jpg", i))
+	}
+	for i := 100; i < 103; i++ {
+		db.UpsertMeta(&Post{ID: i, Tags: "common blue_hair", FileURL: "https://x/n.jpg"})
+	}
+	// Просмотрены: 2, 5, 11. Остальные — «новые».
+	for _, id := range []int{2, 5, 11} {
+		db.RecordView(id)
+	}
+
+	cases := []struct {
+		name string
+		f    LocalFilter
+	}{
+		{"без фильтров", LocalFilter{Viewed: -1}},
+		{"один тег", LocalFilter{Tags: "blue_hair", Viewed: -1}},
+		{"два тега (AND)", LocalFilter{Tags: "blue_hair solo", Viewed: -1}},
+		{"минус-тег", LocalFilter{Tags: "common -solo", Viewed: -1}},
+		{"скрытый тег", LocalFilter{Tags: "", Hidden: []string{"ugly"}, Viewed: -1}},
+		{"скрытый вместе с поиском", LocalFilter{Tags: "common", Hidden: []string{"ugly"}, Viewed: -1}},
+		{"min_id", LocalFilter{MinID: 8, Viewed: -1}},
+		{"только новые", LocalFilter{Viewed: 0}},
+		{"только просмотренные", LocalFilter{Viewed: 1}},
+		{"новые + тег", LocalFilter{Tags: "blue_hair", Viewed: 0}},
+		{"всё вместе", LocalFilter{Tags: "common", Hidden: []string{"ugly"}, MinID: 5, Viewed: 0}},
+	}
+
+	for _, tc := range cases {
+		want := localExpected(t, db, tc.f)
+		// total обязан совпасть с полным набором под фильтром.
+		all, total := db.SearchDownloadedPaged(tc.f, 1000, 0)
+		if total != len(want) {
+			t.Errorf("%s: total=%d, ожидалось %d (получено %v)", tc.name, total, len(want), idsOf(all))
+			continue
+		}
+		if !eqInts(idsOf(all), idsOf(want)) {
+			t.Errorf("%s: выборка %v, ожидалось %v", tc.name, idsOf(all), idsOf(want))
+		}
+	}
+
+	// Постранично: страницы должны идти подряд и без повторов, а вместе —
+	// давать ровно весь набор.
+	f := LocalFilter{Tags: "common", Viewed: -1}
+	want := localExpected(t, db, f)
+	const per = 5
+	var paged []int
+	for off := 0; ; off += per {
+		page, total := db.SearchDownloadedPaged(f, per, off)
+		if len(page) == 0 {
+			break
+		}
+		paged = append(paged, idsOf(page)...)
+		if off+per >= total {
+			break
+		}
+	}
+	if !eqInts(paged, idsOf(want)) {
+		t.Errorf("постранично %v, ожидалось %v", paged, idsOf(want))
+	}
+
+	// За страницей за пределами набора — пусто, а не ошибка.
+	beyond, _ := db.SearchDownloadedPaged(f, per, len(want)+10)
+	if len(beyond) != 0 {
+		t.Errorf("за пределами набора получено %d постов, ожидалось 0", len(beyond))
+	}
+}
+
+// Нескачанные посты не попадают в локальную ленту ни при каких фильтрах:
+// раньше это обеспечивал WHERE downloaded=1 в SearchDownloaded, и при переносе
+// пагинации в SQL легко было бы его потерять.
+//
+// #1 помечен просмотренным: иначе при Viewed:1 его закономерно не было бы, и
+// проверка ничего не отличала бы от «нескачанные не просмотрены».
+func TestSearchDownloadedPagedExcludesNotDownloaded(t *testing.T) {
+	db := NewPostDB(filepath.Join(t.TempDir(), "p.db"))
+	defer db.Close()
+	db.UpsertMeta(&Post{ID: 1, Tags: "cat", FileURL: "https://x/1.jpg"})
+	db.SetDownloaded(1, "data/save/1.jpg", "thumbs/1.jpg")
+	db.UpsertMeta(&Post{ID: 2, Tags: "cat", FileURL: "https://x/2.jpg"}) // не скачан
+	db.RecordView(1)
+
+	for _, f := range []LocalFilter{
+		{Viewed: -1}, {Tags: "cat", Viewed: -1}, {Viewed: 1}, {MinID: 1, Viewed: -1},
+	} {
+		posts, total := db.SearchDownloadedPaged(f, 50, 0)
+		if total != 1 || len(posts) != 1 || posts[0].ID != 1 {
+			t.Errorf("фильтр %+v: получено %d постов (total=%d), ожидался только скачанный #1",
+				f, len(posts), total)
+		}
+	}
+}
 
 func TestBackupNowCreatesSnapshot(t *testing.T) {
 	dir := t.TempDir()

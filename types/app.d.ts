@@ -238,6 +238,7 @@ interface AppElements {
   btnRemotePush: HTMLElement;
   viewerSimilar: HTMLElement;
   viewerSource: HTMLElement;
+  viewerShare: HTMLElement;
   backToTop: HTMLElement;
   [key: string]: HTMLElement | HTMLInputElement | HTMLSelectElement | HTMLImageElement | HTMLElement | null;
 }

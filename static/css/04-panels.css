@@ -1,0 +1,224 @@
+/* 04-panels.css — боковые панели: профиль, навигация, пресеты, плитки, теги, акценты.
+   Часть 5/9 набора better34.
+
+   Файл вырезан из бывшего единого style.css без перестановки правил,
+   поэтому каскад собирается ровно как раньше — порядок подключения задан
+   числовым префиксом и списком <link> в static/index.html (сверху вниз).
+   Правьте здесь, а не в соседних частях: specificity и порядок важны. */
+
+/* Базовая ширина до применения JS: за неё берётся и панель настроек (вкладка
+   «Сеть» с полями ключей API), и профиль. Дальше её переопределяет
+   applyPanelWidth, но без этого значения панель моргала бы узкой при открытии. */
+.panel-layout{position:fixed;top:0;right:0;width:560px;max-width:calc(100vw - 24px);height:100vh;height:100dvh;max-height:100dvh;background:var(--surface);border-left:1px solid var(--border);z-index:500;display:flex;flex-direction:column;overflow-x:hidden;box-shadow:-4px 0 24px rgba(0,0,0,.5);transition:transform .32s cubic-bezier(.22,1,.36,1),box-shadow .25s ease}
+.panel-layout.hidden{transform:translateX(103%);visibility:hidden}
+.panel-resize{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:10;touch-action:none}
+.panel-resize::after{content:'';position:absolute;left:2px;top:50%;transform:translateY(-50%);width:2px;height:44px;border-radius:2px;background:var(--accent);opacity:0;transition:opacity var(--transition)}
+.profile-panel:hover .panel-resize::after,.settings-panel:hover .panel-resize::after,.panel-resize:active::after{opacity:.9}
+.profile-panel.resizing,.settings-panel.resizing{transition:none}
+
+.panel-header{position:relative;overflow:hidden;padding:10px 18px 14px;border-bottom:1px solid var(--border);flex-shrink:0;background:linear-gradient(160deg,var(--surface3),var(--surface) 70%)}
+.profile-hero-glow{position:absolute;top:-70%;right:-25%;width:280px;height:280px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--accent) 30%,transparent),transparent 70%);pointer-events:none}
+.profile-hero-top{display:flex;justify-content:space-between;align-items:flex-start;position:relative;z-index:2}
+.profile-hero-actions{display:flex;align-items:center;gap:6px}
+.profile-panel-title{font-size:1.05rem;font-weight:600;color:var(--text-bright);padding-top:6px}
+.profile-identity{display:flex;flex-direction:column;align-items:center;gap:10px;margin:2px 0 14px;position:relative;z-index:1}
+.profile-avatar{width:90px;height:90px;border-radius:50%;padding:3px;background:conic-gradient(from 180deg,var(--accent),#f0abfc,#6366f1,var(--accent));overflow:hidden;cursor:pointer;position:relative;flex-shrink:0;box-shadow:0 8px 24px rgba(0,0,0,.5);transition:transform var(--transition),box-shadow var(--transition);border:1px solid var(--border)}
+.profile-avatar::after{content:'';position:absolute;inset:4px;border-radius:50%;background:var(--surface2)}
+.profile-avatar>*{position:relative;z-index:1}
+.profile-avatar:hover{transform:scale(1.06);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 22%,transparent),0 12px 30px rgba(0,0,0,.55)}
+.profile-avatar img{width:100%;height:100%;object-fit:cover;display:block;border-radius:50%}
+.profile-avatar .profile-avatar-initials{position:absolute;inset:4px;z-index:1;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:700;color:var(--text-dim);background:var(--surface2);user-select:none}
+.profile-avatar:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.profile-avatar-overlay{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:#fff;opacity:0;transition:opacity var(--transition)}
+.profile-avatar:hover .profile-avatar-overlay{opacity:1}
+/* Тач: наведения нет, а аватар кликабельный (открывает выбор файла) —
+   без подсказки пользователь не знает, что его можно нажать. */
+@media(hover:none){.profile-avatar .profile-avatar-overlay{opacity:.9}}
+#profile-nickname{width:100%;max-width:360px;background:transparent;border:none;border-bottom:1px solid transparent;text-align:center;color:var(--text-bright);font-size:1.05rem;font-weight:600;outline:none;transition:border-color var(--transition);padding:2px 4px;min-width:0}
+#profile-nickname::placeholder{color:var(--text-dim);font-weight:400}
+#profile-nickname:hover,#profile-nickname:focus{border-bottom-color:var(--accent)}
+
+.profile-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;position:relative;z-index:1}
+.stat{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 4px 9px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;transition:all var(--transition);color:inherit}
+.stat:hover{transform:translateY(-2px);border-color:var(--accent-dim);box-shadow:0 6px 12px rgba(0,0,0,.3)}
+.profile-stats .stat.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-dim)}
+.stat-num{font-size:1.05rem;font-weight:700;color:var(--text-bright);font-variant-numeric:tabular-nums}
+.stat-label{font-size:.64rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em}
+
+.panel-nav{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0;padding:12px 8px;border-right:1px solid var(--border);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin}
+.panel-nav-item{flex:0 0 auto;min-width:0;min-height:42px;padding:10px 9px;background:none;border:0;border-left:2px solid transparent;border-radius:8px;color:var(--text-dim);cursor:pointer;font-size:.83rem;transition:color var(--transition),background var(--transition),border-color var(--transition);display:flex;align-items:center;gap:6px;white-space:nowrap;text-align:left}
+.panel-nav-item>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.panel-nav-item:hover{color:var(--text)}
+.panel-nav-item.active{color:var(--accent);border-left-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.tab-badge{background:var(--surface3);border-radius:10px;padding:1px 7px;font-size:.68rem;color:var(--text-dim);min-width:20px;text-align:center;transition:all var(--transition)}
+.panel-nav-item.active .tab-badge{background:var(--accent-dim);color:#fff}
+
+.panel-layout-body{display:grid;grid-template-columns:clamp(128px,28%,152px) minmax(0,1fr);flex:1 1 0;min-height:0;overflow:hidden}
+.profile-panel .panel-layout-body{grid-template-columns:minmax(0,1fr)}
+.panel-content{min-width:0;min-height:0;flex:1;padding:16px 20px 24px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.panel-content>*{max-width:100%}
+.panel-content button,.panel-content input,.panel-content select{min-width:0;max-width:100%}
+.panel-tab-content{display:none;min-width:0}
+.panel-tab-content.active{display:block;animation:tabLive .26s cubic-bezier(.22,1,.36,1)}
+@keyframes tabLive{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.panel-footer{flex-shrink:0;padding:12px 20px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:var(--surface)}
+.panel-footer>.btn-primary{width:100%;min-height:44px}
+.profile-foot{position:sticky;bottom:0;z-index:3;margin-top:auto;box-shadow:0 -6px 16px rgba(0,0,0,.18)}
+.profile-fixed-actions{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.profile-action-group{display:flex;flex-wrap:wrap;gap:6px}
+.profile-action-group[hidden]{display:none}
+.profile-action-group .btn-primary{flex:1 1 140px;min-height:40px}
+.profile-empty{color:var(--text-dim);font-size:.85rem;text-align:center;padding:24px 8px}
+.profile-empty .empty-icon{opacity:.5;margin-bottom:8px}
+.empty-icon{color:var(--text-dim)}
+
+.preset-form{display:flex;gap:8px;margin-bottom:12px}
+.preset-form input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--text);font-size:.85rem;outline:none}
+.preset-form input:focus{border-color:var(--accent)}
+.preset-item{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;cursor:pointer;transition:all var(--transition);margin-bottom:6px;background:var(--surface2);border:1px solid var(--border)}
+.preset-item:hover{background:var(--hover);border-color:var(--accent-dim);transform:translateX(2px)}
+.preset-item.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-dim)}
+.preset-item .preset-name{flex:1;font-size:.85rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preset-item .preset-query{font-size:.72rem;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);padding:2px 8px;border-radius:10px;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preset-kind{font-size:.8rem;flex-shrink:0;display:inline-flex}
+.preset-kind svg{width:13px;height:13px}
+.preset-kind-query{color:var(--accent)}
+.preset-kind-hidden{color:var(--error)}
+.preset-kind-fav{color:var(--success)}
+.preset-tag-row{display:flex;gap:8px;margin-bottom:12px}
+.preset-tag-btn{flex:1;padding:7px 8px;border-radius:var(--radius);border:1px dashed var(--border);background:var(--surface2);color:var(--text-dim);cursor:pointer;font-size:.75rem;transition:all var(--transition);display:flex;align-items:center;justify-content:center;gap:6px}
+.preset-tag-btn svg{width:13px;height:13px;flex-shrink:0}
+.preset-tag-btn:hover{color:var(--text);border-color:var(--accent-dim)}
+.preset-tag-hidden:hover{border-color:var(--error);color:var(--error)}
+.preset-tag-fav:hover{border-color:var(--success);color:var(--success)}
+.preset-item .btn-icon-sm{opacity:0;transition:opacity var(--transition)}
+.preset-item:hover .btn-icon-sm{opacity:1}
+.preset-rename{flex:1;min-width:0;background:var(--surface);border:1px solid var(--accent);border-radius:8px;padding:4px 8px;color:var(--text);font-size:.85rem;outline:none}
+.preset-current{font-size:.75rem;color:var(--text-dim);margin:-2px 0 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preset-current b{color:var(--accent);font-weight:600}
+
+.profile-thumbs{columns:var(--pf-cols,3);column-gap:10px;margin-bottom:4px}
+.pf-grid-btn{width:100%;margin-top:6px}
+.pf-more{width:100%;margin-top:6px}
+/* Тулбар вкладок «Лайки»/«Скрытые»: сортировка, фильтры, счётчик, выбор */
+.pf-tools{margin-bottom:8px}
+.pf-tools-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px}
+.pf-tools-row:last-child{margin-bottom:0;justify-content:space-between}
+.pf-chip{padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);color:var(--text-dim);font-size:.72rem;cursor:pointer;transition:background var(--transition),color var(--transition),border-color var(--transition)}
+.pf-chip:hover{color:var(--text);border-color:var(--accent-dim)}
+.pf-chip.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.pf-chip:focus-visible,.pf-act:focus-visible,.pf-sel:focus-visible,.pf-tool-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pf-shown-count{font-size:.7rem;color:var(--text-dim)}
+/* Панель автоперепроверки: «непроверенных: N» + кнопка. Скрыта (hidden), когда
+   очередь пуста, чтобы не занимать место у вкладки, которой нечего проверять. */
+.pf-recheck{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;padding:6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)}
+.pf-recheck[hidden]{display:none}
+.pf-recheck-count{font-size:.72rem;color:var(--text-dim);margin-right:auto}
+.pf-tool-btn{white-space:nowrap}
+.pf-selbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);margin-bottom:8px}
+.pf-selbar[hidden]{display:none}
+.pf-selbar-count{font-size:.72rem;color:var(--text-dim);margin-right:auto}
+.pf-thumb-skeleton{position:relative;border-radius:8px;overflow:hidden;background:var(--surface2);border:1px solid var(--border);break-inside:avoid;margin:0 0 8px;width:100%;aspect-ratio:3/4}
+.pf-thumb-skeleton::after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.09),transparent);animation:thumbShimmer 1.2s infinite}
+@keyframes thumbShimmer{to{transform:translateX(100%)}}
+/* aspect-ratio — не украшение, а единственная высота плитки: все её дети
+   (картинка, заглушка, бейджи, панель действий) позиционированы абсолютно и
+   высоту не дают. JS подставляет своё значение из размеров поста, но только
+   когда размеры пришли: у постов без width/height плитка схлопывалась в
+   полоску высотой с рамку, и картинка обрезалась в ноль — сетка выглядела
+   сломанной. Поэтому здесь то же значение, что у скелетона, как база. */
+.pf-thumb{position:relative;border-radius:8px;overflow:hidden;background:var(--surface2);cursor:pointer;border:1px solid var(--border);transition:transform var(--transition),border-color var(--transition);break-inside:avoid;margin:0 0 8px;width:100%;aspect-ratio:3/4;animation:pfIn .32s cubic-bezier(.22,1,.36,1) both;animation-delay:var(--d,0ms)}
+@keyframes pfIn{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
+.pf-thumb:hover{transform:translateY(-3px);border-color:var(--accent-dim)}
+.pf-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;transition:transform .25s ease}
+.pf-thumb:hover img{transform:scale(1.08)}
+.pf-thumb .pf-fallback{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.68rem;color:var(--text-dim);background:linear-gradient(135deg,var(--surface2),var(--surface3))}
+.pf-thumb .pf-err{display:block;font-size:.62rem;margin-top:4px;opacity:.85;color:var(--text-dim)}
+.pf-thumb.pf-broken{opacity:.72;filter:saturate(.35)}
+.pf-thumb.pf-missing{border:1px dashed var(--border);cursor:default;opacity:.55;animation:none}
+.pf-thumb.pf-missing:hover{transform:none}
+/* Непроверенный пост: источник не ответил (сеть/лимит). Это НЕ «поста нет»,
+   поэтому рамка сплошная, а внутри — кнопка повтора. */
+.pf-thumb.pf-unresolved{border-style:dashed}
+.pf-thumb .pf-retry{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:4;
+  font-size:.66rem;padding:4px 9px;border-radius:8px;border:1px solid var(--border);
+  background:rgba(0,0,0,.6);color:var(--text);cursor:pointer;backdrop-filter:blur(3px);white-space:nowrap}
+.pf-thumb .pf-retry:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.pf-thumb .pf-play{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;display:flex;align-items:center;justify-content:center;z-index:2}
+.pf-thumb .pf-play svg{width:9px;height:9px;margin-left:1px}
+.pf-thumb .pf-bar{position:absolute;left:0;right:0;bottom:0;padding:4px 5px;display:flex;justify-content:space-between;align-items:center;gap:4px;background:linear-gradient(transparent,rgba(0,0,0,.8));font-size:.66rem;color:#eee;opacity:0;transition:opacity var(--transition);z-index:2}
+.pf-thumb:hover .pf-bar{opacity:1}
+.pf-thumb .pf-score{display:inline-flex;align-items:center;gap:2px}
+.pf-thumb .pf-score svg{width:9px;height:9px;color:var(--accent)}
+.thumbs-loading{display:flex;flex-direction:column;align-items:center;gap:10px;padding:40px 0;color:var(--text-dim);font-size:.8rem}
+
+.profile-tag-list{display:flex;flex-wrap:wrap;gap:4px}
+.profile-tag-item{display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:10px;background:var(--surface2);font-size:.8rem;color:var(--text-dim);max-width:100%;flex:0 1 auto;min-width:0;transition:all var(--transition);cursor:pointer}
+.profile-tag-item:hover{background:var(--hover)}
+.profile-tag-item.fav{border:1px solid var(--accent-dim);color:var(--accent)}
+.profile-tag-item.hidden{border:1px solid var(--error);color:var(--error)}
+.profile-tag-item > span{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tg-count{font-size:.66rem;opacity:.6;margin-left:1px}
+.tg-unfav,.tg-unhide{background:none;border:none;color:inherit;cursor:pointer;padding:0;margin:0;font-size:.68rem;opacity:.5;transition:opacity var(--transition);display:flex}
+.tg-unfav:hover,.tg-unhide:hover{opacity:1}
+.profile-tag-item button{flex:0 0 auto}
+.tag-mgmt h3{font-size:.85rem;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.tag-mgmt-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.tag-mgmt-head h3{margin-bottom:0}
+.btn-clear-tags{background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--error);font-size:.72rem;padding:3px 10px;cursor:pointer;white-space:nowrap;transition:all var(--transition)}
+.btn-clear-tags:hover{background:var(--hover);border-color:var(--error)}
+.tag-filter-row{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.tag-filter-row input{flex:1;min-width:0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:7px 12px;color:var(--text);font-size:.8rem;outline:none;transition:border-color var(--transition)}
+.tag-filter-row input:focus{border-color:var(--accent)}
+.tag-filter-count{font-size:.72rem;color:var(--text-dim);white-space:nowrap}
+.tag-mgmt h3 svg{color:var(--text-dim);opacity:.6}
+.tag-mgmt .hint{font-size:.7rem;color:var(--text-dim);font-weight:400}
+.tag-input-row{display:flex;gap:6px;margin-bottom:8px;position:relative}
+.tag-preset-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.tag-preset-label{font-size:.72rem;color:var(--text-dim);flex-shrink:0}
+.tag-preset-select{flex:1;max-width:280px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:5px 8px;color:var(--text);font-size:.78rem;outline:none;cursor:pointer;transition:border-color var(--transition)}
+.tag-preset-select:focus{border-color:var(--accent)}
+.tag-preset-select option{background:var(--surface2);color:var(--text)}
+.accent-row{display:flex;gap:8px;flex-wrap:wrap}
+.accent-swatch{width:26px;height:26px;border-radius:50%;background:var(--sw);border:2px solid transparent;cursor:pointer;transition:all var(--transition);box-shadow:0 2px 6px rgba(0,0,0,.3)}
+.accent-swatch:hover{transform:scale(1.12)}
+.accent-swatch.active{border-color:var(--text-bright);transform:scale(1.12)}
+.accent-custom{width:34px;height:34px;border-radius:50%;border:2px solid transparent;padding:0;background:none;cursor:pointer;transition:all var(--transition);box-shadow:0 2px 6px rgba(0,0,0,.3)}
+.accent-custom::-webkit-color-swatch-wrapper{padding:0}
+.accent-custom::-webkit-color-swatch{border:none;border-radius:50%}
+.accent-custom::-moz-color-swatch{border:none;border-radius:50%}
+.accent-custom:hover{transform:scale(1.12)}
+.accent-custom.active{border-color:var(--text-bright);transform:scale(1.12)}
+.tag-input-row input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;color:var(--text);font-size:.8rem;outline:none;transition:border-color var(--transition)}
+.tag-input-row input:focus{border-color:var(--accent)}
+
+
+
+/* ── Друзья: обмен между инстансами напрямую ───────────────────────────────── */
+.friends-note{font-size:.75rem;color:var(--text-dim);line-height:1.5;margin:0 0 10px}
+/* Ряд кнопок должен переноситься: на телефоне панель уже в одну колонку. */
+.friends-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.friends-code-box{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:12px}
+/* Поле ввода чужого кода: длинная строка, поэтому шрифт моноширинный и
+   перенос по любому символу — иначе код не прочитать в узкой панели. */
+.friends-add-form{display:flex;gap:6px;margin-bottom:10px}
+.friends-add-form input{flex:1;min-width:0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:7px 9px;color:var(--text);font-size:.75rem;font-family:Consolas,monospace;outline:none}
+.friends-add-form input:focus{border-color:var(--accent)}
+.friends-code-label{font-size:.72rem;color:var(--text-dim);margin-bottom:6px}
+.friends-code{display:block;word-break:break-all;font-size:.68rem;line-height:1.45;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;margin-bottom:8px;user-select:all;-webkit-user-select:all}
+.friends-code-actions{display:flex;gap:6px;flex-wrap:wrap}
+.friends-list{display:flex;flex-direction:column;gap:8px}
+.friend-item{display:flex;align-items:center;gap:9px;padding:8px 9px;background:var(--surface2);border:1px solid var(--border);border-radius:10px}
+.friend-avatar{width:30px;height:30px;border-radius:50%;object-fit:cover;flex-shrink:0;background:var(--surface3)}
+.friend-avatar-empty{display:flex;align-items:center;justify-content:center;color:var(--text-dim)}
+/* min-width:0 обязателен: без него длинный адрес друга распирает ряд и
+   выдавливает кнопку удаления за пределы панели. */
+.friend-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.friend-name{font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.friend-url{font-size:.66rem;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.friend-status{font-size:.66rem;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.friend-status-err{color:var(--error)}
+.friend-status-wait{color:var(--odd-yellow)}
+/* На тач-устройствах наведения нет: кнопку удаления нельзя прятать до
+   наведения, иначе на телефоне она была бы недостижима. */
+@media(hover:none){.friend-del{opacity:1}}

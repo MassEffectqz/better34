@@ -127,6 +127,8 @@ func main() {
 		api.POST("/hidden-tags/clear", handler.ClearHiddenTags)
 		api.POST("/db/clean", handler.CleanDB)
 		api.GET("/random", handler.SearchRandom)
+		api.GET("/tournament", handler.GetTournament)
+		api.GET("/tournament/posts", handler.GetTournamentPosts)
 		api.GET("/related", handler.GetRelated)
 		api.GET("/similar/:id", handler.GetSimilar)
 		api.POST("/view/:id", handler.RecordView)
@@ -162,6 +164,17 @@ func main() {
 		api.GET("/booru/posts", handler.BooruPosts)
 		api.GET("/booru/posts.json", handler.BooruPosts)
 		api.GET("/booru/tags", handler.BooruTags)
+		// «Дверь» для чужих инстансов: обмен идёт по ключу друга из заголовка,
+		// а не по сессии, поэтому пути открыты в webSecurityMiddleware —
+		// проверка ключа всё равно делается в обработщике (friendAuthorized).
+		api.GET("/friend/share", handler.FriendShare)
+		api.POST("/friend/ingest", handler.FriendIngest)
+		// Друзья: обмен между инстансами напрямую, без общего сервера.
+		api.GET("/friends", handler.ListFriends)
+		api.GET("/friends/code", handler.MyFriendCode)
+		api.POST("/friends", handler.AddFriend)
+		api.DELETE("/friends/:id", handler.DeleteFriend)
+		api.POST("/friends/sync", handler.SyncFriends)
 	}
 
 	mountFrontend(r)
@@ -213,6 +226,14 @@ func main() {
 	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	// Адрес для друзей и фоновый обмен. Адрес вычисляется лениво, на каждом
+	// проходе: VPN-адаптер (Radmin 26.x, Tailscale 100.x) к моменту первой
+	// синхронизации уже поднят, и мы отдаём другу тот адрес, по которому нас
+	// реально видно — а не localhost, по которому открыт браузер.
+	internal.SetSelfURLProvider(func() string {
+		return internal.DetectSelfURL(scheme, port, addr)
+	})
+	internal.StartFriendSyncLoop()
 	go func() {
 		slog.Info("server starting", "scheme", scheme, "addr", addr)
 		if scheme == "https" {

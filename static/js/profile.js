@@ -429,14 +429,14 @@ App.loadMoreThumbs = async function (type) {
   const next = Math.min(s.loaded + this._thumbsBatch, total);
   const ids = s.ids.slice(s.loaded, next);
   try {
-    const data = await API.get(`/posts-by-ids?ids=${ids.join(',')}`);
+    const r = await this._fetchPostsByIds(ids);
     if (s.token !== token) return;
-    const posts = (data && data.posts) || [];
+    const posts = r.posts;
     const found = new Set(posts.map(p => p.id).filter(Number.isFinite));
     // Посты, о которых источник НЕ ОТВЕТИЛ (сеть/лимит). Это не «поста нет»:
     // такие не кладём в s.missing, иначе одна сетевая ошибка навсегда
     // закрепила бы живой пост как недоступный — до перезагрузки страницы.
-    const unresolved = new Set((data && data.unresolved) || []);
+    const unresolved = new Set(r.unresolved);
     posts.forEach(p => s.posts.push(p));
     s.loaded = next;
     const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
@@ -653,8 +653,8 @@ App.retryUnresolvedThumbs = async function (type, id) {
   s.retrying = s.retrying || new Set();
   s.retrying.add(num);
   try {
-    const data = await API.get(`/posts-by-ids?ids=${num}`);
-    const post = ((data && data.posts) || []).find(p => p && p.id === num);
+    const r = await this._fetchPostsByIds([num]);
+    const post = r.posts.find(p => p && p.id === num);
     if (!post) return; // по-прежнему нет ответа — заглушка остаётся
     s.posts.push(post);
     const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
@@ -776,17 +776,17 @@ App.recheckThumbs = async function (type, opts) {
   try {
     for (let start = 0; start < ids.length; start += this._thumbsBatch) {
       const batch = ids.slice(start, start + this._thumbsBatch);
-      let data = null;
+      let r;
       try {
-        data = await API.get(`/posts-by-ids?ids=${batch.join(',')}`);
+        r = await this._fetchPostsByIds(batch);
       } catch {
         // Сеть/источник недоступны: сдвигаем время последней попытки, чтобы
         // backoff рос, и оставляем очередь как есть — попробуем позже.
         for (const id of batch) { const e = bag[id]; if (e) e.t = now; }
         break;
       }
-      const posts = (data && data.posts) || [];
-      const unresolved = new Set((data && data.unresolved) || []);
+      const posts = r.posts;
+      const unresolved = new Set(r.unresolved);
       const found = new Set(posts.map(p => p && p.id).filter(Number.isFinite));
       const el = type === 'likes' ? this.els.likesList : this.els.hidesList;
 
@@ -1118,8 +1118,8 @@ App.openPostFromProfile = async function (post) {
   let fetched = [];
   if (missing.length) {
     try {
-      const data = await API.get(`/posts-by-ids?ids=${missing.join(',')}`);
-      fetched = (data && data.posts) || [];
+      const r = await this._fetchPostsByIds(missing);
+      fetched = r.posts;
     } catch {  }
   }
   const byId = new Map(fetched.map(p => [p.id, p]));

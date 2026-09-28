@@ -578,6 +578,159 @@ func (db *PostDB) GetDownloaded() []*Post {
 	return db.queryPosts(`SELECT ` + postCols + ` FROM posts WHERE downloaded=1 ORDER BY id DESC`)
 }
 
+// LocalFilter — условия выборки локальной библиотеки, которые раньше
+// применялись в Go уже ПОСЛЕ того, как СУБД отдала все скачанные посты.
+//
+// Каждое поле — обычное условие WHERE, поэтому фильтрация и пагинация
+// остаются в SQL: SQLite режет выборку по индексам и отдаёт ровно одну
+// страницу вместо всех строк.
+type LocalFilter struct {
+	Tags     string   // запрос в синтаксисе SearchDownloaded
+	Hidden   []string // скрытые теги профиля (пост с любым из них не показываем)
+	MinID    int      // только посты с id >= MinID
+	Viewed   int      // -1 любые, 0 только непросмотренные, 1 только просмотренные
+	MinScore int      // >0 — только посты с оценкой буры (для мини-игры)
+	// RatingExcl — рейтинги, которые вырезаются (ratingFilter: sfw выкидывает
+	// explicit/questionable/sensitive, 18+ — general/safe). В WHERE, а не в Go:
+	// отфильтрованный COUNT и есть тот «available», который мини-игра показывает
+	// пользователю вместе с просьбой уменьшить сетку.
+	RatingExcl map[string]bool
+}
+
+// SearchDownloadedPaged — страница скачанных постов под фильтры и total
+// (сколько всего подошло под фильтры, нужно клиенту для «показать ещё»).
+//
+// Раньше здесь был SearchDownloaded/GetDownloaded + цикл IsViewed на каждый
+// пост + режет в Go. На 6–10 тысячах постов это означало: каждый лист ленты
+// читал ВСЮ таблицу posts со всеми колонками (включая tags и blurhash) и
+// делал отдельный SELECT на каждый пост для «просмотрено». Теперь всё это
+// выражается в WHERE, а база отдаёт только limit строк.
+func (db *PostDB) SearchDownloadedPaged(f LocalFilter, limit, offset int) ([]*Post, int) {
+	conds, args := db.localFilterConds(f)
+	where := "p.downloaded=1"
+	if len(conds) > 0 {
+		where += " AND (" + strings.Join(conds, " AND ") + ")"
+	}
+
+	var total int
+	if err := db.read.QueryRow(`SELECT COUNT(*) FROM posts p WHERE `+where, args...).Scan(&total); err != nil {
+		log.Printf("[db] local count: %v", err)
+		return nil, 0
+	}
+	if limit <= 0 {
+		return nil, total
+	}
+	// LIMIT/OFFSET с теми же аргументами, что и у COUNT: порядок параметров
+	// обязан совпасть, иначе отфильтрует не то.
+	page := db.queryPosts(`SELECT `+postCols+` FROM posts p WHERE `+where+
+		` ORDER BY p.id DESC LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+	return page, total
+}
+
+// localFilterConds строит условия WHERE для выборки локальной библиотеки.
+// Вынесено отдельно, чтобы SearchDownloaded и постраничный вариант собирали
+// одинаковые условия и не разъезжались.
+func (db *PostDB) localFilterConds(f LocalFilter) ([]string, []any) {
+	var conds []string
+	var args []any
+
+	if tags := strings.TrimSpace(f.Tags); tags != "" {
+		// Переиспользуем разбор синтаксиса SearchDownloaded, но собираем
+		// группы в скобках И, а не ИЛИ: скрытые теги и история просмотров —
+		// именно ограничители, а не альтернативные условия поиска.
+		for _, g := range strings.Split(tags, "|") {
+			var pos, neg []string
+			for _, t := range strings.Fields(strings.ToLower(g)) {
+				if strings.HasPrefix(t, "-") {
+					if t = strings.TrimLeft(t, "-"); t != "" && !strings.Contains(t, ":") {
+						neg = append(neg, t)
+					}
+					continue
+				}
+				if strings.Contains(t, ":") {
+					continue
+				}
+				pos = append(pos, t)
+			}
+			if len(pos) == 0 && len(neg) == 0 {
+				continue
+			}
+			// Редкий тег первым: чем реже candidates, тем раньше INTERSECT
+			// отсекает всё остальное.
+			freq := db.tagFreqFor(pos)
+			sort.Slice(pos, func(i, j int) bool { return freq[pos[i]] < freq[pos[j]] })
+			var parts []string
+			if len(pos) > 0 {
+				var sub []string
+				for _, t := range pos {
+					sub = append(sub, "(SELECT post_id FROM tags WHERE tag=?)")
+					args = append(args, t)
+				}
+				parts = append(parts, "p.id IN ("+strings.Join(sub, " INTERSECT ")+")")
+			}
+			if len(neg) > 0 {
+				ph := strings.TrimSuffix(strings.Repeat("?,", len(neg)), ",")
+				parts = append(parts, fmt.Sprintf(
+					"NOT EXISTS (SELECT 1 FROM tags WHERE post_id=p.id AND tag IN (%s))", ph))
+				for _, t := range neg {
+					args = append(args, t)
+				}
+			}
+			conds = append(conds, "("+strings.Join(parts, " AND ")+")")
+		}
+	}
+
+	// Скрытые теги профиля. Раньше это был цикл по посту с разбором tags в
+	// Go; здесь — один NOT EXISTS, и посты с тегом отсекаются до выборки.
+	if len(f.Hidden) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(f.Hidden)), ",")
+		conds = append(conds, fmt.Sprintf(
+			"NOT EXISTS (SELECT 1 FROM tags WHERE post_id=p.id AND tag IN (%s))", ph))
+		for _, t := range f.Hidden {
+			args = append(args, strings.ToLower(t))
+		}
+	}
+
+	if f.MinID > 0 {
+		conds = append(conds, "p.id >= ?")
+		args = append(args, f.MinID)
+	}
+
+	// Оценка буры. Для мини-игры это условие обязательное: без неё на финале
+	// нечего показать пользователю как эталон.
+	if f.MinScore > 0 {
+		conds = append(conds, "p.score >= ?")
+		args = append(args, f.MinScore)
+	}
+
+	// «Новое/Виденное». Раньше — IsViewed на каждый пост (N отдельных
+	// запросов на лист). Здесь условие на саму таблицу view_history.
+	switch f.Viewed {
+	case 0:
+		conds = append(conds, "p.id NOT IN (SELECT post_id FROM view_history)")
+	case 1:
+		conds = append(conds, "p.id IN (SELECT post_id FROM view_history)")
+	}
+
+	// Рейтинг (sfw/18+). LOWER с обеих сторон: словари сайтов пишут рейтинг
+	// как попало ("Explicit", "s"), и без приведения к одному регистру
+	// «18+»-турнир протащил бы в себя general-посты.
+	if len(f.RatingExcl) > 0 {
+		names := make([]string, 0, len(f.RatingExcl))
+		for r := range f.RatingExcl {
+			names = append(names, strings.ToLower(r))
+		}
+		sort.Strings(names) // стабильный порядок параметров — иначе план запроса дрожит
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")
+		conds = append(conds, "LOWER(p.rating) NOT IN ("+ph+")")
+		for _, r := range names {
+			args = append(args, r)
+		}
+	}
+
+	return conds, args
+}
+
 // tagFreqFor — число постов по каждому тегу для сортировки «редкий
 // первым» в INTERSECT-поиске: один индексированный запрос на все теги,
 // а не глобальный скан таблицы tags.
@@ -1672,6 +1825,31 @@ func (db *PostDB) CountCommentsByUser(username string) int {
 		return 0
 	}
 	return n
+}
+
+// AddFriendCommentOnce добавляет комментарий, пришедший от друга инстанса, и
+// возвращает true, если он действительно новый.
+//
+// Дедуп по (username, post_id, text): повторная синхронизация каждые пять
+// минут не должна плодить копии. Отдельная функция (а не AddComment) нужна
+// ещё и потому, что username здесь чужой и с двоеточием — такой «пользователь»
+// не должен попадать в отчёт «кто комментировал» и в экспорт профиля.
+func (db *PostDB) AddFriendCommentOnce(username string, postID int, text, createdAt string) bool {
+	// INSERT ... SELECT ... WHERE NOT EXISTS: проверка и вставка одной
+	// командой. Конкурентных писателей нет (MaxOpenConns(1)), гонки не будет.
+	res, err := db.db.Exec(
+		`INSERT INTO comments(post_id, username, text, created_at)
+		 SELECT ?,?,?,? WHERE NOT EXISTS(
+		   SELECT 1 FROM comments WHERE username=? AND post_id=? AND text=?
+		 )`,
+		postID, username, text, createdAt,
+		username, postID, text)
+	if err != nil {
+		log.Printf("friend comment insert: %v", err)
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
 }
 
 // CommentsByUser возвращает все комментарии автора (для бэкапа профиля).

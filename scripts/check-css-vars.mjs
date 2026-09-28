@@ -2,6 +2,11 @@
 // к переменной, которой нет в теме. Именно так всплывашка превью тега осталась
 // без фона: в стиле стоял var(--surface1), а в теме есть только --surface,
 // --surface2 и --surface3 — и блок просто рисовался прозрачным.
+//
+// Плюс вторая проверка, ставшая нужной после разбиения style.css на части:
+// каждый .css обязан быть подключён в index.html. Без неё «создал
+// static/css/09-новое.css, поправил» выглядит как сработавшая правка, а на
+// странице ничего не меняется — и все остальные проверки зелёные.
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -40,13 +45,48 @@ for (const f of readdirSync(dir).filter((n) => n.endsWith('.css'))) {
   }
 }
 
-const missing = [...used.entries()].filter(
+// ── Каждая часть подключена? ───────────────────────────────────────────────
+// Проверяем в обе стороны: файл без <link> не применяется вовсе, а <link> на
+// несуществующий файл — 404 и тихая потеря всех правил из него. Порядок
+// <link> в index.html дополнительно сверяем с порядком имён файлов: от него
+// зависит каскад, и перестановка молча поменяла бы, какое правило победит.
+const html = (() => {
+  try { return readFileSync('static/index.html', 'utf8'); } catch { return ''; }
+})();
+if (html) {
+  const linked = [...html.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="\/static\/css\/([^"?]+)(?:\?[^"]*)?"/g)]
+    .map((m) => m[1])
+    .filter((n) => n.endsWith('.css'));
+  const onDisk = readdirSync(dir).filter((n) => n.endsWith('.css')).sort();
+  const notLinked = onDisk.filter((f) => !linked.includes(f));
+  const missing = linked.filter((f) => !onDisk.includes(f));
+  if (notLinked.length || missing.length) {
+    if (notLinked.length) {
+      console.error('css: файлы не подключены в index.html (правила не применятся):');
+      for (const f of notLinked) console.error(`  ${f} — добавь <link rel="stylesheet" href="/static/css/${f}?v=__VERSION__">`);
+    }
+    if (missing.length) {
+      console.error('css: index.html ссылается на несуществующие файлы:');
+      for (const f of missing) console.error(`  ${f}`);
+    }
+    process.exit(1);
+  }
+  const order = linked.join(',');
+  const sorted = [...linked].sort().join(',');
+  if (order !== sorted) {
+    console.error(`css: порядок <link> в index.html не совпадает с порядком имён: ${order}`);
+    console.error(`Подсказка: имена частей задают каскад — отсортируйте по алфавиту (${sorted}).`);
+    process.exit(1);
+  }
+}
+
+const missingVars = [...used.entries()].filter(
   ([name]) => !defined.has(name) && !dynamic.has(name)
 );
-if (missing.length) {
+if (missingVars.length) {
   console.error('css: используются необъявленные переменные:');
-  for (const [name, files] of missing) console.error(`  ${name} (${files.join(', ')})`);
+  for (const [name, files] of missingVars) console.error(`  ${name} (${files.join(', ')})`);
   console.error(`Подсказка: объявите переменную в :root или используйте существующую (${defined.size} объявлено).`);
   process.exit(1);
 }
-console.log(`css check ok (${defined.size} переменных, ${used.size} используются)`);
+console.log(`css check ok (${defined.size} переменных, ${used.size} используются, все части подключены)`);

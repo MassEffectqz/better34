@@ -38,7 +38,22 @@ func TestFrontendRoutesUseEmbeddedFiles(t *testing.T) {
 	mountFrontend(r)
 	r.NoRoute(serveIndex)
 
-	for _, route := range []string{"/", "/static/css/style.css", "/static/js/dist/app.js", "/sw.js"} {
+	// CSS отдаётся по частям (static/css/*.css), а не одним файлом: проверяем
+	// каждую часть поимённо, чтобы не пропустить забытый //go:embed или
+	// сломанный путь. Тест работает в пустом каталоге (t.Chdir выше), поэтому
+	// берём список из встроенной FS — это же проверяет, что части внедрены.
+	cssRoutes := []string{"/", "/static/js/dist/app.js", "/sw.js"}
+	parts, err := fs.Glob(embeddedStatic(), "css/*.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) == 0 {
+		t.Fatal("встроенный static/css пуст: стили не попали в бинарник")
+	}
+	for _, p := range parts {
+		cssRoutes = append(cssRoutes, "/static/"+p)
+	}
+	for _, route := range cssRoutes {
 		req := httptest.NewRequest(http.MethodGet, route, nil)
 		resp := httptest.NewRecorder()
 		r.ServeHTTP(resp, req)
@@ -177,7 +192,7 @@ func TestCleanStaticNameRejectsTraversal(t *testing.T) {
 			t.Errorf("cleanStaticName(%q) accepted traversal", name)
 		}
 	}
-	if got, err := cleanStaticName("css/style.css"); err != nil || got != "css/style.css" {
+	if got, err := cleanStaticName("css/00-base.css"); err != nil || got != "css/00-base.css" {
 		t.Fatalf("cleanStaticName valid path = %q, %v", got, err)
 	}
 	if embeddedVersion() == "" {

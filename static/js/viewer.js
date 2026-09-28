@@ -558,6 +558,103 @@ App._syncSourceButton = function (post) {
   return url;
 };
 
+/**
+ * Абсолютный URL текущего поста — то, что уходит в «Поделиться».
+ *
+ * Важно: ссылка должна быть абсолютной. Обсуждать пост имеет смысл с другого
+ * устройства (телефон → мессенджер → десктоп), а относительный /post/123 там
+ * просто не откроется. При схеме http/https идём от location.origin, иначе
+ * (тесты, file://) отдаём путь как есть — копировать всё равно полезнее, чем
+ * ничего.
+ * @this {AppType}
+ */
+App.shareUrl = function () {
+  const path = this.postUrl(this.state.query,
+    (this.state.posts || [])[this.state.viewerIndex]?.id);
+  const loc = (typeof window !== 'undefined' && window.location) || null;
+  const origin = loc && loc.origin;
+  if (!origin || origin === 'null') return path;
+  try {
+    return new URL(path, origin).href;
+  } catch {
+    return path;
+  }
+};
+
+/**
+ * Текст для «Поделиться»: название тега, если в выдаче он есть, иначе id.
+ * Без названия в мессенджере приходит голый URL — по нему пост не опознать.
+ * @this {AppType}
+ */
+App.shareText = function () {
+  const post = (this.state.posts || [])[this.state.viewerIndex];
+  if (!post) return '';
+  const q = String(this.state.query || '').trim();
+  if (q) return q.replace(/_/g, ' ');
+  const tags = String(post.tags || '').trim().split(/\s+/).filter(Boolean);
+  return tags.slice(0, 3).join(', ') || `#${post.id}`;
+};
+
+/**
+ * Копирование в буфер. execCommand — запасной путь: на http без
+ * navigator.clipboard (кроме localhost) API недоступен, а буфер обмена есть
+ * всегда. Обе попытки молча падают, если среда запрещает и то и другое.
+ * @this {AppType}
+ */
+App._copyToClipboard = async function (text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* пробуем запасной путь */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // Позиция вне экрана, но не display:none — иначе фокус не берётся и
+    // execCommand в некоторых браузерах возвращает false.
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand && document.execCommand('copy');
+    ta.remove();
+    return !!ok;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * «Поделиться»: сначала нативный Web Share API (на телефоне это системное
+ * меню — то, чего пользователь ждёт), при его отсутствии или отказе
+ * копируем ссылку и говорим об этом.
+ *
+ * Промис navigator.share намеренно глотаем целиком: на десктопе без
+ * поддержки он падает сразу, а на мобильном — когда пользователь закрыл
+ * системный лист с крестиком. И то и другое не ошибка приложения.
+ * @this {AppType}
+ */
+App.sharePost = async function () {
+  const url = this.shareUrl();
+  if (!url) return;
+  const title = this.shareText();
+  const nav = (typeof navigator !== 'undefined') ? navigator : null;
+  if (nav && typeof nav.share === 'function') {
+    try {
+      await nav.share({ title, url });
+      return;
+    } catch (err) {
+      // AbortError — пользователь закрыл лист сам. Молчим: придумывать
+      // «ошибку» там, где человек отменил действие, раздражает.
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+  const ok = await this._copyToClipboard(url);
+  this.showToast(ok ? t('viewer.shareCopied') : t('viewer.shareFailed'), ok ? 'success' : 'error');
+};
+
 App.renderViewer = function (force) {
   const post = this.state.posts[this.state.viewerIndex];
   if (!post) return;

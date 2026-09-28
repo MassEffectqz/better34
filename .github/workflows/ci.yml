@@ -33,6 +33,8 @@ jobs:
         run: git diff --exit-code -- static/js/dist
       - name: i18n keys (parity, duplicates, placeholders, unused)
         run: npm run check:i18n
+      - name: Icons (every data-lucide/icon() name exists in ICONS)
+        run: npm run check:icons
       - name: //go:embed targets (fresh clone must build)
         run: npm run check:embed
       - name: Batch script traps (unbalanced parens, metachars in for /f)

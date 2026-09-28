@@ -20,6 +20,11 @@ import (
 func TestMain(m *testing.M) {
 	apiRatePerSecond = 1000
 	apiRateBurst = 1000
+	// Ведро выборки по id отпускаем так же: тесты ходят в локальные
+	// httptest-серверы, и с боевыми 5 запросами/с пачка из сорока id
+	// растянулась бы на секунды — тест проверял бы троттлинг, а не бюджет.
+	idRatePerSecond = 1000
+	idRateBurst = 1000
 	dir, err := os.MkdirTemp("", "briefly-test-cache")
 	if err == nil {
 		tagCountsFile = filepath.Join(dir, "tag_counts.json")

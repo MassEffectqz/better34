@@ -124,6 +124,12 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:39128/ | grep -q '<!DOCTYPE html>'
-          curl -fsS http://127.0.0.1:39128/static/css/style.css >/dev/null
+          # Стили отдаются по частям: проверяем каждую часть отдельно —
+          # одна незамеченная битая ссылка = страница без части оформления.
+          # Список берём из исходников репозитория, а не хардкодим.
+          for f in static/css/*.css; do
+            name=$(basename "$f")
+            curl -fsS "http://127.0.0.1:39128/static/css/$name" >/dev/null
+          done
           curl -fsS http://127.0.0.1:39128/static/js/dist/app.js >/dev/null
           docker stop briefly-smoke

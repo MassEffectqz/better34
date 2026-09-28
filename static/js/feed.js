@@ -57,6 +57,55 @@ App.ensureColumns = function () {
 };
 
 /** @this {AppType} */
+App._bindCardSwipe = function (card, getIndex) {
+  if (!this._isTouch()) return;
+  // Горизонтальный свайп по карточке открывает пост и сразу переключает
+  // вьювер на соседние — на телефоне это естественнее, чем искать стрелки.
+  // Вертикальный жест не трогаем: это обычная прокрутка ленты.
+  let sx = 0, sy = 0, active = false, horizontal = false;
+  const dir = () => {
+    const i = getIndex();
+    if (this.state.viewerOpen) {
+      this.navigateViewer(this._swipeDir || 1);
+      return;
+    }
+    this.openViewer(i);
+  };
+  card.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    active = true; horizontal = false;
+  }, { passive: true });
+  card.addEventListener('touchmove', (e) => {
+    if (!active || e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - sx;
+    const dy = e.touches[0].clientY - sy;
+    if (!horizontal) {
+      // Ждём явного горизонтального намерения, иначе диагональ зачтём
+      // за свайп и сломаем вертикальную прокрутку.
+      if (Math.abs(dx) < 24 || Math.abs(dx) <= Math.abs(dy)) return;
+      horizontal = true;
+      clearTimeout(this._cardTapTimer);
+      this._swipeDir = dx < 0 ? 1 : -1;
+    }
+    // Горизонтальный жест забираем у скролла, но только пока он явно горизонтальный.
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+  const finish = () => {
+    if (horizontal) {
+      // Гасим click, который браузер всё равно выстрелит после touchend:
+      // иначе пост откроется ещё раз поверх вьювера.
+      this._suppressCardClick = true;
+      setTimeout(() => { this._suppressCardClick = false; }, 350);
+      dir();
+    }
+    active = false; horizontal = false;
+  };
+  card.addEventListener('touchend', finish);
+  card.addEventListener('touchcancel', () => { active = false; horizontal = false; });
+};
+
+/** @this {AppType} */
 App.shortestCol = function () {
   if (!this.masonryCols.length) this.ensureColumns();
   let best = this.masonryCols[0];
@@ -224,9 +273,19 @@ App.showGridMode = async function (type, idsOverride) {
   this.setStatus(`…: ${ids.length}`);
   this.showSkeletons(Math.min(ids.length, 20));
   try {
-    const data = await API.get(`/posts-by-ids?ids=${ids.join(',')}`);
+    // Список id бывает на сотни (вкладка «Лайки»), а сервер спрашивает
+    // источник по пачке и остальное отдаёт в deferred — идём по нему следом,
+    // попутно дорисовывая сетку, иначе грид вышел бы полупустым.
+    const r = await this._fetchPostsByIds(ids, {
+      onBatch: (got) => {
+        this.state.posts = got.map((p, i) => ({ ...p, _index: i }));
+        this.renderModeBar();
+        this.renderPosts();
+        this.setStatus(`${got.length} / ${ids.length}`);
+      },
+    });
     this.hideSkeletons();
-    this.state.posts = data.posts || [];
+    this.state.posts = r.posts.map((p, i) => ({ ...p, _index: i }));
     this.state.page = 1;
     this.state.hasMore = false;
     this.renderModeBar();
@@ -864,6 +923,9 @@ App.createPostCard = function (post) {
   });
   card.addEventListener('click', (e) => {
     if (/** @type {HTMLElement} */ (e.target).closest('.card-checkbox')) return;
+    // После свайпа браузер досылает click — игнорируем, иначе пост откроется
+    // второй раз поверх уже открытого вьювера.
+    if (this._suppressCardClick) { e.preventDefault(); return; }
     if (this.isOpenInNewTabClick(e)) { openInNewTab(e); return; }
     const now = Date.now();
     if (this._isTouch()) {
@@ -880,6 +942,7 @@ App.createPostCard = function (post) {
       this.openViewer(parseInt(card.dataset.index || '0', 10));
     }
   });
+  this._bindCardSwipe(card, () => parseInt(card.dataset.index || '0', 10));
   let videoHoverTimer;
   card.addEventListener('mouseenter', () => {
     this.state.hoveredIndex = parseInt(card.dataset.index || '0', 10);

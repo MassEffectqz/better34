@@ -38,8 +38,16 @@ func (h *Handler) Healthz(c *gin.Context) {
 }
 
 func (h *Handler) SearchRandom(c *gin.Context) {
+	prov := h.provider()
+	if prov == nil {
+		AbortWithError(c, ErrProviderUnavailable)
+		return
+	}
 	page := 1 + rand.Intn(1500)
-	posts, err := h.provider().SearchPosts("", page, 1, 0)
+	posts, err := prov.SearchPosts("", page, 1, 0)
+	if (err != nil || len(posts) == 0) && page != 1 {
+		posts, err = prov.SearchPosts("", 1, 1, 0)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
