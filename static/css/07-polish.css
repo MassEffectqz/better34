@@ -296,3 +296,21 @@ button,a{-webkit-tap-highlight-color:transparent}
 @media(max-height:500px) and (orientation:landscape){.viewer-head{height:32px}.viewer-actions{gap:4px}}
 @media(prefers-contrast:more){:root{--border:rgba(255,255,255,.3);--surface2:#1a1a1a}.post-card{border:1px solid var(--border)}.btn{border:1px solid var(--border)}}
 
+/* .hidden для кнопок и блоков, у которых базовый класс задаёт display.
+   Общего правила .hidden в наборе нет, поэтому `el.classList.add('hidden')`
+   работал вхолостую: .btn-icon{display:flex} и .btn-primary{display:inline-flex}
+   побеждали одиночный класс .hidden (специфичность 0,1,0 против 0,2,0),
+   и элемент оставался на экране. Затронуто:
+     #mode-bar-refresh       — кнопка «обновить подборку» не пряталась вне режима
+                               подбора и висела рядом с закрытым заголовком;
+     #dl-resume              — «продолжить» не пряталась, пока шла загрузка;
+     #viewer-related         — пустая плашка «похожие» оставалась в просмотрщике;
+     #friends-add-form       — поле ввода кода друга не скрывалось после отправки;
+     #friends-code-box       — блок «мой код» не скрывался до запроса /friends/code;
+     #btn-merge-dups         — «объединить дубликаты» не скрывалась (у кнопки
+                               #btn-clean-dups такое правило было, у соседней — нет);
+     #btn-offline-lib-cancel — «остановить» не скрывалась после загрузки офлайн-библиотеки.
+   Проверено headless Chrome: display перестаёт быть flex/block именно с этими
+   правилами. Новые скрываемые элементы добавляйте сюда же. */
+.btn-icon.hidden,.btn-primary.hidden,.viewer-related.hidden,.friends-add-form.hidden,.friends-code-box.hidden,#btn-merge-dups.hidden,#btn-offline-lib-cancel.hidden{display:none}
+

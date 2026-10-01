@@ -39,6 +39,17 @@ export const App = {
   els: {},
 
   async init() {
+    // Ловим отказы Promise раньше любых await-шагов. Раньше обработчик стоял
+    // ПОСЛЕДНЕЙ строкой init, а падение происходит на первом же шаге
+    // (bindEvents, loadProfile, applyInitialRoute) — то есть он не успевал
+    // зарегистрироваться. Итог: отказ гасил инициализацию, лента не рисовалась
+    // и пользователь видел пустой тёмный экран без единой ошибки в консоли.
+    window.addEventListener('unhandledrejection', (e) => {
+      console.error('Unhandled rejection:', e.reason);
+      if (typeof App !== 'undefined' && App.showToast) {
+        App.showToast(t('err.unexpected'), 'error');
+      }
+    });
     this.els = {
       grid: _('posts-grid'), sentinel: _('sentinel'),
       searchInput: _('search-input'), suggestions: _('suggestions'),
@@ -164,12 +175,6 @@ export const App = {
       return;
     }
     this.applyInitialRoute(target);
-    window.addEventListener('unhandledrejection', (e) => {
-      console.error('Unhandled rejection:', e.reason);
-      if (typeof App !== 'undefined' && App.showToast) {
-        App.showToast(t('err.unexpected'), 'error');
-      }
-    });
   },
 
   /**

@@ -64,10 +64,14 @@ func (h *Handler) AuthRegister(c *gin.Context) {
 	}
 	setSessionCookie(c, token, expires)
 	authRateResetIP(c.ClientIP())
+	// is_admin едет внутри user: клиент читает флаг как state.user.is_admin
+	// (гейт серверных настроек в static/js/settings.js). Если отдавать его
+	// только рядом с user, после POST-логина без перезагрузки флаг теряется.
 	c.JSON(http.StatusOK, gin.H{"user": gin.H{
 		"username": user.Username,
 		"nickname": user.Nickname,
 		"avatar":   user.Avatar,
+		"is_admin": acc.IsAdmin(user.Username),
 	}})
 }
 
@@ -102,6 +106,7 @@ func (h *Handler) AuthLogin(c *gin.Context) {
 		"username": user.Username,
 		"nickname": user.Nickname,
 		"avatar":   user.Avatar,
+		"is_admin": acc.IsAdmin(user.Username),
 	}})
 }
 
@@ -140,6 +145,10 @@ func (h *Handler) AuthMe(c *gin.Context) {
 					"username": user.Username,
 					"nickname": user.Nickname,
 					"avatar":   user.Avatar,
+					// Дублируем флаг внутри user: клиент опирается на
+					// state.user.is_admin, а верхнеуровневый is_admin оставлен
+					// для обратной совместимости.
+					"is_admin": acc.IsAdmin(u),
 				},
 				"users_exist":   true,
 				"is_admin":      acc.IsAdmin(u),

@@ -459,7 +459,13 @@
         </label>
         <div class="setting-group">
           <span class="setting-label"><span data-i18n="set.apikeys">API ключи</span> <span class="hint" data-i18n="set.apikeysHint">каждый ключ со своим user_id, чередуются</span></span>
-          <form id="api-keys-list" onsubmit="return false;" autocomplete="off"></form>
+          <!-- Не <form>: контейнер строк, каждая из которых отдельная сущность
+               (имя + ключ + user_id), а сохранение идёт одним запросом из
+               App.saveSettings по состоянию. Настоящая форма с несколькими
+               несвязанными группами полей заставляла Chrome ругаться в консоль
+               («Multiple forms should be contained in their own form elements»).
+               autocomplete="off" перенесён на сами поля в settings.js. -->
+          <div id="api-keys-list"></div>
           <button type="button" class="btn-primary btn-sm" id="btn-add-api-key"><i data-lucide="plus" data-size="14"></i> <span data-i18n="btn.addApi">Добавить API</span></button>
         </div>
         <label class="setting-group">

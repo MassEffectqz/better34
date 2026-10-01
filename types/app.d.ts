@@ -71,7 +71,7 @@ interface AppState {
   accent: string;
   autoDownload: boolean;
   relatedChain: boolean;
-  user: { username: string; nickname: string; avatar: string } | null;
+  user: { username: string; nickname: string; avatar: string; is_admin?: boolean } | null;
 }
 
 interface AppElements {

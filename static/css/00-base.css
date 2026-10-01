@@ -6,7 +6,7 @@
    числовым префиксом и списком <link> в static/index.html (сверху вниз).
    Правьте здесь, а не в соседних частях: specificity и порядок важны. */
 
-п*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#0f0f0f;--surface:#1a1a1a;--surface2:#242424;--surface3:#2e2e2e;--hover:#353535;--border:#333;--text:#d4d4d4;--text-dim:#9c9c9c;--text-bright:#f0f0f0;--accent:#a78bfa;--accent-dim:#7c5cbf;--success:#34d399;--error:#f87171;--radius:8px;--radius-sm:4px;--shadow:0 4px 24px rgba(0,0,0,.6);--transition:200ms ease;--font-xs:0.75rem;--font-sm:0.875rem;--font-base:1rem;--font-lg:1.125rem;--font-xl:1.25rem;--font-2xl:1.5rem;--z-base:0;--z-dropdown:100;--z-sticky:200;--z-overlay:300;--z-modal:400;--z-toast:500;--z-tooltip:600;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--duration-fast:100ms;--duration-normal:200ms;--ease-out:cubic-bezier(0,0,0.2,1);--odd-yellow:#eab308;--odd-red:#ef4444;font-size:14px}
 [data-theme="light"]{--bg:#f5f5f5;--surface:#fff;--surface2:#eee;--surface3:#ddd;--hover:#e0e0e0;--border:#ccc;--text:#222;--text-dim:#666;--text-bright:#000;--accent:#7c3aed;--accent-dim:#5b21b6;--success:#059669;--error:#dc2626;--shadow:0 4px 24px rgba(0,0,0,.15);--odd-yellow:#a16207;--odd-red:#dc2626}
 [data-theme="deep"]{--bg:#000;--surface:#0b0b0b;--surface2:#131313;--surface3:#1c1c1c;--hover:#222;--border:#222;--text:#cecece;--text-dim:#8c8c8c;--text-bright:#eaeaea;--accent:#a78bfa;--accent-dim:#7c5cbf;--success:#34d399;--error:#f87171;--shadow:0 4px 24px rgba(0,0,0,.8)}

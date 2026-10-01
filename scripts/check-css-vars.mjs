@@ -89,4 +89,51 @@ if (missingVars.length) {
   console.error(`Подсказка: объявите переменную в :root или используйте существующую (${defined.size} объявлено).`);
   process.exit(1);
 }
-console.log(`css check ok (${defined.size} переменных, ${used.size} используются, все части подключены)`);
+
+// ── Скрываемые элементы действительно скрываются? ───────────────────────────
+// Общего правила .hidden в наборе нет: каждый компонент объявляет своё
+// «X.hidden{display:none}». Пока так — легко забыть про один элемент, и
+// `el.classList.add('hidden')` молча ничего не сделает: базовый класс с
+// display:flex/block ( специфичность 0,1,0 ) перебьёт одиночный .hidden.
+// Так лента выглядела пустой чёрной страницей (#friend-profile) и не
+// прятались кнопки «обновить подборку», «продолжить», «объединить дубликаты».
+// Проверяем, что у каждого class="… hidden" есть правило, которое его гасит.
+if (html) {
+  const allCss = readdirSync(dir)
+    .filter((n) => n.endsWith('.css'))
+    .sort()
+    .map((n) => readFileSync(join(dir, n), 'utf8'))
+    .join('\n');
+
+  // Совпадение по классу или по id: .btn-icon.hidden, #btn-merge-dups.hidden.
+  const hasHideRule = (name) =>
+    new RegExp(`\\.[A-Za-z0-9_-]*${name.replace(/-/g, '\\-')}\\.hidden`).test(allCss);
+
+  const suspects = new Map(); // ключ → описание
+  // Класс hidden должен быть ОТДЕЛЬНЫМ словом: preset-tag-hidden — это про
+  // тег «скрытые теги», а не про скрытие элемента.
+  for (const m of html.matchAll(/<[^>]*\bclass="([^"]*)"[^>]*>/g)) {
+    const classes = m[1].split(/\s+/).filter(Boolean);
+    if (!classes.includes('hidden')) continue;
+    const tag = m[0];
+    const id = (tag.match(/\bid="([^"]+)"/) || [])[1];
+    const own = classes.filter((c) => c !== 'hidden' && !c.endsWith('-hidden'));
+    // Элемент скрыт, если правило есть хотя бы для одного его класса.
+    // Проверять все, а не последний: .modal.hidden покрывает и
+    // <div class="modal help-modal hidden">, а .btn-icon.hidden — и .btn-icon-sm.
+    if (own.some((c) => hasHideRule(c))) continue;
+    if (id && new RegExp(`#${id.replace(/-/g, '\\-')}\\.hidden`).test(allCss)) continue;
+    if (!own.length) continue;
+    suspects.set(id ? `#${id}` : `.${own[0]}`, own[0]);
+  }
+  if (suspects.size) {
+    console.error('css: элементы с классом hidden, для которых нет правила скрытия:');
+    for (const [key, cls] of suspects) {
+      console.error(`  ${key} (.${cls}.hidden) — добавь .${cls}.hidden{display:none}`);
+    }
+    console.error('Подсказка: без этого classList.add(\'hidden\') ничего не скроет.');
+    process.exit(1);
+  }
+}
+
+console.log(`css check ok (${defined.size} переменных, ${used.size} используются, все части подключены, .hidden работает)`);

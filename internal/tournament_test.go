@@ -367,10 +367,16 @@ func TestTournamentPostsOnlineBatch(t *testing.T) {
 // Источник без поддержки списков: по одному id:N, ненайденный id — в missing
 // (вьювер такой пост не получит и не останется со спиннером).
 func TestTournamentPostsOnlineSingle(t *testing.T) {
+	// asked пишется из нескольких горутин tournamentFetchByIDs (id:31 и id:32
+	// идут параллельно), поэтому без мьютекса это была гонка: -race падал
+	// всегда, а без него append иногда терялся и тест мигал.
+	var mu sync.Mutex
 	var asked []string
 	mock := &stubTournamentProvider{
 		postsFunc: func(tags string, page, limit, minID int) ([]Rule34Post, error) {
+			mu.Lock()
 			asked = append(asked, tags)
+			mu.Unlock()
 			if tags == "id:31" {
 				return []Rule34Post{{ID: 31, FileURL: "https://r/31.jpg"}}, nil
 			}
@@ -386,9 +392,12 @@ func TestTournamentPostsOnlineSingle(t *testing.T) {
 	if len(posts) != 1 || posts[0]["id"] != 31 || !slices.Equal(missing, []int{32}) {
 		t.Fatalf("постов %d, missing=%v (ожидалось 1 и [32])", len(posts), missing)
 	}
-	sort.Strings(asked)
-	if !slices.Equal(asked, []string{"id:31", "id:32"}) {
-		t.Errorf("запросы %v, ожидались id:31 и id:32", asked)
+	mu.Lock()
+	got := slices.Clone(asked)
+	mu.Unlock()
+	sort.Strings(got)
+	if !slices.Equal(got, []string{"id:31", "id:32"}) {
+		t.Errorf("запросы %v, ожидались id:31 и id:32", got)
 	}
 }
 

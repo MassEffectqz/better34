@@ -235,6 +235,12 @@
    Раскладка как у соседнего профиля — боковая панель с аватаром, ником и
    вкладками слева, весь контент справа. */
 .friend-profile{position:fixed;inset:0;z-index:150;background:var(--bg)}
+/* .hidden обязан гасить панель: отдельного общего правила .hidden в наборе
+   нет — каждый компонент объявляет своё «X.hidden{display:none}» (см.
+   .auth-overlay.hidden, .modal.hidden, .viewer.hidden). Без этой строки
+   полноэкранный .friend-profile (position:fixed;inset:0;background:var(--bg))
+   остаётся поверх ленты всегда и главная выглядит пустой чёрной страницей. */
+.friend-profile.hidden{display:none}
 /* Лента уходит, пока открыта страница друга: иначе её сетка выглядывала бы
    из-под полноэкранной секции при скролле. */
 body.friend-profile-open #header,body.friend-profile-open main{display:none}

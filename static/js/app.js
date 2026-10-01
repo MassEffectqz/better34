@@ -46,5 +46,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Кнопки «библиотека офлайн» и банкер «нет сети».
   if (typeof App.bindOfflineLibraryUI === 'function') App.bindOfflineLibraryUI();
   if (typeof App.bindFriendsUI === 'function') App.bindFriendsUI();
-  App.init();
+  // Отказ init() раньше уходил в никуда (App.init() без обработчика), а
+  // пользователь получал пустой тёмный экран без внятной причины. Теперь
+  // падение видно и в консоли, и тостом — с ним уже можно работать.
+  App.init().catch((err) => {
+    console.error('App.init failed:', err);
+    if (App.showToast) App.showToast(t('err.unexpected'), 'error');
+  });
 });

@@ -57,7 +57,7 @@ console.log('auth: initAuth-ветвления, метр пароля, совп�
   check('_usersExist=true', App._usersExist === true);
 
   // ── 3. /auth/me: уже залогинены → hideAuth, state.user ──
-  authMe.json = { authed: true, user: { id: 1, username: 'u' } };
+  authMe.json = { authed: true, user: { id: 1, username: 'u', is_admin: true } };
   await App.initAuth();
   check('залогинен: state.user проставлен',
     !!(App.state.user && App.state.user.username === 'u'), JSON.stringify(App.state.user));
@@ -66,6 +66,13 @@ console.log('auth: initAuth-ветвления, метр пароля, совп�
   check('залогинен: authReady резолвится сразу',
     await Promise.race([App.authReady.then(() => true),
       new Promise(r => setTimeout(() => r(false), 100))]) === true);
+  // ── 3b. /auth/me не-админ: is_admin=false должен доехать до state.user ──
+  // Именно на это опирается гейт настроек (static/js/settings.js): не-админ
+  // не должен дёргать /api/settings и получать 403 «только администратору».
+  authMe.json = { authed: true, user: { id: 4, username: 'guest', is_admin: false } };
+  await App.initAuth();
+  check('не-админ: state.user.is_admin === false',
+    App.state.user.is_admin === false, JSON.stringify(App.state.user));
 
   // ── 4. Метр пароля ──
   el('auth-password').value = 'abc';
@@ -119,7 +126,7 @@ console.log('auth: initAuth-ветвления, метр пароля, совп�
       return {
         ok: true, status: 200,
         headers: { get: () => 'application/json' },
-        json: async () => ({ ok: true, user: { id: 2, username: 'u' } }),
+        json: async () => ({ ok: true, user: { id: 2, username: 'u', is_admin: true } }),
       };
     }
     throw new Error('network down');
@@ -130,6 +137,8 @@ console.log('auth: initAuth-ветвления, метр пароля, совп�
   await App.authSubmit();
   check('authSubmit: успешный логин проставляет user',
     !!(App.state.user && App.state.user.id === 2), JSON.stringify(App.state.user));
+  check('authSubmit: is_admin из ответа логина доходит до state.user',
+    App.state.user.is_admin === true, JSON.stringify(App.state.user));
   check('authSubmit: ошибка очищена', el('auth-error').textContent === '');
   check('authSubmit: поля задизейблены после логина', el('auth-password').disabled === true);
 

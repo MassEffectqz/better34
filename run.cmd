@@ -65,7 +65,14 @@ if not defined LAN_IP (
 
 rem ── 3. Дефолты (как в run.ps1). ──
 if not defined BRIEFLY_HOST set "BRIEFLY_HOST=0.0.0.0"
-if not defined BRIEFLY_ALLOWED_HOSTS set "BRIEFLY_ALLOWED_HOSTS=%LAN_IP%"
+rem BRIEFLY_ALLOWED_HOSTS намеренно НЕ задаём по умолчанию. Если переменная
+rem пуста, host.go сам собирает адреса всех интерфейсов (localhost, LAN,
+rem Radmin 26.x, Tailscale 100.x) — и в Host-защиту, и в SAN сертификата.
+rem Раньше здесь стояло BRIEFLY_ALLOWED_HOSTS=%LAN_IP%: один адрес маршрута
+rem по умолчанию. Все остальные (в т.ч. Radmin VPN) получали 403
+rem {"error":"host not allowed"} — то есть вместо приложения пользователь
+rem видел JSON-ошибку («пустой сайт»). Свой список — в .env, без пробелов
+rem вокруг «=»: парсер .env ниже молча игнорирует такие строки.
 if not defined BRIEFLY_MEDIA_CACHE_GB set "BRIEFLY_MEDIA_CACHE_GB=20"
 rem HTTPS + HTTP/2 (self-signed сертификат в data/tls): первый вход — принять
 rem исключение безопасности («Дополнительно» → «Перейти на сайт» на телефоне).
