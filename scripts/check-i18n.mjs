@@ -82,10 +82,12 @@ for (const [k, set] of ruPh) {
 
 // Строгий режим (по умолчанию): неиспользуемый ключ — ошибка. Ключи err.*
 // собираются динамически в API._err ('err.' + code из ответа сервера) — их
-// статический разбор не видит, поэтому они в белом списке.
+// статический разбор не видит, поэтому они в белом списке. Аналогично
+// friends.err* берутся из friendStatusErr[...] и попадают в t() переменной
+// (friendErrText) — тот же случай динамического поиска.
 // Отключить строгость: node scripts/check-i18n.mjs --allow-unused
 const ALLOW_UNUSED = process.argv.includes('--allow-unused');
-const DYNAMIC_PREFIXES = ['err.'];
+const DYNAMIC_PREFIXES = ['err.', 'friends.err'];
 const unused = [...ru.keys].filter((k) => !used.has(k) && !DYNAMIC_PREFIXES.some((p) => k.startsWith(p)));
 console.log(`i18n: RU=${ru.keys.size} EN=${en.keys.size} used=${used.size} unused=${unused.length}`);
 if (unused.length) {

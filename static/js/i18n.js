@@ -151,6 +151,8 @@ const RU = {
   'friends.dislikeCount': '{n} раз',
   'friends.postsCount': '{n} постов',
   'friends.showMore': 'Показать ещё ({n})',
+  'friends.gridSize': 'Размер сетки',
+
   'friends.empty': 'Друзей пока нет. Нажмите «Мой код», отправьте его другу, а у себя вставьте его код.',
   'friends.pending': 'Ожидает обмена',
   'friends.remove': 'Удалить друга',
@@ -762,6 +764,8 @@ const EN = {
   'friends.dislikeCount': '{n}×',
   'friends.postsCount': '{n} posts',
   'friends.showMore': 'Show more ({n})',
+  'friends.gridSize': 'Grid size',
+
   'friends.empty': 'No friends yet. Press "My code", send it to your friend, then paste their code here.',
   'friends.pending': 'Waiting for sync',
   'friends.remove': 'Remove friend',

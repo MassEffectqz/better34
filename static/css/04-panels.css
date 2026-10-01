@@ -274,6 +274,13 @@ body.friend-profile-open #header,body.friend-profile-open main{display:none}
 .friend-profile-body{min-height:0}
 .friend-post-grid{gap:4px}
 .friend-profile-more{margin-top:10px;align-self:flex-start}
+/* Размер сетки друга: select над плитками, число колонок задаёт --pf-cols,
+   который вешаем на оверлей (см. _wireFriendGrid). */
+.friend-grid-bar{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-bottom:8px}
+.friend-grid-bar.hidden{display:none}
+.friend-grid-label{font-size:.68rem;color:var(--text-dim)}
+.friend-grid-select{width:auto;min-width:54px;padding:3px 6px}
+
 .friend-dislike-row,.friend-coll-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px}
 .friend-dislike-n,.friend-coll-n{font-size:.7rem;color:var(--text-dim);flex-shrink:0}
 .friend-coll-name{font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -277,5 +277,64 @@ const reset = () => { hist.calls = []; hist.state = null; bodyCls._s = new Set()
   check('страница друга: боковая панель отрисована',
     box.innerHTML.includes('friend-side-tabs') && box.innerHTML.includes('btn-friend-back'));
 }
+// ── 10. Размер сетки на странице друга ──────────────────────────────────────
+// Выбранное число колонок живёт в localStorage (не трогает ленту), применяется
+// через --pf-cols на оверлее и переживает переключение вкладок и переоткрытие.
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+  const root = join(here, '..', '..');
+  const friends = readFileSync(join(root, 'js', 'friends.js'), 'utf8');
+  check('контрол размера сетки есть в разметке страницы друга',
+    friends.includes('id="friend-grid-size"') && friends.includes('id="friend-grid-bar"'));
+  check('варианты 2..6 генерируются в select', friends.includes('[2, 3, 4, 5, 6]') && friends.includes('<option value="${n}">'));
+
+  // Харнесс выше даёт setItem-пустышку: для проверки сохранения подставляем рабочий.
+  const store = {};
+  defG('localStorage', {
+    getItem: (k) => (store[k] != null ? store[k] : null),
+    setItem: (k, v) => { store[k] = String(v); },
+    removeItem: (k) => { delete store[k]; },
+  });
+
+  const a = Object.create(App);
+  a.state = { gridCols: null };
+  check('по умолчанию прежние 3 колонки', a._friendGridCols() === 3, String(a._friendGridCols()));
+  a.state.gridCols = 5;
+  check('без своей настройки берётся глобальная плотность', a._friendGridCols() === 5, String(a._friendGridCols()));
+  store['briefly_friend_grid_cols'] = '2';
+  check('своя настройка сильнее глобальной', a._friendGridCols() === 2, String(a._friendGridCols()));
+  store['briefly_friend_grid_cols'] = '99';
+  check('мусор в хранилище не ломает выбор', a._friendGridCols() === 5, String(a._friendGridCols()));
+  delete store['briefly_friend_grid_cols'];
+
+  const box = getEl('friend-profile');
+  const applied = [];
+  box.style = { setProperty: (k, v) => applied.push([k, v]) };
+  a._wireFriendGrid(box);
+  check('колонки применяются к оверлею через --pf-cols',
+    applied.some(([k, v]) => k === '--pf-cols' && v === '5'), JSON.stringify(applied));
+
+  const sel = getEl('friend-grid-size');
+  check('контрол показывает текущее значение', sel.value === '5', sel.value);
+  sel.value = '4';
+  sel.fire('change');
+  check('смена колонок применяется сразу',
+    applied.some(([k, v]) => k === '--pf-cols' && v === '4'), JSON.stringify(applied));
+  check('смена колонок сохраняется', store['briefly_friend_grid_cols'] === '4',
+    String(store['briefly_friend_grid_cols']));
+
+  // Полоса сетки прячется на вкладках без плиток (теги, альбомы).
+  const a2 = Object.create(App);
+  a2.state = { gridCols: null };
+  a2._friendProfile = { id: 'x', tab: 'collections', shown: 60, data: { friend: {} } };
+  a2.renderFriendProfileTabs = App.renderFriendProfileTabs;
+  const bar = getEl('friend-grid-bar');
+  bar.classList.remove('hidden');
+  await a2.renderFriendProfileTabs();
+  check('на вкладке альбомов полоса сетки скрыта', bar.classList.contains('hidden'));
+  a2._friendProfile.tab = 'likes';
+  await a2.renderFriendProfileTabs();
+  check('на вкладке лайков полоса сетки видна', !bar.classList.contains('hidden'));
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

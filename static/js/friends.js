@@ -167,6 +167,44 @@ const FRIEND_TAB_ICONS = {
 function friendUrl(id, tab) {
   return tab && tab !== 'likes' ? `/friend/${id}/${tab}` : `/friend/${id}`;
 }
+// Размер сетки на странице друга: своя настройка (ленту не трогает), иначе
+// глобальная плотность из настроек, иначе прежние 3 колонки.
+const FRIEND_GRID_KEY = 'briefly_friend_grid_cols';
+
+/** Число колонок плиток друга: сохранённое → глобальное → 3. */
+App._friendGridCols = function () {
+  let raw = null;
+  try { raw = localStorage.getItem(FRIEND_GRID_KEY); } catch {}
+  const saved = Number(raw);
+  if (raw !== null && raw !== '' && Number.isInteger(saved) && saved >= 2 && saved <= 6) return saved;
+  const g = this.state && this.state.gridCols;
+  return (Number.isInteger(g) && g >= 2 && g <= 6) ? g : 3;
+};
+
+/**
+ * Колонки применяются через --pf-cols на оверлее: .profile-thumbs читает
+ * var(--pf-cols, 3). select пересоздаётся вместе с разметкой, поэтому
+ * обработчик вешаем при каждой отрисовке — на старом элементе его уже нет.
+ */
+App._wireFriendGrid = function (box) {
+  const apply = (cols) => {
+    if (box && box.style && typeof box.style.setProperty === 'function') {
+      box.style.setProperty('--pf-cols', String(cols));
+    }
+  };
+  const cols = this._friendGridCols();
+  apply(cols);
+  const sel = $('friend-grid-size');
+  if (!sel) return;
+  sel.value = String(cols);
+  sel.addEventListener('change', () => {
+    const n = Number(sel.value);
+    if (!Number.isInteger(n) || n < 2 || n > 6) return;
+    try { localStorage.setItem(FRIEND_GRID_KEY, String(n)); } catch {}
+    apply(n);
+  });
+};
+
 
 /**
  * Открывает страницу профиля друга.
@@ -266,7 +304,13 @@ App.renderFriendProfile = async function () {
           <button id="btn-friend-profile-sync" class="btn btn-sm friend-side-sync" title="${esc(t('friends.syncTitle'))}">${icon('refresh', 13)} <span>${esc(t('friends.sync'))}</span></button>
         </div>
       </aside>
-      <div class="friend-content"><div id="friend-profile-body" class="friend-profile-body"></div></div>
+      <div class="friend-content">
+        <div class="friend-grid-bar${st.tab === 'likes' || st.tab === 'disliked' ? '' : ' hidden'}" id="friend-grid-bar">
+          <span class="friend-grid-label">${esc(t('friends.gridSize'))}</span>
+          <select id="friend-grid-size" class="tag-preset-select friend-grid-select" title="${esc(t('friends.gridSize'))}" aria-label="${esc(t('friends.gridSize'))}">${[2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('')}</select>
+        </div>
+        <div id="friend-profile-body" class="friend-profile-body"></div>
+      </div>
     </div>`;
   // Показываем страницу сразу, до догрузки постов: скелетоны уже на месте.
   // Раньше hidden снимался только в showFriendCode (для #friends-code-box), то
@@ -277,6 +321,8 @@ App.renderFriendProfile = async function () {
 
   $('btn-friend-back').addEventListener('click', () => this.closeFriendProfile());
   $('btn-friend-profile-sync').addEventListener('click', () => this._friendProfileSync(st));
+  this._wireFriendGrid(box);
+
   this._friendSideWhen(f);
   await this.renderFriendProfileTabs();
 };
@@ -340,6 +386,10 @@ App.renderFriendProfileTabs = async function () {
       el.addEventListener('click', () => this._friendProfileTab(el.dataset.tab));
     });
   }
+  // Сетка — только на вкладках с плитками: теги и альбомы колонок не имеют.
+  const gridBar = $('friend-grid-bar');
+  if (gridBar) gridBar.classList.toggle('hidden', st.tab !== 'likes' && st.tab !== 'disliked');
+
 
   body.innerHTML = '';
   if (st.tab === 'favtags') return this._friendTags(body, f.fav_tags || [], 'fav');
