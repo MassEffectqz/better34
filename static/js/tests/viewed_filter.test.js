@@ -228,5 +228,25 @@ console.log('Фильтр «Все/Новое/Виденное»\n');
   check('без фильтра кэш листа прежний', a._feedCacheKey() === 'briefly_feed_cache', String(a._feedCacheKey()));
 }
 
+// ── 6. Регрессия: пока открыт профиль друга, лента не догружается ─────────
+// body.friend-profile-open прячет main, поэтому сентинель внутри скрытого
+// контейнера отдаёт нулевой rect и _sentinelNearViewport() вечно true. Цикл
+// loadPosts → maybeLoadMore → loadPosts выкачивал гелбору по странице в секунду:
+// у друга ушло 1800 постов вместо его лайков, а UI не отрисовался.
+{
+  const a = makeApp();
+  calls = [];
+  // Кэш листа живёт в localStorage и переживает блоки: без сброса loadPosts
+  // выйдет по нему раньше, чем дойдёт до API, и тест окажется вхолостую.
+  localStorage.removeItem('briefly_feed_cache');
+  responses = [{ match: '/posts?', data: { posts: [post(1)] } }];
+  a._friendProfile = { id: 'abc123', tab: 'likes' };
+  await a.loadPosts(true);
+  await flush();
+  check('профиль друга открыт: запрос ленты не уходит',
+    calls.length === 0, JSON.stringify(calls));
+  check('профиль друга открыт: loading не залип и профиль на месте',
+    a.state.loading === false && a._friendProfile.id === 'abc123');
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) throw new Error(`${failed} checks failed`);

@@ -268,6 +268,12 @@ App.renderFriendProfile = async function () {
       </aside>
       <div class="friend-content"><div id="friend-profile-body" class="friend-profile-body"></div></div>
     </div>`;
+  // Показываем страницу сразу, до догрузки постов: скелетоны уже на месте.
+  // Раньше hidden снимался только в showFriendCode (для #friends-code-box), то
+  // есть НИКОГДА для этого оверлея. При этом body.friend-profile-open прячет
+  // #header и main, а .friend-profile.hidden{display:none} — сам оверлей, так
+  // что открытие профиля друга давало гарантированный чёрный экран.
+  box.classList.remove('hidden');
 
   $('btn-friend-back').addEventListener('click', () => this.closeFriendProfile());
   $('btn-friend-profile-sync').addEventListener('click', () => this._friendProfileSync(st));

@@ -256,5 +256,26 @@ const reset = () => { hist.calls = []; hist.state = null; bodyCls._s = new Set()
   check('пост без превью помечается pf-broken', none.classList.contains('pf-broken'));
 }
 
+// ── 9. Регрессия: страница друга показывается, а не чёрный экран ───────────
+// hidden с оверлея снимался только в showFriendCode — и то для #friends-code-box.
+// Для самого #friend-profile его не снимал никто, хотя body.friend-profile-open
+// прячет #header и main, а .friend-profile.hidden{display:none} — сам оверлей.
+// Итог: открытие /friend/<id> давало гарантированный чёрный экран без ошибок.
+{
+  const a = Object.create(App);
+  a._friendProfile = {
+    id: 'abc123', tab: 'likes', shown: 60,
+    data: { friend: { id: 'abc123', nickname: 'Друг', url: 'https://x/', likes: [], disliked: [], fav_tags: [], disliked_tags: [], collections: [] } },
+  };
+  a._friendSideWhen = function () {};
+  a.renderFriendProfileTabs = async function () {};
+  const box = getEl('friend-profile');
+  box.classList.add('hidden');
+  await App.renderFriendProfile.call(a);
+  check('страница друга: hidden снят с оверлея',
+    !box.classList.contains('hidden'), box.innerHTML.slice(0, 60));
+  check('страница друга: боковая панель отрисована',
+    box.innerHTML.includes('friend-side-tabs') && box.innerHTML.includes('btn-friend-back'));
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

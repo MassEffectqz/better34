@@ -461,6 +461,16 @@ App.resetFilters = function () {
 
 /** @this {AppType} */
 App.loadPosts = async function (reset = true, restorePostId = null, forceRefresh = false) {
+  // Страница друга перекрывает ленту (body.friend-profile-open прячет main), и
+  // тогда сентинель внутри скрытого контейнера отдаёт нулевой rect —
+  // _sentinelNearViewport() вечно true. Цикл loadPosts → maybeLoadMore →
+  // loadPosts догружал гелбору по странице в секунду, пока открыт профиль друга
+  // (у друга ушло 1800 постов вместо его лайков). Ленте под оверлеем грузиться
+  // незачем, а closeFriendProfile состояние ленты не трогает.
+  // Проверяем _friendProfile, а не класс на body: то же самое время жизни
+  // (ставится в openFriendProfile, снимается в closeFriendProfile), но без
+  // зависимости от DOM.
+  if (this._friendProfile) return;
   if (this.state.loading) {
     if (reset) {
       this._pendingReload = { reset, restorePostId };
