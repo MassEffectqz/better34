@@ -97,6 +97,10 @@ func main() {
 		api.POST("/rename", handler.BatchRename)
 		api.GET("/settings", handler.GetSettings)
 		api.POST("/settings", handler.UpdateSettings)
+		// Источники постов — НЕ настройки: их показывает шапка всем, поэтому
+		// список и смена активного источника живут отдельно от requireAdmin.
+		api.GET("/providers", handler.ListProviders)
+		api.POST("/providers", handler.SetProvider)
 		api.GET("/stats", handler.GetStats)
 		api.DELETE("/posts/:id", handler.DeletePost)
 		api.GET("/suggest", handler.SuggestTags)

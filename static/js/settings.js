@@ -68,19 +68,39 @@ App.renderProviderOptions = function (providers) {
   if (prev) sel.value = prev;
 };
 
+// Источники постов (бейдж и меню в шапке, селект в настройках) нужны ВСЕМ, а
+// не только администратору: раньше список жил исключительно в /api/settings под
+// requireAdmin, и loadSettings() у обычного пользователя выходил раньше запроса —
+// шапка показывала голое «rule34» из HTML, а меню не рисовалось вовсе.
+App.loadProviders = async function () {
+  try {
+    this.applyProviders(await API.get('/providers'));
+  } catch (err) {
+    console.error('Failed to load providers:', err);
+  }
+};
+
+/** Общая часть /api/providers и /api/settings: список источников и активный. */
+App.applyProviders = function (d) {
+  if (!d) return;
+  this.state.providers = d.providers || [];
+  this.state.activeProvider = d.provider || 'rule34';
+  this.state.maxQueryLen = d.max_query_len || 3800;
+  this.renderProviderOptions(this.state.providers);
+  if (this.els.settingProvider) this.els.settingProvider.value = this.state.activeProvider;
+  this.renderProviderBadge();
+};
+
 App.loadSettings = async function () {
+  // Список источников — отдельным запросом и до проверки админства.
+  await this.loadProviders();
   // Серверные настройки (API-ключи, пути, прокси) — только для админа:
   // у остальных /api/settings отвечает 403 "Настройки доступны только
   // администратору". Не дёргаем запрос зря и не шумим в консоль.
   if (this.state.user && this.state.user.is_admin === false) return;
   try {
     const d = await API.get('/settings');
-    this.renderProviderOptions(d.providers);
-    if (this.els.settingProvider) this.els.settingProvider.value = d.provider || 'rule34';
-    this.state.activeProvider = d.provider || 'rule34';
-    this.state.providers = d.providers || [];
-    this.state.maxQueryLen = d.max_query_len || 3800;
-    this.renderProviderBadge();
+    this.applyProviders(d);
     this.renderAPIKeys(d.api_keys || []);
     this.els.settingProxy.value = d.proxy_url || '';
     this.els.settingSavepath.value = d.save_path || 'data/posts';
@@ -161,7 +181,8 @@ App.renderProviderBadge = function () {
 App.switchProvider = async function (value) {
   if (!value || value === this.state.activeProvider) return;
   try {
-    await API.post('/settings', { provider: value });
+    // POST /settings админский, а источник в шапке видят и переключают все.
+    await API.post('/providers', { provider: value });
     this.state.activeProvider = value;
     if (this.els.settingProvider) this.els.settingProvider.value = value;
     this.renderProviderBadge();

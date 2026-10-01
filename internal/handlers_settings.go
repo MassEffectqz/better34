@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,16 +23,25 @@ func requireAdmin(c *gin.Context) bool {
 	return u != "" && GetAccounts().IsAdmin(u)
 }
 
+// providerList — список источников для UI: встроенные + сторонние из
+// data/providers.json, с человеческими именами. Один и тот же список отдают и
+// админские настройки, и публичный /api/providers — иначе в шапке и в
+// настройках показывалось бы разное.
+func providerList() []gin.H {
+	descriptors := allProviderDescriptors()
+	providers := make([]gin.H, 0, len(descriptors))
+	for _, p := range descriptors {
+		providers = append(providers, gin.H{"value": p.Name, "name": p.DisplayName})
+	}
+	return providers
+}
+
 func (h *Handler) GetSettings(c *gin.Context) {
 	if !requireAdmin(c) {
 		AbortWithError(c, ErrAdminOnly)
 		return
 	}
 	cfg := GetConfig()
-	providers := make([]gin.H, 0, len(knownProviders))
-	for _, p := range allProviderDescriptors() {
-		providers = append(providers, gin.H{"value": p.Name, "name": p.DisplayName})
-	}
 	maxQueryLen := h.effectiveMaxQueryLen()
 	c.JSON(http.StatusOK, gin.H{
 		"api_keys":             cfg.GetAPICredentials(),
@@ -43,9 +53,73 @@ func (h *Handler) GetSettings(c *gin.Context) {
 		"min_id":               cfg.GetMinID(),
 		"rename_template":      cfg.GetRenameTemplate(),
 		"provider":             cfg.GetProvider(),
-		"providers":            providers,
+		"providers":            providerList(),
 		"max_query_len":        maxQueryLen,
 	})
+}
+
+// ListProviders — GET /api/providers: источники постов, активный источник и
+// лимит длины запроса.
+//
+// (Имя не «GetProviders»: на Handler уже есть GetProviders, отдающий мапу
+// провайдеров для поиска.)
+//
+// Это НЕ настройки сервера, поэтому эндпоинт не админский. Бейдж «Источник
+// постов» в шапке видят все, а список жил только в /api/settings под
+// requireAdmin: у обычного пользователя loadSettings() выходил раньше запроса,
+// шапка оставляла голое «rule34» из HTML, а меню источников не рисовалось
+// вовсе. Ровно так выглядел инстанс, куда входили не администратором.
+func (h *Handler) ListProviders(c *gin.Context) {
+	cfg := GetConfig()
+	c.JSON(http.StatusOK, gin.H{
+		"providers":     providerList(),
+		"provider":      cfg.GetProvider(),
+		"max_query_len": h.effectiveMaxQueryLen(),
+	})
+}
+
+// canSwitchSource — кто вправе сменить активный источник.
+//
+// Шапочный бейдж источника видят все, поэтому менять его может любой вошедший
+// пользователь. В legacy-режиме (аккаунтов нет) сессий не бывает вовсе — там,
+// как и остальному API, доверяем локальной сети.
+func canSwitchSource(c *gin.Context) bool {
+	if requireAdmin(c) {
+		return true
+	}
+	if GetAccounts().Count() == 0 {
+		return true
+	}
+	return sessionUser(c) != ""
+}
+
+// SetProvider — POST /api/providers {"provider":"rule34"}.
+//
+// Отдельный эндпоинт вместо POST /settings: тот админский, а источник в шапке
+// должен переключаться всеми, кому он там показан.
+func (h *Handler) SetProvider(c *gin.Context) {
+	if !canSwitchSource(c) {
+		AbortWithError(c, ErrAuthRequired)
+		return
+	}
+	var req struct {
+		Provider string `json:"provider"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		AbortWithError(c, ErrInvalidRequest)
+		return
+	}
+	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
+	// Мусор не молчим: тихо оставшийся прежним источник выглядел бы как
+	// «нажал — не переключилось».
+	if !isKnownProvider(req.Provider) {
+		AbortWithError(c, ErrInvalidRequest)
+		return
+	}
+	cfg := GetConfig()
+	cfg.SetProvider(req.Provider)
+	cfg.Save()
+	c.JSON(http.StatusOK, gin.H{"ok": true, "provider": req.Provider})
 }
 
 func (h *Handler) UpdateSettings(c *gin.Context) {

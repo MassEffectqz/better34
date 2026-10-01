@@ -31,7 +31,7 @@ export const App = {
     /** @type {number | null} */ gridCols: null,
     // Авто-рефреш ленты после скачивания (через SSE post_saved).
     autoRefreshFeed: true,
-    // Активный источник (заполняется из /settings): 'all' — режим «Все сайты».
+    // Активный источник (заполняется из /providers): 'all' — режим «Все сайты».
     activeProvider: 'rule34', ratingFilter: '',
     // Фильтр «просмотрено» для локальной ленты: '' — все, '0' — новые, '1' — виденное.
     viewedFilter: '',
