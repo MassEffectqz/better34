@@ -381,5 +381,40 @@ const reset = () => { hist.calls = []; hist.state = null; bodyCls._s = new Set()
   check('у скрытой страницы снимок тоже сброшен', a._friendProfile.data === null);
   API.get = origGet;
 }
+// ── 12. Регрессия: плитка профиля друга открывает пост, а лайк — штатный ────
+// Клик (и Enter) по плитке чужого списка уходит в openPostById →
+// openViewerByPostId: тот достраивает пост запросом /posts-by-ids и открывает
+// вьювер, откуда лайк штатным feedToggleLike (POST /api/like/:id). Ломалось бы
+// молча: сетка есть, а пост не открывается и лайкнуть нельзя.
+{
+  const a = makeApp();
+  const opened = [];
+  a.openPostById = (id) => { opened.push(id); return true; };
+  const tile = a._friendTile({ id: 77, tags: 'x', preview_url: 'https://cdn/p.jpg' });
+  tile.fire('click');
+  check('клик по плитке друга открывает пост', opened.length === 1 && opened[0] === 77,
+    JSON.stringify(opened));
+  tile.fire('keydown', { key: 'Enter', preventDefault() {} });
+  check('Enter на плитке (роль button) тоже открывает', opened.length === 2,
+    JSON.stringify(opened));
+}
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+  const root = join(here, '..', '..');
+  const app = readFileSync(join(root, 'js', 'app.js'), 'utf8');
+  const state = readFileSync(join(root, 'js', 'state.js'), 'utf8');
+  const viewer = readFileSync(join(root, 'js', 'viewer.js'), 'utf8');
+
+  // openPostById определён в tag_popover.js: если модуль не подключён к
+  // бандлу, клик по плитке друга падает на undefined.
+  check('tag_popover.js (openPostById) подключён к бандлу',
+    app.includes("import './tag_popover.js'"), 'нет импорта в app.js');
+  // Открытие чужого поста — через общий путь с достраиванием /posts-by-ids.
+  check('openPostById ведёт в openViewerByPostId',
+    state.includes('async openViewerByPostId(') && app.includes("import './tag_popover.js'"));
+  // Лайк из вьювера — тот же POST /api/like/:id, что и в сетке ленты.
+  check('вьювер лайкает пост по /api/like/:id',
+    /feedToggleLike[\s\S]{0,200}?\/like\/\$\{post\.id\}/.test(viewer));
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

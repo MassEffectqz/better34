@@ -206,7 +206,7 @@ func TestApplyFriendPayloadIsAdditive(t *testing.T) {
 		Version: friendPayloadVersion, App: "briefly", Instance: inst, User: "vasya",
 		Likes: []friendLike{{PostID: 3, LikedAt: 300}, {PostID: 1, LikedAt: 50}},
 		Collections: []friendCollection{
-			{Name: "Моё", Posts: []int{2, 4, 4}}, // сливается с нашей по имени
+			{Name: "Моё", Posts: []int{2, 4, 4}}, // совпадает с моим именем — но в мои альбомы не вливается
 			{Name: "Общее", Posts: []int{7, 8}},
 		},
 	}
@@ -234,17 +234,19 @@ func TestApplyFriendPayloadIsAdditive(t *testing.T) {
 	if !p.OwnLikes[1] {
 		t.Error("мой лайк потерял метку OwnLikes")
 	}
-	if len(p.Collections) != 2 {
-		t.Fatalf("коллекций = %d, ждали 2 (слияние по имени)", len(p.Collections))
+	// Коллекции друга в мои альбомы НЕ вливаются (как и лайки): остаётся
+	// ровно своя «Моё» с прежними постами, чужое «Общее» не подмешивается.
+	if len(p.Collections) != 1 {
+		t.Fatalf("коллекций = %d, ждали 1 — чужие коллекции не должны входить в мои альбомы", len(p.Collections))
 	}
-	var merged []int
-	for _, c := range p.Collections {
-		if c.Name == "Моё" {
-			merged = c.Posts
-		}
+	mine := p.Collections[0]
+	if mine.Name != "Моё" || len(mine.Posts) != 2 || mine.Posts[0] != 1 || mine.Posts[1] != 2 {
+		t.Errorf("своя коллекция = %+v, ждали «Моё» {1,2} без изменений", mine)
 	}
-	if len(merged) != 3 {
-		t.Errorf("в «Моё» = %v, ждали {1,2,4} без дублей", merged)
+	// Статистика при этом честно считает, сколько коллекций ПРИШЛО (для
+	// ответа/логов): данные дошли — они в снимке друга, просто не в моём списке.
+	if st.Collections != 2 {
+		t.Errorf("получено коллекций = %d, ждали 2", st.Collections)
 	}
 	// Скрытия и избранные теги обменом НЕ передаются — наши не должны страдать.
 	if !p.HiddenPosts[99] {

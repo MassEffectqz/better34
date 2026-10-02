@@ -90,16 +90,26 @@ func TestEmptyTournamentBracketShape(t *testing.T) {
 	}
 }
 
-// Оффлайн-источник: набирает size участников, у всех непустой thumb и есть
-// score (иначе на финале нечего показать как эталон), повторов нет.
-func TestTournamentOfflinePicksScoredPosts(t *testing.T) {
-	db := tournamentTestDB(t, 40, true)
-	posts, available := tournamentOffline(db, nil, "", 8, nil)
-	if len(posts) != 8 {
-		t.Fatalf("получено %d участников, ожидалось 8 (всего доступно %d)", len(posts), available)
+// idsRange — 1..n: тестовые БД создают посты с такими id.
+func idsRange(n int) []int {
+	out := make([]int, 0, n)
+	for i := 1; i <= n; i++ {
+		out = append(out, i)
 	}
-	if available != 40 {
-		t.Errorf("available=%d, ожидалось 40", available)
+	return out
+}
+
+// Библиотека турнира — ЛАЙКИ: набирает size участников из лайкнутых постов,
+// у всех непустой thumb и есть score (иначе на финале нечего показать как
+// эталон), повторов нет.
+func TestTournamentLibraryPicksScoredPosts(t *testing.T) {
+	db := tournamentTestDB(t, 40, true)
+	posts, stats := tournamentLibrary(context.Background(), db, nil, tournamentIDQueryPlan{}, idsRange(40), nil, "", 8, nil)
+	if len(posts) != 8 {
+		t.Fatalf("получено %d участников, ожидалось 8 (всего доступно %d)", len(posts), stats.Available)
+	}
+	if stats.Available != 40 || stats.Liked != 40 || stats.Scored != 40 {
+		t.Errorf("stats=%+v, ожидались все счётчики по 40", stats)
 	}
 	seen := map[int]bool{}
 	for i, p := range posts {
@@ -121,30 +131,106 @@ func TestTournamentOfflinePicksScoredPosts(t *testing.T) {
 
 // Без оценки буры в турнир участвовать нельзя: эталон на финале недостижим,
 // иначе финал показал бы «эталон: 0» и игра потеряла бы смысл.
-func TestTournamentOfflineExcludesZeroScore(t *testing.T) {
+func TestTournamentLibraryExcludesZeroScore(t *testing.T) {
 	db := tournamentTestDB(t, 20, false)
-	posts, available := tournamentOffline(db, nil, "", 4, nil)
+	posts, stats := tournamentLibrary(context.Background(), db, nil, tournamentIDQueryPlan{}, idsRange(20), nil, "", 4, nil)
 	if len(posts) != 0 {
 		t.Errorf("получено %d участников из постов без score, ожидалось 0", len(posts))
 	}
-	if available != 0 {
-		t.Errorf("available=%d, ожидалось 0 (под score>0 подходит никто)", available)
+	if stats.Available != 0 || stats.Scored != 0 || stats.Liked != 20 {
+		t.Errorf("stats=%+v, ожидались available=0 scored=0 liked=20", stats)
 	}
 }
 
 // Библиотека меньше запрошенного размера — отдаём что есть, чтобы клиент мог
 // сказать «турнир на 8 не помещается, доступно N».
-func TestTournamentOfflineRespectsLibrarySize(t *testing.T) {
+func TestTournamentLibraryRespectsLibrarySize(t *testing.T) {
 	db := tournamentTestDB(t, 6, true)
-	posts, available := tournamentOffline(db, nil, "", 8, nil)
-	if len(posts) != 6 || available != 6 {
+	posts, stats := tournamentLibrary(context.Background(), db, nil, tournamentIDQueryPlan{}, idsRange(6), nil, "", 8, nil)
+	if len(posts) != 6 || stats.Available != 6 {
 		t.Errorf("получено %d (available %d), ожидалось 6 — библиотека меньше размера сетки",
-			len(posts), available)
+			len(posts), stats.Available)
+	}
+}
+
+// Скачано — не значит участвует: библиотека турнира состоит из ЛАЙКОВ.
+// Полная БД скачанного при пустых лайках не даёт ни одного участника.
+func TestTournamentLibraryWithoutLikes(t *testing.T) {
+	db := tournamentTestDB(t, 10, true)
+	posts, stats := tournamentLibrary(context.Background(), db, nil, tournamentIDQueryPlan{},
+		nil, nil, "", 8, nil)
+	if len(posts) != 0 || stats.Available != 0 || stats.Liked != 0 || stats.Scored != 0 {
+		t.Errorf("постов %d, stats=%+v — ожидались нули, ведь ни один пост не лайкнут",
+			len(posts), stats)
+	}
+}
+
+// Лайкнут только часть: в сетку попадают только они — по id, без подмешивания
+// соседних скачанных постов.
+func TestTournamentLibraryTakesOnlyLiked(t *testing.T) {
+	db := tournamentTestDB(t, 10, true)
+	liked := []int{3, 5, 7}
+	posts, stats := tournamentLibrary(context.Background(), db, nil, tournamentIDQueryPlan{},
+		liked, nil, "", 8, nil)
+	if len(posts) != 3 || stats.Available != 3 || stats.Liked != 3 {
+		t.Fatalf("постов %d, stats=%+v — ожидались 3 лайка и только они", len(posts), stats)
+	}
+	// Scored считается по всем лайкам в БД (здесь — 3), а не по всей БД.
+	if stats.Scored != 3 {
+		t.Errorf("scored=%d, ожидалось 3 (только по лайкнутым)", stats.Scored)
+	}
+	allowed := map[int]bool{3: true, 5: true, 7: true}
+	for _, p := range posts {
+		if !allowed[p.ID] {
+			t.Errorf("участник %d не лайкнут — в библиотеке ему нечего делать", p.ID)
+		}
+	}
+}
+
+// Чего нет в БД — спрашиваем у источника: лайк мог быть поставлен раньше или
+// с другого устройства. Без этой ветки участник турнира пропадал бы из игры.
+func TestTournamentLibraryFetchesMissingFromSource(t *testing.T) {
+	db := tournamentTestDB(t, 4, true) // id 1..4 лежат в БД
+	liked := []int{1, 2, 9001, 9002}   // 9001/9002 в БД нет
+	mock := &stubTournamentProvider{
+		name: "rule34",
+		postsFunc: func(tags string, page, limit, minID int) ([]Rule34Post, error) {
+			if !strings.HasPrefix(tags, "id:") {
+				t.Errorf("источник спрошен как %q, ожидался пакетный id:", tags)
+			}
+			return []Rule34Post{
+				{ID: 9001, Score: 5, Tags: "remote", Rating: "general",
+					FileURL: "https://r/9001.jpg", PreviewURL: "https://r/p9001.jpg"},
+				{ID: 9002, Score: 6, Tags: "remote", Rating: "general",
+					FileURL: "https://r/9002.jpg", PreviewURL: "https://r/p9002.jpg"},
+			}, nil
+		},
+	}
+	posts, stats := tournamentLibrary(context.Background(), db, mock,
+		tournamentIDQueryPlan{batch: true, prefix: "id:"}, liked, nil, "", 8, nil)
+	// 4 лайка = 4 участника: 1 и 2 из БД, 9001/9002 — дозапрошены у источника.
+	if stats.Liked != 4 || stats.Available != 4 || len(posts) != 4 {
+		t.Fatalf("постов %d, stats=%+v — ожидались 4 лайка и 4 участника (2 из источника)",
+			len(posts), stats)
+	}
+	seen := map[int]bool{}
+	for _, p := range posts {
+		seen[p.ID] = true
+		if p.ID >= 9001 {
+			if p.Downloaded || p.Thumb == "" {
+				t.Errorf("участник из источника: downloaded=%v thumb=%q", p.Downloaded, p.Thumb)
+			}
+		}
+	}
+	for _, id := range []int{9001, 9002} {
+		if !seen[id] {
+			t.Errorf("лайк %d из источника не попал в сетку", id)
+		}
 	}
 }
 
 // Скрытые теги профиля не должны попадать в сетку.
-func TestTournamentOfflineRespectsHiddenTags(t *testing.T) {
+func TestTournamentLibraryRespectsHiddenTags(t *testing.T) {
 	db := NewPostDB(filepath.Join(t.TempDir(), "p.db"))
 	defer db.Close()
 	for i := 1; i <= 10; i++ {
@@ -155,9 +241,10 @@ func TestTournamentOfflineRespectsHiddenTags(t *testing.T) {
 		db.UpsertMeta(&Post{ID: i, Tags: tags, Score: i, FileURL: "https://x/a.jpg"})
 		db.SetDownloaded(i, "data/save/a.jpg", "thumbs/a.jpg")
 	}
-	posts, _ := tournamentOffline(db, []string{"spoiler"}, "", 5, nil)
-	if len(posts) != 5 {
-		t.Fatalf("получено %d участников, ожидалось 5", len(posts))
+	posts, stats := tournamentLibrary(context.Background(), db, nil, tournamentIDQueryPlan{},
+		idsRange(10), []string{"spoiler"}, "", 5, nil)
+	if len(posts) != 5 || stats.Available != 5 {
+		t.Fatalf("получено %d (available %d), ожидалось 5", len(posts), stats.Available)
 	}
 	for _, p := range posts {
 		if containsWord(p.Tags, "spoiler") {
@@ -178,11 +265,12 @@ func containsWord(tags, word string) bool {
 // Повторные турниры должны давать разные участники. Без перемешивания БД
 // отдаёт «последние N постов», и второй заход в тот же день был бы тем же
 // набором — игра превратилась бы в прокрутку вчерашнего.
-func TestTournamentOfflineVariesBetweenRuns(t *testing.T) {
+func TestTournamentLibraryVariesBetweenRuns(t *testing.T) {
 	db := tournamentTestDB(t, 60, true)
 	seenSets := make([]string, 0, 8)
 	for i := 0; i < 8; i++ {
-		posts, _ := tournamentOffline(db, nil, "", 8, nil)
+		posts, _ := tournamentLibrary(context.Background(), db, nil, tournamentIDQueryPlan{},
+			idsRange(60), nil, "", 8, nil)
 		if len(posts) != 8 {
 			t.Fatalf("заход %d: участников %d, ожидалось 8", i, len(posts))
 		}
@@ -477,6 +565,30 @@ func tournamentTestServer(t *testing.T, path string, h gin.HandlerFunc) *httptes
 	return ts
 }
 
+// likeTestPosts — «лайкнуть» id в тестовом профиле, предварительно сбросив
+// прежние лайки: GetTournament без сессии читает GetProfile(), а в HTTP-тестах
+// профиль один на весь прогон — лайки прошлого теста не должны протекать сюда.
+func likeTestPosts(t *testing.T, ids ...int) {
+	t.Helper()
+	p := GetProfile()
+	reset := func() {
+		p.mu.Lock()
+		p.LikedPosts = map[int]bool{}
+		p.LikedAt = map[int]int64{}
+		p.OwnLikes = map[int]bool{}
+		p.mu.Unlock()
+	}
+	reset()
+	p.mu.Lock()
+	for _, id := range ids {
+		p.LikedPosts[id] = true
+		p.OwnLikes[id] = true
+		p.LikedAt[id] = int64(id)
+	}
+	p.mu.Unlock()
+	t.Cleanup(reset)
+}
+
 // Фильтр рейтинга на уровне эндпоинта: sfw/18+ меняют состав участников, в
 // ответе видно применённый фильтр, а мусорный rating — ошибка запроса, а не
 // тихий возврат к «все».
@@ -484,14 +596,18 @@ func TestGetTournamentRatingHTTP(t *testing.T) {
 	db := setupTournamentDB(t)
 	// 8 general + 8 explicit: сетка на 4 помещается в любом режиме, иначе
 	// отличать «отфильтровано» от «не хватает постов» было бы нечем.
+	ids := make([]int, 0, 16)
 	for i := 1; i <= 8; i++ {
 		for j, rating := range []string{"general", "explicit"} {
 			id := (j+1)*100 + i
 			db.UpsertMeta(&Post{ID: id, Score: 10, Tags: "x", Rating: rating,
 				FileURL: fmt.Sprintf("https://x/%d.jpg", id)})
 			db.SetDownloaded(id, fmt.Sprintf("data/save/%d.jpg", id), fmt.Sprintf("thumbs/%d.jpg", id))
+			ids = append(ids, id)
 		}
 	}
+	// Библиотека турнира — лайки: без лайков сетка не собралась бы вовсе.
+	likeTestPosts(t, ids...)
 	ts := tournamentTestServer(t, "/api/tournament", NewHandler().GetTournament)
 
 	type respBody struct {
@@ -548,20 +664,20 @@ func TestGetTournamentRatingHTTP(t *testing.T) {
 }
 
 // «Нет постов в библиотеке» — это три разные причины, и пользователю нужно
-// назвать именно его: пустая библиотека, скачанное без оценки буры (эталона для
-// финала нет) или фильтры, отсеявшие всё. Поэтому в ответе для оффлайна едут
-// оба счётчика, посчитанные БЕЗ фильтров: по одному available «нет скачанного»
-// не отличить от «всё скачанное отсеяли теги/рейтинг».
+// назвать именно его: пустые лайки, лайки без оценки буры (эталона для финала
+// нет) или фильтры, отсеявшие всё. Поэтому в ответе для оффлайна едут
+// оба счётчика, посчитанные БЕЗ фильтров: по одному available «лайков нет»
+// не отличить от «всё лайкнутое отсеяли теги/рейтинг».
 func TestGetTournamentNotEnoughExplainsWhy(t *testing.T) {
 	db := setupTournamentDB(t)
 	ts := tournamentTestServer(t, "/api/tournament", NewHandler().GetTournament)
 
 	type respBody struct {
-		Error      string           `json:"error"`
-		Available  int              `json:"available"`
-		Downloaded int              `json:"downloaded"`
-		Scored     int              `json:"scored"`
-		Posts      []TournamentPost `json:"posts"`
+		Error     string           `json:"error"`
+		Available int              `json:"available"`
+		Liked     int              `json:"liked"`
+		Scored    int              `json:"scored"`
+		Posts     []TournamentPost `json:"posts"`
 	}
 	get := func() respBody {
 		t.Helper()
@@ -576,38 +692,56 @@ func TestGetTournamentNotEnoughExplainsWhy(t *testing.T) {
 		}
 		return out
 	}
-	download := func(id, score int) {
+	// addPost создаёт запись (и скачивает, чтобы БД была «полной»), но в
+	// библиотеку турнира пост попадёт только после лайка.
+	addPost := func(id, score int) {
 		db.UpsertMeta(&Post{ID: id, Tags: "x", Score: score, FileURL: fmt.Sprintf("https://x/%d.jpg", id)})
 		db.SetDownloaded(id, fmt.Sprintf("data/save/%d.jpg", id), fmt.Sprintf("thumbs/%d.jpg", id))
 	}
+	liked := []int{}
 
-	// 1. Библиотека пуста: турнир собрать не из чего.
+	// 1. Лайков нет: турнир собрать не из чего. likeTestPosts без id чистит
+	// профиль от лайков предыдущих HTTP-тестов (профиль в тестах общий).
+	likeTestPosts(t)
 	out := get()
 	if out.Error != ErrTournamentNotEnough.Code {
 		t.Fatalf("пустая библиотека: error=%q, ожидался %q", out.Error, ErrTournamentNotEnough.Code)
 	}
-	if out.Downloaded != 0 || out.Scored != 0 || out.Available != 0 {
+	if out.Liked != 0 || out.Scored != 0 || out.Available != 0 {
 		t.Errorf("пустая библиотека: %+v — ожидались нули во всех счётчиках", out)
 	}
 
-	// 2. Посты скачаны, но без оценки буры: участвовать не в чем (эталон финала
-	// показывать нечем).
+	// 2. Посты есть, но лайкнуты неоценённые: участвовать не в чем (эталон
+	// финала показывать нечем).
 	for i := 1; i <= 6; i++ {
-		download(i, 0)
+		addPost(i, 0)
+		liked = append(liked, i)
 	}
+	likeTestPosts(t, liked...)
 	out = get()
-	if out.Downloaded != 6 || out.Scored != 0 || out.Available != 0 {
-		t.Errorf("без оценки: %+v — ожидались downloaded=6 scored=0 available=0", out)
+	if out.Liked != 6 || out.Scored != 0 || out.Available != 0 {
+		t.Errorf("без оценки: %+v — ожидались liked=6 scored=0 available=0", out)
 	}
 
 	// 3. Оценка есть, но годных постов меньше, чем участников: available — это
-	// «сколько подходит под фильтры», downloaded — «сколько лежит всего».
+	// «сколько подходит под фильтры», liked — «сколько лайкнуто всего».
 	for i := 7; i <= 8; i++ {
-		download(i, 5)
+		addPost(i, 5)
+		liked = append(liked, i)
 	}
+	likeTestPosts(t, liked...)
 	out = get()
-	if out.Downloaded != 8 || out.Scored != 2 || out.Available != 2 || len(out.Posts) != 0 {
-		t.Errorf("мало постов: %+v — ожидались downloaded=8 scored=2 available=2 posts=0", out)
+	if out.Liked != 8 || out.Scored != 2 || out.Available != 2 || len(out.Posts) != 0 {
+		t.Errorf("мало постов: %+v — ожидались liked=8 scored=2 available=2 posts=0", out)
+	}
+
+	// 4. Скачанный, но НЕ лайкнутый пост в библиотеку не идёт: библиотека —
+	// лайки, а не downloaded (иначе библиотека друга-«телефона» была бы пуста,
+	// а мой список скачанного подмешался бы в чужой турнир).
+	addPost(9, 50)
+	out = get()
+	if out.Liked != 8 || out.Scored != 2 || out.Available != 2 {
+		t.Errorf("не лайкнутый скачан: %+v — ожидались liked=8 scored=2 available=2", out)
 	}
 }
 
@@ -709,12 +843,12 @@ func longIDList(count int) string {
 // sensitive, «18+» — наоборот. Проверяем и available: сообщение «в библиотеке
 // только N подходящих» обязано считать посты, оставшиеся ПОСЛЕ фильтра, иначе
 // игрок увидел бы «доступно 12» при шести годных постах.
-func TestTournamentOfflineRating(t *testing.T) {
+func TestTournamentLibraryRating(t *testing.T) {
 	build := func(t *testing.T) *PostDB {
 		db := NewPostDB(filepath.Join(t.TempDir(), "p.db"))
 		t.Cleanup(func() { db.Close() })
-		// Регистр вперемешку: сайты пишут рейтинг как попало, и LOWER() в SQL
-		// обязан это переварить, иначе «18+»-турнир протащил бы general.
+		// Регистр вперемешку: сайты пишут рейтинг как попало, и ToLower при
+		// фильтрации обязан это переварить, иначе «18+»-турнир протащил бы general.
 		for i, rating := range []string{"general", "general", "safe", "sensitive", "questionable", "explicit", "Explicit"} {
 			id := i + 1
 			db.UpsertMeta(&Post{ID: id, Score: 10, Tags: "x", Rating: rating,
@@ -733,21 +867,24 @@ func TestTournamentOfflineRating(t *testing.T) {
 	}
 
 	_, sfwExcl := ratingFilter("sfw")
-	posts, available := tournamentOffline(build(t), nil, "", 8, sfwExcl)
-	if available != 3 || !slices.Equal(ratings(posts), []string{"general", "general", "safe"}) {
-		t.Errorf("sfw: посты %v, available=%d — ожидались general/general/safe и 3", ratings(posts), available)
+	posts, stats := tournamentLibrary(context.Background(), build(t), nil, tournamentIDQueryPlan{},
+		idsRange(7), nil, "", 8, sfwExcl)
+	if stats.Available != 3 || !slices.Equal(ratings(posts), []string{"general", "general", "safe"}) {
+		t.Errorf("sfw: посты %v, stats=%+v — ожидались general/general/safe и 3", ratings(posts), stats)
 	}
 
 	_, nsfwExcl := ratingFilter("nsfw")
-	posts, available = tournamentOffline(build(t), nil, "", 8, nsfwExcl)
-	if available != 4 || !slices.Equal(ratings(posts), []string{"Explicit", "explicit", "questionable", "sensitive"}) {
-		t.Errorf("18+: посты %v, available=%d — ожидались 4 поста без general", ratings(posts), available)
+	posts, stats = tournamentLibrary(context.Background(), build(t), nil, tournamentIDQueryPlan{},
+		idsRange(7), nil, "", 8, nsfwExcl)
+	if stats.Available != 4 || !slices.Equal(ratings(posts), []string{"Explicit", "explicit", "questionable", "sensitive"}) {
+		t.Errorf("18+: посты %v, stats=%+v — ожидались 4 поста без general", ratings(posts), stats)
 	}
 
 	// «Все»: фильтра нет, в наборку попадает вся библиотека.
-	posts, available = tournamentOffline(build(t), nil, "", 8, nil)
-	if available != 7 || len(posts) != 7 {
-		t.Errorf("все: получено %d (available %d), ожидалось 7", len(posts), available)
+	posts, stats = tournamentLibrary(context.Background(), build(t), nil, tournamentIDQueryPlan{},
+		idsRange(7), nil, "", 8, nil)
+	if stats.Available != 7 || len(posts) != 7 {
+		t.Errorf("все: получено %d (available %d), ожидалось 7", len(posts), stats.Available)
 	}
 }
 

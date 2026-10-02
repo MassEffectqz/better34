@@ -494,8 +494,8 @@ console.log('Регрессии турнира\n');
     !/SFW|18\+/.test(await toastFor('', tooFew) || ''), String(await toastFor('', tooFew)));
 
   // Оффлайн-турнир: «постов нет» — это три разных случая, и раньше все три
-  // читались как «в библиотеке ничего нет», хотя скачанные посты были. Числа
-  // downloaded/scored сервер считает без фильтров — по одному available их не
+  // читались как «в библиотеке ничего нет». Библиотека — лайки, поэтому числа
+  // liked/scored сервер считает без фильтров — по одному available их не
   // различить (его обнуляют и теги, и рейтинг).
   {
     const mkOff = () => {
@@ -515,18 +515,18 @@ console.log('Регрессии турнира\n');
     };
     const base = { error: 'tournament_not_enough_posts', size: 8, source: 'offline' };
 
-    const empty = await offToast({ ...base, available: 0, downloaded: 0, scored: 0 });
-    check('пустая библиотека объясняется скачиванием',
-      /скач/i.test(empty) && !/оценки буры/.test(empty), empty);
+    const empty = await offToast({ ...base, available: 0, liked: 0, scored: 0 });
+    check('пустая библиотека объясняется отсутствием лайков',
+      /лайк/i.test(empty) && !/оценки буры/.test(empty), empty);
 
-    const noScore = await offToast({ ...base, available: 0, downloaded: 12, scored: 0 });
-    check('скачанные посты без оценки буры — отдельная причина',
+    const noScore = await offToast({ ...base, available: 0, liked: 12, scored: 0 });
+    check('лайки без оценки буры — отдельная причина',
       /12/.test(noScore) && /оценк/i.test(noScore), noScore);
 
     // Посты годные, но их мало под тегами — тут виноват фильтр, а не библиотека.
-    const few = await offToast({ ...base, available: 2, downloaded: 30, scored: 30 });
+    const few = await offToast({ ...base, available: 2, liked: 30, scored: 30 });
     check('нехватки из-за тегов не валят на библиотеку',
-      /2/.test(few) && !/скач/i.test(few) && !/оценк/i.test(few), few);
+      /2/.test(few) && !/лайк/i.test(few) && !/оценк/i.test(few), few);
   }
 }
 

@@ -359,10 +359,10 @@ App._trNotEnoughMsg = function (d) {
   // превращать онлайн-турнир в «библиотека пуста».
   const src = d.source || this._tournament.source;
   if (src !== 'online') {
-    // downloaded/scored приходят без фильтров: по одному available «нет
-    // скачанного» не отличить от «всё скачанное без оценки буры».
-    if (d.downloaded === 0) return t('tr.emptyLib');
-    if (d.scored === 0) return t('tr.noScores', { downloaded: d.downloaded });
+    // liked/scored приходят без фильтров: по одному available «лайков нет»
+    // не отличить от «всё лайкнутое без оценки буры».
+    if (d.liked === 0) return t('tr.emptyLib');
+    if (d.scored === 0) return t('tr.noScores', { liked: d.liked });
   }
   if (this._tournament.rating) {
     return t('tr.notEnoughRating', {

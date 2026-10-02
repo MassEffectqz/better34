@@ -797,8 +797,14 @@ type mergeStats struct {
 func (m mergeStats) total() int { return m.Likes + m.Collections + m.Comments }
 
 // applyFriendPayload вливает данные друга в наш профиль. Строго ADDITIVE по
-// коллекциям и комментариям: ничего не удаляем и не перезаписываем — иначе один
-// сбой у друга стёр бы нашу библиотеку.
+// комментариям: ничего не удаляем и не перезаписываем — иначе один сбой у
+// друга стёр бы нашу библиотеку.
+//
+// Как и лайки, КОЛЛЕКЦИИ друга в наши альбомы не вливаются: альбом — личное,
+// как и вкус. Раньше их слияли по имени, и чужие подборки оказывались в моём
+// списке альбомов («Моё» друга сливалась с «Моё» моим). Теперь чужие
+// коллекции живут там, где им место, — на странице друга (снимок,
+// noteSnapshot), отдельно от моих.
 //
 // Исключение — ЛАЙКИ: они не вливаются в «Мои лайки», а только запоминаются как
 // чужие (FriendLikes) и убираются из LikedPosts, если пост не лайкнут мной самим
@@ -852,31 +858,15 @@ func applyFriendPayload(in *friendPayload, instance string, p *Profile) (mergeSt
 			delete(p.LikedAt, l.PostID)
 		}
 	}
-	// Коллекции объединяем по имени без учёта регистра: общий альбом должен
-	// быть один, а не по копии на каждого друга.
+	// Коллекции друга в мои альбомы НЕ вливаем (см. док к функции): альбом —
+	// личное, и слияние по имени подмешивало чужие подборки к своим. Считаем
+	// только, сколько коллекций пришло, — для статистики обмена и логов; сами
+	// они хранятся в снимке (noteSnapshot) и видны на странице друга.
 	for _, fc := range in.Collections {
-		name := truncateRunes(fc.Name, 80)
-		if name == "" {
+		if truncateRunes(fc.Name, 80) == "" {
 			continue
 		}
-		idx := -1
-		for i, c := range p.Collections {
-			if strings.EqualFold(c.Name, name) {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			p.Collections = append(p.Collections, Collection{
-				ID: newPresetID(), Name: name,
-				Posts: dedupeInts(fc.Posts, maxFriendCollsPC), CreatedAt: fc.CreatedAt,
-			})
-			st.Collections++
-			continue
-		}
-		if mergePosts(&p.Collections[idx].Posts, fc.Posts, maxFriendCollsPC) {
-			st.Collections++
-		}
+		st.Collections++
 	}
 	p.mu.Unlock()
 
@@ -904,41 +894,6 @@ func applyFriendPayload(in *friendPayload, instance string, p *Profile) (mergeSt
 		return st, err
 	}
 	return st, nil
-}
-
-func dedupeInts(in []int, max int) []int {
-	seen := make(map[int]bool, len(in))
-	out := make([]int, 0, len(in))
-	for _, v := range in {
-		if v <= 0 || seen[v] {
-			continue
-		}
-		seen[v] = true
-		out = append(out, v)
-		if len(out) >= max {
-			break
-		}
-	}
-	return out
-}
-
-// mergePosts дописывает новые id в конец, сохраняя порядок. true — если
-// что-то добавилось.
-func mergePosts(dst *[]int, src []int, max int) bool {
-	seen := make(map[int]bool, len(*dst))
-	for _, v := range *dst {
-		seen[v] = true
-	}
-	added := false
-	for _, v := range src {
-		if v <= 0 || seen[v] || len(*dst) >= max {
-			continue
-		}
-		seen[v] = true
-		*dst = append(*dst, v)
-		added = true
-	}
-	return added
 }
 
 // ── HTTP-обмен между инстансами ──────────────────────────────────────────────

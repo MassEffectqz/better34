@@ -94,15 +94,27 @@ func (h *Handler) GetTournament(c *gin.Context) {
 	for tg := range profile.HiddenTags {
 		hidden = append(hidden, strings.ToLower(strings.TrimLeft(tg, "+-")))
 	}
+	// Библиотека турнира — мои лайки (см. tournamentLibrary): id берём здесь же,
+	// под одним мьютексом, вместе со скрытыми тегами.
+	liked := make([]int, 0, len(profile.LikedPosts))
+	for id := range profile.LikedPosts {
+		if id > 0 {
+			liked = append(liked, id)
+		}
+	}
 	profile.mu.RUnlock()
 
 	tags := ResolveAliasesInQuery(c.Query("tags"))
 
 	var posts []TournamentPost
 	var available int
+	var libStats tournamentLibStats
 	var appErr *AppError
 	if source == "offline" {
-		posts, available = tournamentOffline(db, hidden, tags, size, ratingExcl)
+		prov := h.provider()
+		posts, libStats = tournamentLibrary(c.Request.Context(), db, prov,
+			tournamentIDQueryPlanFor(prov), liked, hidden, tags, size, ratingExcl)
+		available = libStats.Available
 	} else {
 		posts, available, appErr = h.tournamentOnline(tags, size, ratingTerms, ratingExcl)
 	}
@@ -114,8 +126,8 @@ func (h *Handler) GetTournament(c *gin.Context) {
 		// Отдельный код: клиенту нужно сказать пользователю, что турнир такого
 		// размера не помещается в библиотеку, а не «что-то сломалось».
 		//
-		// downloaded/scored считаются БЕЗ фильтров: по одному available нельзя
-		// отличить «скачанных постов нет» от «посты есть, но без оценки буры» и
+		// liked/scored считаются БЕЗ фильтров: по одному available нельзя
+		// отличить «лайков нет» от «лайки есть, но без оценки буры» и
 		// от «всё отсеяли теги» — а это три разных совета пользователю.
 		resp := gin.H{
 			"error": ErrTournamentNotEnough.Code, "message": ErrTournamentNotEnough.Message,
@@ -124,8 +136,7 @@ func (h *Handler) GetTournament(c *gin.Context) {
 			"bracket": emptyTournamentBracket(rounds),
 		}
 		if source == "offline" {
-			all, scored := db.CountDownloadedStats()
-			resp["downloaded"], resp["scored"] = all, scored
+			resp["liked"], resp["scored"] = libStats.Liked, libStats.Scored
 		}
 		c.JSON(http.StatusOK, resp)
 		return
@@ -221,40 +232,222 @@ func parseTournamentRounds(s string) (int, bool) {
 	return v, true
 }
 
-// tournamentOffline набирает участников из локальной библиотеки.
-//
-// Требуем score > 0: без оценки буры финал теряет смысл (нечего показать
-// пользователю как «правильный ответ»). Скачанные, но неоценённые посты в игру
-// не попадают намеренно.
-//
-// ratingExcl (sfw/18+) уходит в SQL, а не в режет постов в Go: отфильтрованный
-// COUNT едет в поле available, и сообщение «в библиотеке только N постов» должно
-// считать именно те посты, что остались после фильтра рейтинга.
-func tournamentOffline(db *PostDB, hidden []string, tags string, size int, ratingExcl map[string]bool) ([]TournamentPost, int) {
-	f := LocalFilter{Tags: tags, Hidden: hidden, Viewed: -1, MinScore: 1, RatingExcl: ratingExcl}
-	// Берём с запасом: limit — это потолок страницы, а не гарантия «ровно size
-	// годных постов» (часть отсеется дедупом по id).
-	const pool = 64
-	all, available := db.SearchDownloadedPaged(f, pool, 0)
+// tournamentLibStats — счётчики библиотеки для ответа «постов не хватает».
+// Все, кроме Available, считаются БЕЗ фильтров: по одному available нельзя
+// отличить «лайков нет» от «всё отсеяли теги/рейтинг» — а это разные советы.
+type tournamentLibStats struct {
+	Liked     int // сколько моих лайков вообще
+	Scored    int // сколько из лежащих в БД имеют оценку буры (>0)
+	Available int // сколько прошло фильтры (скрытые теги, запрос, рейтинг)
+}
 
-	out := make([]TournamentPost, 0, len(all))
-	seen := make(map[int]bool, len(all))
-	for _, p := range all {
-		if p.ID <= 0 || seen[p.ID] {
+// tournamentLibGroup — одна группа запроса тегов: «a b -c» после разбиения по
+// «|». Внутри группы И (все позитивные есть, ни одного негативного), группы
+// между собой ИЛИ — ровно семантика локального поиска (SearchDownloaded).
+// Мета-токены (rating:, sort:) игнорируются.
+type tournamentLibGroup struct {
+	pos, neg []string
+}
+
+// parseTournamentLibQuery разбирает запрос тегов библиотеки. Синтаксис — тот же,
+// что в поиске: пробелы И, «|» ИЛИ, «-» исключение. Разбор повторён локально,
+// потому что SearchDownloaded работает по таблице downloaded, а библиотеке
+// турнира нужен тот же фильтр по произвольному списку лайков.
+func parseTournamentLibQuery(tags string) []tournamentLibGroup {
+	var out []tournamentLibGroup
+	for _, part := range strings.Split(tags, "|") {
+		var g tournamentLibGroup
+		for _, tok := range strings.Fields(strings.ToLower(part)) {
+			if strings.ContainsRune(tok, ':') {
+				continue // мета-токены локального поиска тут не применимы
+			}
+			if neg := strings.TrimPrefix(tok, "-"); neg != tok {
+				if neg != "" {
+					g.neg = append(g.neg, neg)
+				}
+				continue
+			}
+			g.pos = append(g.pos, tok)
+		}
+		if len(g.pos) > 0 || len(g.neg) > 0 {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+func (g tournamentLibGroup) match(set map[string]bool) bool {
+	for _, want := range g.pos {
+		if !set[want] {
+			return false
+		}
+	}
+	for _, bad := range g.neg {
+		if set[bad] {
+			return false
+		}
+	}
+	return true
+}
+
+// tournamentLibPass — проходит ли лайкнутый пост фильтры библиотеки.
+//
+// Требуем score > 0: без оценки буры финал теряет смысл (эталона нет) — та же
+// причина, что и раньше у офлайн-набора. ratingExcl (sfw/18+) режет здесь же:
+// выборка идёт по списку лайков, SQL не при чём.
+func tournamentLibPass(q []tournamentLibGroup, hidden []string, ratingExcl map[string]bool,
+	tags string, score int, rating string) bool {
+	if score <= 0 {
+		return false
+	}
+	if len(ratingExcl) > 0 && ratingExcl[strings.ToLower(rating)] {
+		return false
+	}
+	set := make(map[string]bool)
+	for _, f := range strings.Fields(strings.ToLower(tags)) {
+		set[f] = true
+	}
+	for _, h := range hidden {
+		if set[h] {
+			return false // скрытый тег профиля — пост не показываем
+		}
+	}
+	if len(q) == 0 {
+		return true
+	}
+	for _, g := range q {
+		if g.match(set) {
+			return true
+		}
+	}
+	return false
+}
+
+// tournamentLibrary — участники «Из библиотеки»: мои лайки, а не скачанное.
+//
+// Скачанного у типичного пользователя может не быть ни одного поста, а лайки
+// есть всегда — они ставятся прямо в ленте. Библиотека турнира — это
+// LikedPosts: пост берётся из локальной БД, а чего в БД нет — спрашивается у
+// источника, пока не наберётся пул кандидатов. Игра запускается сразу после
+// первого лайка и работает без сети, если посты уже в базе.
+//
+// Кандидаты собираются в случайном порядке (ids перемешиваются), поэтому
+// повторный турнир даёт другой состав — как и раньше.
+//
+// liked/hidden приходят нормализованными из GetTournament (id; нижний регистр
+// без ведущих +/-). prov == nil или пустой plan означают «только локально».
+func tournamentLibrary(ctx context.Context, db *PostDB, prov Provider, plan tournamentIDQueryPlan,
+	liked []int, hidden []string, tags string, size int, ratingExcl map[string]bool,
+) ([]TournamentPost, tournamentLibStats) {
+	var stats tournamentLibStats
+	stats.Liked = len(liked)
+	if len(liked) == 0 {
+		return nil, stats
+	}
+	ids := make([]int, len(liked))
+	copy(ids, liked)
+	rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
+
+	q := parseTournamentLibQuery(tags)
+	const (
+		// Пул кандидатов: с запасом до максимальной сетки (32), дедуп по id.
+		libPool = 64
+		// Потолок обращений к источнику за один старт: турнир не должен
+		// опрашивать бур по всем сотням лайков разом.
+		libRemoteIDs = 256
+		libChunk     = 512
+	)
+	remoteBudget := libRemoteIDs
+	out := make([]TournamentPost, 0, libPool)
+	seen := make(map[int]bool, libPool)
+
+	for start := 0; start < len(ids); start += libChunk {
+		end := start + libChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		byID := db.GetMany(ids[start:end])
+		missing := make([]int, 0, 8)
+		for _, id := range ids[start:end] {
+			p := byID[id]
+			if p == nil {
+				missing = append(missing, id)
+				continue
+			}
+			// Scored — по ВСЕМ лайкам в БД, даже после набора пула: счётчик
+			// нужен целиком, чтобы объяснить нехватку постов.
+			if p.Score > 0 {
+				stats.Scored++
+			}
+			if len(out) >= libPool || seen[id] ||
+				!tournamentLibPass(q, hidden, ratingExcl, p.Tags, p.Score, p.Rating) {
+				continue
+			}
+			seen[id] = true
+			out = append(out, tournamentLibLocal(p))
+		}
+		if len(out) >= libPool || len(missing) == 0 || prov == nil || plan.prefix == "" || remoteBudget <= 0 {
 			continue
 		}
-		seen[p.ID] = true
-		out = append(out, tournamentPostFromLocal(p))
+		ask := missing
+		if len(ask) > remoteBudget {
+			ask = ask[:remoteBudget]
+		}
+		remoteBudget -= len(ask)
+		fetched := tournamentFetchByIDs(ctx, prov, plan, ask)
+		// Идём по ask (а не по карте), чтобы порядок не зависел от карты.
+		for _, id := range ask {
+			rp, ok := fetched[id]
+			if !ok || seen[id] {
+				continue
+			}
+			if !tournamentLibPass(q, hidden, ratingExcl, rp.Tags, rp.Score, rp.Rating) {
+				continue
+			}
+			seen[id] = true
+			out = append(out, tournamentLibRemote(&rp))
+			if len(out) >= libPool {
+				break
+			}
+		}
 	}
 
-	// БД отдаёт посты по убыванию id — то есть «свежие». Для турнира это плохо:
-	// второй заход дал бы те же последние 64 поста, и пользователь узнавал бы
-	// участников. Перемешиваем и берём size случайных.
+	stats.Available = len(out)
+	// Порядок уже случайный (ids перемешаны), но кусок из источника мог
+	// прийти хвостом — перемешиваем ещё раз и берём size участников.
 	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
 	if len(out) > size {
 		out = out[:size]
 	}
-	return out, available
+	return out, stats
+}
+
+// tournamentLibLocal — участник из локальной записи. Лайк может не быть
+// скачан (в БД только превью): тогда миниатюру отдаём через прокси, как у
+// видео в tournamentPostFromLocal — /api/thumb для нескачанного поста не готов.
+func tournamentLibLocal(p *Post) TournamentPost {
+	tp := tournamentPostFromLocal(p)
+	if !p.Downloaded && p.ThumbPath == "" && p.PreviewURL != "" {
+		tp.Thumb = "/api/proxy?url=" + url.QueryEscape(p.PreviewURL) + "&kind=preview"
+	}
+	return tp
+}
+
+// tournamentLibRemote — лайк, которого ещё нет в нашей БД: сырые адреса
+// источника оборачиваем в прокси один раз (как в tournamentOnline) — сетка и
+// вьювер ждут готовые URL.
+func tournamentLibRemote(p *Rule34Post) TournamentPost {
+	thumb := "/api/proxy?url=" + url.QueryEscape(p.PreviewURL) + "&kind=preview"
+	if p.PreviewURL == "" {
+		thumb = "/api/proxy?url=" + url.QueryEscape(p.SampleURL) + "&kind=preview"
+	}
+	return TournamentPost{
+		ID: p.ID, Tags: p.Tags, Score: p.Score, Rating: p.Rating,
+		FileType: p.FileType, Width: p.Width, Height: p.Height,
+		Downloaded: false, Thumb: thumb, FileURL: p.FileURL,
+		PreviewURL: p.PreviewURL, SampleURL: p.SampleURL,
+		FileSize: p.FileSize, Source: p.Source,
+	}
 }
 
 func tournamentPostFromLocal(p *Post) TournamentPost {
@@ -310,7 +503,10 @@ func tournamentPostsByIDs(ctx context.Context, db *PostDB, prov Provider, plan t
 		pending = append(pending, id)
 	}
 
-	if len(pending) > 0 && source == "online" && prov != nil {
+	// Лайк-участник может не быть скачан и вообще отсутствовать в БД — тогда
+	// источник нужен и для «Из библиотеки» (только так галерея и «Открыть
+	// пост» найдут его файл). Локальная запись приоритетнее в любом режиме.
+	if len(pending) > 0 && prov != nil {
 		for id, p := range tournamentFetchByIDs(ctx, prov, plan, pending) {
 			byID[id] = tournamentPostFromRemote(p)
 		}
