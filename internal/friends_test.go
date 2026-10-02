@@ -267,6 +267,48 @@ func TestApplyFriendPayloadIsAdditive(t *testing.T) {
 	}
 }
 
+// Регрессия: обмен НИКОГДА не удаляет наши лайки.
+//
+// Профиль, созданный до разделения лайков: в LikedPosts лежит история, OwnLikes
+// пуст. Раньше обмен считал такие посты чужими (поста нет в OwnLikes) и удалял
+// их — у реального пользователя это снесло все 555 лайков за один обмен с другом,
+// чей список пришёл эхом. Теперь OwnLikes просто достраивается.
+func TestApplyFriendPayloadKeepsLikesOfLegacyProfile(t *testing.T) {
+	p := testProfile(t)
+	p.mu.Lock()
+	// До разделения лайков: лайки есть, метки «свой» — нет.
+	p.OwnLikes = map[int]bool{}
+	p.LikedAt = map[int]int64{1: 100, 2: 200}
+	p.mu.Unlock()
+
+	inst := "https://26.2.2.2:3000"
+	in := &friendPayload{
+		Version: friendPayloadVersion, App: "briefly", Instance: inst, User: "vasya",
+		// Друг прислал ровно наши лайки (эхо старой версии) — плюс свой.
+		Likes: []friendLike{{PostID: 1, LikedAt: 1}, {PostID: 2, LikedAt: 2}, {PostID: 777, LikedAt: 3}},
+	}
+	if _, err := applyFriendPayload(in, inst, p); err != nil {
+		t.Fatalf("applyFriendPayload: %v", err)
+	}
+	if !p.LikedPosts[1] || !p.LikedPosts[2] {
+		t.Fatalf("обмен удалил наши лайки: %v (профиль до разделения OwnLikes)", p.LikedPosts)
+	}
+	if p.LikedAt[1] != 100 || p.LikedAt[2] != 200 {
+		t.Errorf("обмен стёр время лайка: liked_at=%v", p.LikedAt)
+	}
+	// Чужой лайк, которого у нас не было, в «Мои лайки» не попадает.
+	if p.LikedPosts[777] {
+		t.Error("лайк друга добавлен в мои лайки")
+	}
+	if !p.FriendLikes[777] {
+		t.Error("лайк друга не помечен как чужой")
+	}
+	// А наши — помечены своими, чтобы следующий обмен не путался.
+	if !p.OwnLikes[1] || !p.OwnLikes[2] {
+		t.Errorf("миграция OwnLikes не сработала: %v", p.OwnLikes)
+	}
+}
+
 // Повторный обмен не рапортует о тех же лайках заново и не тащит чужое в «Мои
 // лайки» даже если я снял свой лайк: пост остаётся чужим (FriendLikes).
 func TestApplyFriendPayloadIsIdempotentForLikes(t *testing.T) {
