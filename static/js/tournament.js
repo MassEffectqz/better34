@@ -46,6 +46,15 @@ App._tournament = {
   seenRound: -1,
   /** @type {boolean} идёт анимация выбора — новые клики игнорируются */
   busy: false,
+  /**
+   * Вьювер открыт из галереи участников. Турнир при этом НЕ закрывается: он
+   * остаётся под вьювером целиком, иначе посмотреть второго-третьего участника
+   * было бы нельзя (closeTournament сбрасывал open и всю сетку).
+   * @type {boolean}
+   */
+  viewerOpen: false,
+  /** @type {object[] | null} выдача ленты, которую подменил вьювер участника */
+  viewerReturnPosts: null,
   stats: { played: 0, wins: 0 },
   /**
    * Посты участников из /api/tournament/posts, ключ — id поста. Именно эти
@@ -61,8 +70,14 @@ App._tournament = {
 };
 
 App.openTournament = function () {
+  // Если перед открытием висел просмотр участника — closeViewer вернёт нас в
+  // турнир (см. _trReturnFromViewer), а дальше мы всё равно переинициализируем
+  // состояние под новую игру. Порядок важен: сброс флагов — после закрытия,
+  // иначе closeViewer решит, что открыт «старый» турнир, и вернёт его поверх.
   this.closeViewer();
   this._tournament.open = true;
+  this._tournament.viewerOpen = false;
+  this._tournament.viewerReturnPosts = null;
   this._tournament.posts = null;
   this._tournament.bracket = [];
   this._tournament.winner = null;
@@ -87,6 +102,14 @@ App.openTournament = function () {
 };
 
 App.closeTournament = function () {
+  // Просмотр участника живёт ПОВЕРХ турнира (см. _trOpenPost): закрываем его
+  // первым, иначе оверлей вьювера остался бы висеть поверх уже закрытой игры.
+  // Порядок важен — closeViewer вернул бы нас в турнир, который мы закрываем.
+  if (this._tournament.viewerOpen) {
+    this._tournament.viewerOpen = false;
+    this._tournament.viewerReturnPosts = null;
+    this.closeViewer();
+  }
   this._tournament.open = false;
   this._tournament.loading = false;
   this.state.tournamentOpen = false;
@@ -654,6 +677,10 @@ App._trPick = function (idx) {
 // модификаторов. 1/2 и ←/→ выбирают сторону текущего матча, Enter запускает
 // турнир на стартовом экране, Esc закрывает игру.
 App.tournamentKey = function (e) {
+  // Вьювер открыт ПОВЕРХ турнира: клавиши принадлежат вьюверу (Esc закрывает
+  // пост, стрелки листают), а не игре. Иначе Esc закрыл бы весь турнир вместо
+  // просмотра, а «1»/«2» выбирали сторону матча под открытым постом.
+  if (this._tournament.viewerOpen) return;
   if (e.key === 'Escape') { e.preventDefault(); this.closeTournament(); return; }
   if (this._tournament.loading) return;
   const tag = e.target && e.target.tagName;
@@ -816,6 +843,11 @@ App._trWireGallery = function (box) {
 // Открыть пост участника во вьювере. Вьюверу отдаём запись как есть — сырые
 // адреса источника и downloaded: проксирование его дело, клиент адреса не
 // переписывает (иначе получается двойной /api/proxy и вечная загрузка).
+//
+// Турнир НЕ закрываем: он остаётся под вьювером и возвращается вместе с ним
+// (см. _trReturnFromViewer). Раньше здесь был closeTournament(), и тогда
+// посмотреть второго участника было невозможно — после первого «закрыл-открыл»
+// турнир исчезал вместе с сеткой.
 App._trOpenPost = async function (idx) {
   let post = this._trLinkedPost(idx);
   if (!post) {
@@ -828,9 +860,34 @@ App._trOpenPost = async function (idx) {
     this.showToast(t('tr.postGone'), 'error');
     return;
   }
-  this.closeTournament();
+  const tm = this._tournament;
+  // Выдачу ленты запоминаем: вьювер работает по state.posts, и без этого
+  // после возврата лента осталась бы из одного участника турнира.
+  if (!tm.viewerOpen) tm.viewerReturnPosts = this.state.posts;
+  tm.viewerOpen = true;
   this.state.posts = [post];
+  // Оверлей турнира прячем, а НЕ закрываем: open оставляем, иначе renderTournament
+  // при возврате вышел бы в финал/матч по обнулённой сетке.
+  const root = this.els.tournamentRoot;
+  if (root) root.classList.add('hidden');
+  this.state.tournamentOpen = true;
   this.openViewer(0);
+};
+
+// Возврат из вьювера обратно в турнир: показываем оверлей, восстанавливаем
+// выдачу ленты и перерисовываем экран (обычно это финал с галереей).
+// Вызывается из closeViewer.
+App._trReturnFromViewer = function () {
+  const tm = this._tournament;
+  if (!tm.viewerOpen) return;
+  tm.viewerOpen = false;
+  if (tm.viewerReturnPosts) {
+    this.state.posts = tm.viewerReturnPosts;
+    tm.viewerReturnPosts = null;
+  }
+  this.state.tournamentOpen = true;
+  // open=true сохраняется: турнир продолжается с того же места.
+  this.renderTournament();
 };
 
 // Финал: чемпион, его оценка буры и «сколько раз вы совпали с мнением

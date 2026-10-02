@@ -101,6 +101,12 @@ App.closeViewer = function (opts) {
   }
   if (this._releaseViewerTrap) { this._releaseViewerTrap(); this._releaseViewerTrap = null; }
   this.state.viewerOpen = false;
+  // Возврат из вьювера обратно в турнир: оверлей турнира остаётся живым под
+  // вьювером (см. _trOpenPost), поэтому возвращаем его сюда. Без этого после
+  // просмотра одного участника турнир был бы закрыт, и остальных не посмотреть.
+  if (this._tournament && this._tournament.viewerOpen && typeof this._trReturnFromViewer === 'function') {
+    this._trReturnFromViewer();
+  }
   this.els.viewer.classList.add('hidden');
   // a11y (#4): возвращаем фону скринридеры + убираем диалог-атрибуты.
   const main = document.getElementById('main');

@@ -18,7 +18,12 @@ App.onKeydown = function (e) {
 
   // Турнир «выбери лучшее» занимает весь экран: пока он открыт, клавиши
   // обслуживают только игру, иначе стрелки листали бы ленту под оверлеем.
-  if (this.state.tournamentOpen) { this.tournamentKey(e); return; }
+  // Исключение — просмотр участника: вьювер открыт ПОВЕРХ турнира, и там клавиши
+  // принадлежат посту (Esc закрывает просмотр, стрелки листают), а не игре.
+  if (this.state.tournamentOpen && !(this._tournament && this._tournament.viewerOpen)) {
+    this.tournamentKey(e);
+    return;
+  }
 
   if (e.key === '?' && !isInput && !viewerOpen) { e.preventDefault(); this.toggleHelp(); return; }
 

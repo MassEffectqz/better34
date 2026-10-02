@@ -409,8 +409,10 @@ const withEsc = (fn) => {
   const opened = [];
   const toasts = [];
   const app = mkFinal();
-  app.state = { posts: [] };
-  app.closeTournament = () => { app._tournament.open = false; };
+  app.state = { posts: [], tournamentOpen: true };
+  // Турнир при открытии участника НЕ закрывается (регрессия, секция 11): его
+  // оверлей просто прячется, поэтому стабу нужен classList.
+  app.els.tournamentRoot.classList = makeClassList();
   app.openViewer = (i) => { opened.push(i); };
   app.showToast = (msg, kind) => { toasts.push([msg, kind]); };
   await app._trFetchLinks();
@@ -706,6 +708,87 @@ const withEsc = (fn) => {
     (p7.els.tournamentRoot.innerHTML.match(/data-tr-tag="[^"]*/) || [''])[0]);
 }
 
+
+// ── 11. Просмотр участника не убивает турнир ────────────────────────────────
+// Регрессия: открытие участника из галереи вызывало closeTournament(), и после
+// возврата из вьювера турнир был закрыт — остальных участников посмотреть было
+// нельзя. Теперь турнир остаётся под вьювером и возвращается вместе с ним.
+{
+  const cls = makeClassList;
+  const feed = [{ id: 500 }, { id: 501 }];
+  const a = Object.create(App);
+  const root = { innerHTML: '', classList: cls(), querySelectorAll: () => [], querySelector: () => null, focus() {} };
+  a.els = { tournamentRoot: root };
+  a._tournament = {
+    open: true, loading: false, posts: posts(4),
+    // Первый круг разыгран, в финале победитель ещё не записан → экран финала.
+    bracket: [[[0, 1], [2, 3]], [[-1, -1]]], rounds: 2,
+    resolved: new Set(['0:0', '0:1']),
+    source: 'offline', rating: '', tags: '', winner: 0,
+    stats: { played: 1, wins: 1 }, links: null, linksLoading: false,
+    viewerOpen: false, viewerReturnPosts: null,
+  };
+  a.state = { posts: feed, query: '', tournamentOpen: true, viewerOpen: false, viewerIndex: 0 };
+  a.showToast = () => {};
+  a.invalidateFeedCache = () => {};
+  a.closeViewer = () => { App._trReturnFromViewer.call(a); };
+  a.openViewer = (i) => { a.state.viewerOpen = true; a.state.viewerIndex = i; };
+  a.renderTournamentFinal = () => { a._finalRendered = (a._finalRendered || 0) + 1; };
+  a.renderTournamentMatch = () => { a._matchRendered = (a._matchRendered || 0) + 1; };
+  a._trFetchLinks = async () => {};
+  // Ссылки уже есть — открытие не должно ходить в сеть.
+  a._tournament.links = {};
+  a._tournament.links[1] = { id: 1, file_url: 'https://r/1.jpg' };
+
+  await a._trOpenPost(0);
+  check('турнир остаётся открытым при просмотре участника',
+    a._tournament.open === true && a.state.tournamentOpen === true,
+    `open=${a._tournament.open} tournamentOpen=${a.state.tournamentOpen}`);
+  check('оверлей турнира спрятан под вьювером', root.classList.contains('hidden'));
+  check('вьювер открыт на пост участника',
+    a.state.viewerOpen === true && a.state.posts.length === 1 && a.state.posts[0].id === 1,
+    JSON.stringify(a.state.posts));
+  check('выдача ленты сохранена для возврата',
+    Array.isArray(a._tournament.viewerReturnPosts) && a._tournament.viewerReturnPosts.length === 2);
+
+  // Esc из вьювера = closeViewer = возврат в турнир.
+  a.closeViewer();
+  check('после закрытия просмотра турнир на месте',
+    a._tournament.open === true && a.state.tournamentOpen === true && a._tournament.viewerOpen === false,
+    `open=${a._tournament.open} viewerOpen=${a._tournament.viewerOpen}`);
+  check('оверлей турнира показан снова', !root.classList.contains('hidden'));
+  check('выдача ленты восстановлена', a.state.posts.length === 2 && a.state.posts[0].id === 500);
+  check('экран перерисован (финал с галереей)', a._finalRendered === 1, 'renders=' + a._finalRendered);
+
+  // Второй участник открывается так же — и турнир снова под ним.
+  a._tournament.links[3] = { id: 3, file_url: 'https://r/3.jpg' };
+  await a._trOpenPost(2);
+  check('второго участника тоже можно открыть',
+    a._tournament.open === true && a.state.posts.length === 1 && a.state.posts[0].id === 3);
+  a.closeViewer();
+  check('после второго просмотра турнир снова на месте', a._tournament.open === true);
+  check('выдача ленты не заменена на участника', a.state.posts.length === 2 && a.state.posts[0].id === 500);
+
+  // Esc в открытом вьювере не должен уходить в игру: турнир остаётся открыт.
+  a._trReturnFromViewer();
+  a._tournament.viewerOpen = true;
+  let gameClosed = 0;
+  a.closeTournament = () => { gameClosed++; };
+  a.tournamentKey = App.tournamentKey;
+  a.tournamentKey({ key: 'Escape', target: { tagName: 'BODY' }, preventDefault() {} });
+  check('Esc при открытом вьювере не закрывает турнир', gameClosed === 0, 'gameClosed=' + gameClosed);
+  check('турнир остался открытым', a._tournament.open === true);
+
+  // Закрытие турнира поверх открытого участника не оставляет вьювер висеть.
+  a._tournament.viewerOpen = true;
+  let viewerClosed = 0;
+  a.closeViewer = () => { viewerClosed++; };
+  App.closeTournament.call(a);
+  check('закрытие турнира закрывает и просмотр участника',
+    a._tournament.open === false && viewerClosed === 1, 'viewerClosed=' + viewerClosed);
+  check('флаги просмотра сброшены вместе с турниром',
+    a._tournament.viewerOpen === false && a._tournament.viewerReturnPosts === null);
+}
 
 console.log(`\nИтог: ${passed} ok, ${failed} fail`);
 if (failed) process.exit(1);
