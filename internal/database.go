@@ -627,6 +627,22 @@ func (db *PostDB) SearchDownloadedPaged(f LocalFilter, limit, offset int) ([]*Po
 	return page, total
 }
 
+// CountDownloadedStats — сколько всего постов скачано и сколько из них с
+// оценкой буры. Мини-игре нужны оба числа: «нет скачанных постов», «посты без
+// оценки» и «посты отсеял фильтр» — три разные причины, а из available их не
+// различить (он уже посчитан под тегами, скрытыми тегами и рейтингом).
+// Считаем одним проходом: второй COUNT по той же таблице был бы лишней работой.
+func (db *PostDB) CountDownloadedStats() (all, scored int) {
+	const q = `SELECT COUNT(*), COALESCE(SUM(CASE WHEN score>=1 THEN 1 ELSE 0 END), 0)` +
+		` FROM posts WHERE downloaded=1`
+	err := db.read.QueryRow(q).Scan(&all, &scored)
+	if err != nil {
+		log.Printf("[db] count downloaded: %v", err)
+		return 0, 0
+	}
+	return all, scored
+}
+
 // localFilterConds строит условия WHERE для выборки локальной библиотеки.
 // Вынесено отдельно, чтобы SearchDownloaded и постраничный вариант собирали
 // одинаковые условия и не разъезжались.

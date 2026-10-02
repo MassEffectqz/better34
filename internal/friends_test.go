@@ -185,6 +185,10 @@ func testProfile(t *testing.T) *Profile {
 	p.mu.Lock()
 	p.LikedPosts = map[int]bool{1: true, 2: true}
 	p.LikedAt = map[int]int64{1: 100, 2: 200}
+	// 1 и 2 лайкнуты лично нами: именно OwnLikes отличает мои лайки от чужих
+	// (лайки друга в LikedPosts не попадают — см. applyFriendPayload).
+	p.OwnLikes = map[int]bool{1: true, 2: true}
+	p.FriendLikes = map[int]bool{}
 	p.HiddenPosts = map[int]bool{99: true}
 	p.Presets = []QueryPreset{}
 	p.FavTags = map[string]bool{"cat": true}
@@ -210,11 +214,25 @@ func TestApplyFriendPayloadIsAdditive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("applyFriendPayload: %v", err)
 	}
-	if st.Likes != 1 { // только пост 3 новый; 1 уже был наш
-		t.Errorf("новых лайков = %d, ждали 1", st.Likes)
+	// Оба лайка для нас новые как «лайки друга»: 3 его, а 1 — общий (мы тоже
+	// лайкнули). Статистика считает именно пришедшее, а не слитое в наш профиль.
+	if st.Likes != 2 {
+		t.Errorf("новых лайков от друга = %d, ждали 2", st.Likes)
 	}
-	if !p.LikedPosts[3] {
-		t.Error("лайк друга не добавился")
+	// Главное: чужой лайк НЕ становится моим — он виден на странице друга, но
+	// не в «Моих лайках» (иначе профиль показывал бы вкусы друга).
+	if p.LikedPosts[3] {
+		t.Error("лайк друга попал в мои лайки")
+	}
+	if !p.FriendLikes[3] {
+		t.Error("лайк друга не учтён как чужой")
+	}
+	// А свой лайк на посте, который нравится и другу, обязан остаться.
+	if !p.LikedPosts[1] {
+		t.Error("мой лайк 1 вычищен чужим обменом")
+	}
+	if !p.OwnLikes[1] {
+		t.Error("мой лайк потерял метку OwnLikes")
 	}
 	if len(p.Collections) != 2 {
 		t.Fatalf("коллекций = %d, ждали 2 (слияние по имени)", len(p.Collections))
@@ -235,10 +253,33 @@ func TestApplyFriendPayloadIsAdditive(t *testing.T) {
 	if !p.FavTags["cat"] {
 		t.Error("наши избранные теги пропали")
 	}
-	// Более ранняя метка не перетирает нашу позднюю: иначе лента «Лайки»
-	// прыгала бы при каждой синхронизации.
+	// Метка времени моего лайка обменом не трогается вообще: раньше метку друга
+	// могли записать поверх, и лента «Лайки» прыгала при синхронизации.
 	if p.LikedAt[1] != 100 {
-		t.Errorf("liked_at[1] = %d, ранняя метка перетёрла нашу", p.LikedAt[1])
+		t.Errorf("liked_at[1] = %d, обмен перетёр мою метку", p.LikedAt[1])
+	}
+	if _, ok := p.LikedAt[3]; ok {
+		t.Errorf("чужому лайку записана метка времени: %v", p.LikedAt)
+	}
+}
+
+// Повторный обмен не рапортует о тех же лайках заново и не тащит чужое в «Мои
+// лайки» даже если я снял свой лайк: пост остаётся чужим (FriendLikes).
+func TestApplyFriendPayloadIsIdempotentForLikes(t *testing.T) {
+	p := testProfile(t)
+	inst := "https://26.2.2.2:3000"
+	in := &friendPayload{
+		Version: friendPayloadVersion, App: "briefly", Instance: inst, User: "vasya",
+		Likes: []friendLike{{PostID: 3, LikedAt: 300}},
+	}
+	if st, err := applyFriendPayload(in, inst, p); err != nil || st.Likes != 1 {
+		t.Fatalf("первый обмен: st=%+v err=%v, ждали один новый лайк", st, err)
+	}
+	if st, err := applyFriendPayload(in, inst, p); err != nil || st.Likes != 0 {
+		t.Fatalf("повторный обмен: st=%+v err=%v, новых лайков быть не должно", st, err)
+	}
+	if p.LikedPosts[3] {
+		t.Error("чужой лайк вернулся в мои лайки после повторного обмена")
 	}
 }
 
@@ -267,8 +308,11 @@ func TestApplyFriendPayloadRejectsBadInput(t *testing.T) {
 	if _, err := applyFriendPayload(in, inst, p); err != nil {
 		t.Errorf("различающийся instance отклонён: %v", err)
 	}
-	if !p.LikedPosts[6] {
+	if !p.FriendLikes[6] {
 		t.Error("валидный payload с чужим instance не применён")
+	}
+	if p.LikedPosts[6] {
+		t.Error("лайк друга из payload попал в мои лайки")
 	}
 }
 
@@ -335,19 +379,23 @@ func TestSyncOneFriendBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("syncOneFriend: %v", err)
 	}
-	if !p.LikedPosts[42] {
+	if !p.FriendLikes[42] {
 		t.Error("лайк друга не доехал до профиля")
+	}
+	if p.LikedPosts[42] {
+		t.Error("лайк друга влился в мои лайки")
 	}
 	if st.Likes != 1 {
 		t.Errorf("статистика = %+v, ждали один новый лайк", st)
 	}
-	// Наши лайки должны уйти другу — и только после того, как учтены его
-	// (порядок «сначала тянем, потом отдаём» убирает взаимное эхо).
+	// Другу уходят ТОЛЬКО мои лайки: чужой лайк не считается нашим, поэтому и
+	// пересылать его обратно нечего (раньше эхо гасило встречный обмен, теперь
+	// эхо невозможно в принципе).
 	if !containsLike(sent.Likes, 43) {
 		t.Error("наш лайк не отправлен другу")
 	}
-	if !containsLike(sent.Likes, 42) {
-		t.Error("лайк друга не отправлен обратно — синк не идемпотентен")
+	if containsLike(sent.Likes, 42) {
+		t.Error("лайк друга отправлен обратно как наш")
 	}
 }
 

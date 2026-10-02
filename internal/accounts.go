@@ -441,11 +441,32 @@ func (a *Accounts) migrateLegacyProfile(username string) {
 	p.mu.Lock()
 	var legacy Profile
 	if json.Unmarshal(data, &legacy) == nil {
-		p.LikedPosts = legacy.LikedPosts
-		p.HiddenPosts = legacy.HiddenPosts
-		p.Presets = legacy.Presets
-		p.FavTags = legacy.FavTags
-		p.HiddenTags = legacy.HiddenTags
+		// Копируем только непустое: присваивание nil из файла оставило бы карту
+		// профиля nil, а запись в неё — паника (500 на лайке/скрытии/теге).
+		// Пустые инициализированные карты из NewProfile при этом целы.
+		if legacy.LikedPosts != nil {
+			p.LikedPosts = legacy.LikedPosts
+		}
+		// Лайки старого единого профиля — наши: помечаем, иначе первый же обмен
+		// с другом принял бы их за чужие и вычистил.
+		p.OwnLikes = make(map[int]bool, len(p.LikedPosts))
+		for id, v := range p.LikedPosts {
+			if v {
+				p.OwnLikes[id] = true
+			}
+		}
+		if legacy.HiddenPosts != nil {
+			p.HiddenPosts = legacy.HiddenPosts
+		}
+		if legacy.Presets != nil {
+			p.Presets = legacy.Presets
+		}
+		if legacy.FavTags != nil {
+			p.FavTags = legacy.FavTags
+		}
+		if legacy.HiddenTags != nil {
+			p.HiddenTags = legacy.HiddenTags
+		}
 	}
 	p.mu.Unlock()
 	_ = p.Save()

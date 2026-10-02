@@ -1,16 +1,4 @@
-/* 08-tournament.css вЂ” РјРёРЅРё-РёРіСЂР° В«РІС‹Р±РµСЂРё Р»СѓС‡С€РµРµВ» (С‚СѓСЂРЅРёСЂРЅР°СЏ СЃРµС‚РєР°).
-   Р§Р°СЃС‚СЊ 9/9 РЅР°Р±РѕСЂР° better34.
 
-   Р¤Р°Р№Р» РІС‹СЂРµР·Р°РЅ РёР· Р±С‹РІС€РµРіРѕ РµРґРёРЅРѕРіРѕ style.css Р±РµР· РїРµСЂРµСЃС‚Р°РЅРѕРІРєРё РїСЂР°РІРёР»,
-   РїРѕСЌС‚РѕРјСѓ РєР°СЃРєР°Рґ СЃРѕР±РёСЂР°РµС‚СЃСЏ СЂРѕРІРЅРѕ РєР°Рє СЂР°РЅСЊС€Рµ вЂ” РїРѕСЂСЏРґРѕРє РїРѕРґРєР»СЋС‡РµРЅРёСЏ Р·Р°РґР°РЅ
-   С‡РёСЃР»РѕРІС‹Рј РїСЂРµС„РёРєСЃРѕРј Рё СЃРїРёСЃРєРѕРј <link> РІ static/index.html (СЃРІРµСЂС…Сѓ РІРЅРёР·).
-   РџСЂР°РІСЊС‚Рµ Р·РґРµСЃСЊ, Р° РЅРµ РІ СЃРѕСЃРµРґРЅРёС… С‡Р°СЃС‚СЏС…: specificity Рё РїРѕСЂСЏРґРѕРє РІР°Р¶РЅС‹. */
-
-/* РњРёРЅРё-РёРіСЂР° В«РІС‹Р±РµСЂРё Р»СѓС‡С€РµРµВ»: С‚СѓСЂРЅРёСЂРЅР°СЏ СЃРµС‚РєР° 1 vs 1.
-   Р’РёР·СѓР°Р»СЊРЅС‹Р№ СЏР·С‹Рє РІР·СЏС‚ СЃРѕ СЃС‚СЂР°РЅРёС†С‹ Р°РІС‚РѕСЂРёР·Р°С†РёРё: СЂР°РґРёР°Р»СЊРЅРѕРµ СЃРІРµС‡РµРЅРёРµ С„РѕРЅР°,
-   РїР»Р°РІР°СЋС‰РёРµ С‡РёРїСЃС‹, СЃС‚РµРєР»СЏРЅРЅР°СЏ РєР°СЂС‚РѕС‡РєР° СЃ РјРЅРѕРіРѕСЃР»РѕР№РЅРѕР№ С‚РµРЅСЊСЋ Рё РіСЂР°РґРёРµРЅС‚РЅР°СЏ
-   Р»РёРЅРёСЏ РїРѕ РІРµСЂС…РЅРµР№ РєСЂРѕРјРєРµ. РћРІРµСЂР»РµР№ РЅР° РІРµСЃСЊ СЌРєСЂР°РЅ: СЃСЂР°РІРЅРёРІР°С‚СЊ РєР°СЂС‚РёРЅРєРё РЅСѓР¶РЅРѕ
-   РєСЂСѓРїРЅРѕ, Р° СЃРµС‚РєР° РёРґС‘С‚ РїРѕРІРµСЂС… Р»СЋР±РѕРіРѕ СЃРѕСЃС‚РѕСЏРЅРёСЏ Р»РµРЅС‚С‹. */
 .tr-root{position:fixed;inset:0;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;background:radial-gradient(1200px 600px at 50% -10%,color-mix(in srgb,var(--accent) 14%,transparent),transparent 60%),var(--bg);padding:20px;overflow-y:auto}
 .tr-root.hidden{display:none}
 /* auto-margin РІРјРµСЃС‚Рѕ РЅР°РґРµР¶РґС‹ РЅР° align-items:center: С„РёРЅР°Р» СЃ РіР°Р»РµСЂРµРµР№ РЅР° 32
@@ -54,6 +42,13 @@
 .tr-src:hover{color:var(--text);border-color:var(--accent-dim)}
 .tr-src.on{color:#fff;border-color:transparent;background:linear-gradient(135deg,var(--accent),var(--accent-dim));box-shadow:0 8px 24px color-mix(in srgb,var(--accent-dim) 40%,transparent)}
 .tr-hint{margin-top:9px;font-size:.7rem;color:var(--text-dim);min-height:1.1em}
+/* Поле тегов турнира: строка во всю ширину и кнопка очистки справа. */
+.tr-tags{position:relative;display:flex;align-items:center}
+.tr-input{width:100%;padding:12px 40px 12px 14px;background:transparent;border:1px solid var(--border);border-radius:12px;color:var(--text);font-size:.85rem;outline:none;transition:border-color var(--transition)}
+.tr-input::placeholder{color:var(--text-dim)}
+.tr-input:focus{border-color:var(--accent)}
+.tr-clear{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:none;border-radius:8px;background:transparent;color:var(--text-dim);cursor:pointer;transition:color var(--transition),background var(--transition)}
+.tr-clear:hover{color:var(--text);background:color-mix(in srgb,var(--accent) 12%,transparent)}
 .tr-actions{display:flex;gap:10px;margin-top:6px}
 .tr-btn{flex:1;padding:13px;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.14em;border:none;border-radius:12px;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent-dim));cursor:relative;overflow:hidden;transition:transform var(--transition),box-shadow var(--transition),filter var(--transition)}
 .tr-btn::after{content:'';position:absolute;top:0;left:-75%;width:50%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent);transform:skewX(-20deg);transition:left .55s ease;pointer-events:none}
@@ -125,6 +120,8 @@
 @keyframes trLoad{0%,100%{opacity:.35}50%{opacity:.7}}
 @media (max-width:640px){
   .tr-title{font-size:24px}
+  /* Поле тегов на телефоне — 16px: с меньшим iOS зумит страницу при фокусе. */
+  .tr-input{font-size:16px}
   .tr-presets{grid-template-columns:repeat(2,1fr)}
   /* РќР° С‚РµР»РµС„РѕРЅРµ РєР°СЂС‚РёРЅРєРё РёРґСѓС‚ РґСЂСѓРі РїРѕРґ РґСЂСѓРіРѕРј: СЃСЂР°РІРЅРёРІР°С‚СЊ РїРѕ РІРµСЂС‚РёРєР°Р»Рё
      РµСЃС‚РµСЃС‚РІРµРЅРЅРµРµ, Р° В«VSВ» РїСЂСЏС‡РµРј вЂ” РјРµСЃС‚Р° РґР»СЏ РЅРµРіРѕ РЅРµС‚. */

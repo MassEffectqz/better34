@@ -254,6 +254,29 @@ console.log('Регрессии турнира\n');
   setup.startTournament = () => { started++; };
   press(setup, 'Enter');
   check('Enter на стартовом экране запускает турнир', started === 1, 'запусков=' + started);
+
+  // Поле тегов на стартовом экране: его ввод — не хоткеи игры. Без проверки
+  // тег «1girl» выбирал бы левую сторону матча, а стрелки уводили бы выбор.
+  const field = mkApp();
+  field.state = { tournamentOpen: true };
+  field.closeTournament = () => { field._tournament.open = false; field.state.tournamentOpen = false; };
+  press(field, '1', 'INPUT');
+  press(field, 'ArrowRight', 'INPUT');
+  check('набор в поле тегов не срабатывает как хоткеи',
+    field._tournament.stats.played === 0, 'played=' + field._tournament.stats.played);
+  // Esc и Enter из поля — обычные действия игры, а не «заблокированный» ввод.
+  press(field, 'Escape', 'INPUT');
+  check('Esc из поля тегов закрывает турнир', field.state.tournamentOpen === false);
+
+  const setupField = Object.create(App);
+  setupField.els = { tournamentRoot: mkOptions() };
+  setupField._tournament = {
+    open: true, loading: false, posts: null, bracket: [], rounds: 3,
+    source: 'offline', resolved: new Set(), winner: null, stats: { played: 0, wins: 0 },
+  };
+  setupField.startTournament = () => { started++; };
+  press(setupField, 'Enter', 'INPUT');
+  check('Enter из поля тегов запускает турнир', started === 2, 'запусков=' + started);
 }
 
 // ── 6. Финал: лучи, корона, искры и набегающая оценка ────────────────────
@@ -462,13 +485,135 @@ console.log('Регрессии турнира\n');
     API.get = origGet;
     return msg;
   };
-  const tooFew = { error: 'tournament_not_enough_posts', available: 0, size: 8 };
+  const tooFew = { error: 'tournament_not_enough_posts', available: 0, size: 8, source: 'online' };
   check('при фильтре причина нехватки — фильтр, а не библиотека',
     /SFW/.test(await toastFor('sfw', tooFew) || ''), String(await toastFor('sfw', tooFew)));
   check('«18+» подписывается как 18+, а не как nsfw',
     /18\+/.test(await toastFor('nsfw', tooFew) || ''), String(await toastFor('nsfw', tooFew)));
   check('без фильтра остаётся прежнее сообщение про библиотеку',
     !/SFW|18\+/.test(await toastFor('', tooFew) || ''), String(await toastFor('', tooFew)));
+
+  // Оффлайн-турнир: «постов нет» — это три разных случая, и раньше все три
+  // читались как «в библиотеке ничего нет», хотя скачанные посты были. Числа
+  // downloaded/scored сервер считает без фильтров — по одному available их не
+  // различить (его обнуляют и теги, и рейтинг).
+  {
+    const mkOff = () => {
+      const a = mkApp('');
+      a._tournament.source = 'offline';
+      return a;
+    };
+    const offToast = async (body) => {
+      let msg = '';
+      const origGet = API.get;
+      API.get = async () => body;
+      const a = mkOff();
+      a.showToast = (m) => { msg = m; };
+      await a.startTournament();
+      API.get = origGet;
+      return msg;
+    };
+    const base = { error: 'tournament_not_enough_posts', size: 8, source: 'offline' };
+
+    const empty = await offToast({ ...base, available: 0, downloaded: 0, scored: 0 });
+    check('пустая библиотека объясняется скачиванием',
+      /скач/i.test(empty) && !/оценки буры/.test(empty), empty);
+
+    const noScore = await offToast({ ...base, available: 0, downloaded: 12, scored: 0 });
+    check('скачанные посты без оценки буры — отдельная причина',
+      /12/.test(noScore) && /оценк/i.test(noScore), noScore);
+
+    // Посты годные, но их мало под тегами — тут виноват фильтр, а не библиотека.
+    const few = await offToast({ ...base, available: 2, downloaded: 30, scored: 30 });
+    check('нехватки из-за тегов не валят на библиотеку',
+      /2/.test(few) && !/скач/i.test(few) && !/оценк/i.test(few), few);
+  }
+}
+
+
+// ── 9. Выбор тегов в турнире ──────────────────────────────────────────────
+// Фильтр тегов раньше уходил в запрос невидимо: клиент молча брал поисковую
+// строку, и «Из библиотеки» отвечал «нет постов», хотя виноват был забытый
+// запрос. Теперь фильтр виден на стартовом экране, правится и стирается.
+{
+  // rating оставляем пустым: здесь проверяются теги, а не рейтинг.
+  const mkApp = (tags) => {
+    const a = Object.create(App);
+    a.els = {
+      tournamentRoot: {
+        innerHTML: '', classList: { add() {}, remove() {} },
+        querySelectorAll: () => [], querySelector: () => null, focus() {},
+      },
+    };
+    a._tournament = {
+      open: true, loading: false, posts: null, bracket: [], rounds: 3,
+      source: 'offline', rating: '', tags, resolved: new Set(), winner: null,
+      stats: { played: 0, wins: 0 }, links: null, linksLoading: false,
+    };
+    a.state = { query: 'male', tournamentOpen: true };
+    a.showToast = () => {};
+    a.invalidateFeedCache = () => {};
+    a.closeViewer = () => {};
+    return a;
+  };
+  const urlFor = async (tags) => {
+    let hit = null;
+    const origGet = API.get;
+    API.get = async (u) => { hit = u; return { rounds: 3, posts: [] }; };
+    const a = mkApp(tags);
+    await a.startTournament();
+    API.get = origGet;
+    return hit;
+  };
+
+  // esc() экранирует через DOM, а мок createElement в этом файле ничего не
+  // кладёт в innerHTML — поэтому ЗНАЧЕНИЕ поля проверяем с «настоящим»
+  // элементом, подменяя фабрику ровно на время отрисовки.
+  const escElement = () => {
+    let text = '';
+    return {
+      classList: makeClassList(), setAttribute() {}, appendChild() {}, dataset: {},
+      get textContent() { return text; },
+      set textContent(v) { text = String(v); },
+      get innerHTML() {
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      },
+      set innerHTML(v) { text = String(v); },
+    };
+  };
+  const withEsc = (fn) => {
+    const orig = globalThis.document.createElement;
+    globalThis.document.createElement = escElement;
+    try { return fn(); } finally { globalThis.document.createElement = orig; }
+  };
+
+  // Поле есть в разметке, заполнено текущим фильтром и подписано.
+  const ui = mkApp('cat');
+  withEsc(() => ui.renderTournamentSetup());
+  const html = ui.els.tournamentRoot.innerHTML;
+  check('в стартовом экране есть поле тегов', /data-tr="tags"/.test(html));
+  check('поле заполнено текущим фильтром тегов', /value="cat"/.test(html));
+  check('непустой фильтр можно стереть', /data-tr="tags-clear"/.test(html));
+
+  const bare = mkApp('');
+  bare.renderTournamentSetup();
+  check('пустой фильтр не рисует кнопку очистки',
+    !/data-tr="tags-clear"/.test(bare.els.tournamentRoot.innerHTML));
+
+  // В запрос уходит ИМЕННО поле, а не поисковая строка: иначе правка тегов на
+  // стартовом экране ничего бы не меняла.
+  check('теги уходят в запрос', /tags=dog/.test(await urlFor('dog') || ''), String(await urlFor('dog')));
+  check('стёртые теги не уходят в запрос', !/tags=/.test(await urlFor('') || ''), String(await urlFor('')));
+  check('без поля тегов — фолбэк на поисковую строку',
+    /tags=male/.test(await urlFor(undefined) || ''), String(await urlFor(undefined)));
+
+  // Открытие турнира подставляет поисковую строку в поле тегов.
+  const o = mkApp(null);
+  o.state.query = 'yuri';
+  o.renderTournament = () => {};
+  o.openTournament();
+  check('при открытии поле тегов берёт поисковую строку',
+    o._tournament.tags === 'yuri', String(o._tournament.tags));
 }
 
 

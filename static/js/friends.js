@@ -7,7 +7,7 @@
 // РЅР°Р±РёСЂР°РµС‚СЃСЏ (QR СЃРѕР·РЅР°С‚РµР»СЊРЅРѕ РЅРµ РґРµР»Р°РµРј вЂ” РєРѕРґР° РІСЃС‚Р°РІР»СЏРµС‚СЃСЏ РѕРґРёРЅ СЂР°Р· Р·Р° РІСЃС‘
 // РІСЂРµРјСЏ, Р° С†РµРЅР° РІ СЃРѕС‚РЅРё СЃС‚СЂРѕРє СЌРЅРєРѕРґРµСЂР° С‚РѕРіРѕ РЅРµ СЃС‚РѕРёС‚).
 import { App } from './state.js';
-import { icon, esc } from './utils.js';
+import { icon, esc, go } from './utils.js';
 import { API } from './api.js';
 import { t, tf } from './i18n.js';
 
@@ -327,15 +327,36 @@ App.renderFriendProfile = async function () {
   await this.renderFriendProfileTabs();
 };
 
+/**
+ * Сбрасывает кэши друзей: список и снимок профиля. Одна точка входа для SSE,
+ * кнопки обмена и профиля друга — иначе они разъезжаются (кто-то сбросит, а
+ * кто-то покажет старое).
+ *
+ * Открытую страницу друга перерисовываем сразу: лайки/альбомы друга живут
+ * ТОЛЬКО в снимке, и без перерисовки пользователь до конца сессии видел бы
+ * данные прошлого обмена. Скрытую страницу не трогаем: её отрисуют при открытии.
+ */
+App.invalidateFriendCache = function (opts) {
+  friendProfileCache.clear();
+  friendsCache = null;
+  const st = this._friendProfile;
+  if (!st) return;
+  st.data = null;
+  // render:false — вызывающий сам перерисует (кнопки ждут результат и делают
+  // это явно, чтобы не получить две отрисовки и два запроса).
+  if (opts && opts.render === false) return;
+  const box = $('friend-profile');
+  if (!box || box.classList.contains('hidden')) return;
+  go(this.renderFriendProfile());
+};
+
 /** Обмен по кнопке из профиля: сбрасываем кэш и перерисовываем. */
 App._friendProfileSync = async function (st) {
   const btn = $('btn-friend-profile-sync');
   if (btn) btn.disabled = true;
   try {
     await API.post('/friends/sync');
-    friendProfileCache.delete(st.id);
-    friendsCache = null;
-    st.data = null;
+    this.invalidateFriendCache({ render: false });
     await this.renderFriendProfile();
   } catch {
     this.showToast(t('friends.syncFailed'));
@@ -610,7 +631,7 @@ App.syncFriendsNow = async function () {
     Object.values(synced).forEach((/** @type {any} */ st) => {
       total += (st.likes || 0) + (st.collections || 0) + (st.comments || 0);
     });
-    friendsCache = null;
+    this.invalidateFriendCache({ render: false });
     await this.renderFriends();
     // РњРѕРіР»Рё РїСЂРёР№С‚Рё С‡СѓР¶РёРµ Р»Р°Р№РєРё Рё РєРѕР»Р»РµРєС†РёРё вЂ” РїРµСЂРµС‡РёС‚С‹РІР°РµРј РїСЂРѕС„РёР»СЊ, РёРЅР°С‡Рµ
     // СЃС‡С‘С‚С‡РёРєРё РЅР° РІРєР»Р°РґРєР°С… РѕСЃС‚Р°Р»РёСЃСЊ Р±С‹ СЃС‚Р°СЂС‹РјРё.

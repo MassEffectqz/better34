@@ -11,10 +11,19 @@ import (
 )
 
 type Profile struct {
-	mu          sync.RWMutex
-	path        string
-	LikedPosts  map[int]bool    `json:"liked_posts"`
-	LikedAt     map[int]int64   `json:"liked_at,omitempty"`
+	mu         sync.RWMutex
+	path       string
+	LikedPosts map[int]bool  `json:"liked_posts"`
+	LikedAt    map[int]int64 `json:"liked_at,omitempty"`
+	// OwnLikes — id постов, лайкнутых ЛИЧНО мной. Отдельно от LikedPosts, потому
+	// что лайки друга в «Мои лайки» не вливаются: его вкусы живут в снимке друга
+	// (страница /friend/<id>), а не в моём профиле. По OwnLikes видно, чей лайк
+	// на посте, который нравится обоим.
+	OwnLikes map[int]bool `json:"own_likes,omitempty"`
+	// FriendLikes — id постов, приехавших лайками от друзей. Нужны, чтобы считать
+	// в статистике обмена только НОВЫЕ лайки (иначе «Пришло от друзей: 500» каждые
+	// пять минут) и чтобы снятый мной лайк не вернулся из чужого снимка.
+	FriendLikes map[int]bool    `json:"friend_likes,omitempty"`
 	HiddenPosts map[int]bool    `json:"hidden_posts"`
 	Presets     []QueryPreset   `json:"presets"`
 	FavTags     map[string]bool `json:"fav_tags"`
@@ -72,6 +81,8 @@ func NewProfile(path string) *Profile {
 		path:        path,
 		LikedPosts:  make(map[int]bool),
 		LikedAt:     make(map[int]int64),
+		OwnLikes:    make(map[int]bool),
+		FriendLikes: make(map[int]bool),
 		HiddenPosts: make(map[int]bool),
 		Presets:     []QueryPreset{},
 		FavTags:     make(map[string]bool),
@@ -91,6 +102,32 @@ func (p *Profile) load() {
 	json.Unmarshal(data, p)
 	if p.LikedAt == nil {
 		p.LikedAt = make(map[int]int64)
+	}
+	// Карты инициализируем все: в profile.json может не быть поля (старая версия,
+	// правка руками, обрезанный файл), а запись в nil-карту в Go — паника. Она
+	// превращалась в 500 на лайке/скрытии/избранном теге, причём молча для UI.
+	if p.LikedPosts == nil {
+		p.LikedPosts = make(map[int]bool)
+	}
+	if p.HiddenPosts == nil {
+		p.HiddenPosts = make(map[int]bool)
+	}
+	if p.FavTags == nil {
+		p.FavTags = make(map[string]bool)
+	}
+	if p.HiddenTags == nil {
+		p.HiddenTags = make(map[string]bool)
+	}
+	// Профиль до разделения лайков: OwnLikes пуст, и лайки друзей лежат в
+	// LikedPosts неотличимо от наших. Их уберёт первый же обмен (см.
+	// applyFriendPayload): пост из снимка друга, которого нет в OwnLikes,
+	// считается его. Свой лайк, совпавший с чужим, возвращается повторным
+	// лайком — и тогда он уже помечен как наш.
+	if p.OwnLikes == nil {
+		p.OwnLikes = make(map[int]bool)
+	}
+	if p.FriendLikes == nil {
+		p.FriendLikes = make(map[int]bool)
 	}
 	if p.RecDisliked == nil {
 		p.RecDisliked = make(map[string]int)
@@ -134,10 +171,16 @@ func (p *Profile) ToggleLike(postID int) bool {
 	if p.LikedPosts[postID] {
 		delete(p.LikedPosts, postID)
 		delete(p.LikedAt, postID)
+		// Снятый лайк перестаёт быть «моим»: если тот же пост есть у друга, он
+		// не должен вернуться в мои лайки при следующем обмене.
+		delete(p.OwnLikes, postID)
 		return false
 	}
 	p.LikedPosts[postID] = true
 	p.LikedAt[postID] = time.Now().Unix()
+	// Лайк, поставленный здесь, — мой: только он защищён от вычистки чужих
+	// лайков при обмене (см. applyFriendPayload).
+	p.OwnLikes[postID] = true
 	// Лайк снимает скрытие — пост не может быть одновременно лайкнутым и скрытым.
 	delete(p.HiddenPosts, postID)
 	return true
@@ -161,6 +204,8 @@ func (p *Profile) SetLiked(ids []int, state bool) int {
 				p.LikedAt[id] = now
 				changed++
 			}
+			// Массовый лайк — тоже мой лайк (см. ToggleLike).
+			p.OwnLikes[id] = true
 			// Лайк снимает скрытие — то же правило, что и в ToggleLike.
 			// Выполняется и для уже лайкнутого: скрытый лайкнутый пост,
 			// повторно попавший в массовый лайк, возвращается в ленту.
@@ -171,6 +216,7 @@ func (p *Profile) SetLiked(ids []int, state bool) int {
 		} else if p.LikedPosts[id] {
 			delete(p.LikedPosts, id)
 			delete(p.LikedAt, id)
+			delete(p.OwnLikes, id)
 			changed++
 		}
 	}
@@ -533,6 +579,16 @@ func (p *Profile) ReplacePostID(from, to int) {
 	if p.LikedPosts[from] {
 		delete(p.LikedPosts, from)
 		p.LikedPosts[to] = true
+		// «Моё/чужое» переезжает вместе с лайком: иначе объединение дубликатов
+		// либо теряло бы мой лайк (его вычистил бы обмен), либо оставляло чужой.
+		if p.OwnLikes[from] {
+			delete(p.OwnLikes, from)
+			p.OwnLikes[to] = true
+		}
+		if p.FriendLikes[from] {
+			delete(p.FriendLikes, from)
+			p.FriendLikes[to] = true
+		}
 		if t, ok := p.LikedAt[from]; ok {
 			if cur, exists := p.LikedAt[to]; !exists || t > cur {
 				p.LikedAt[to] = t

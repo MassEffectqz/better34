@@ -547,6 +547,70 @@ func TestGetTournamentRatingHTTP(t *testing.T) {
 	}
 }
 
+// «Нет постов в библиотеке» — это три разные причины, и пользователю нужно
+// назвать именно его: пустая библиотека, скачанное без оценки буры (эталона для
+// финала нет) или фильтры, отсеявшие всё. Поэтому в ответе для оффлайна едут
+// оба счётчика, посчитанные БЕЗ фильтров: по одному available «нет скачанного»
+// не отличить от «всё скачанное отсеяли теги/рейтинг».
+func TestGetTournamentNotEnoughExplainsWhy(t *testing.T) {
+	db := setupTournamentDB(t)
+	ts := tournamentTestServer(t, "/api/tournament", NewHandler().GetTournament)
+
+	type respBody struct {
+		Error      string           `json:"error"`
+		Available  int              `json:"available"`
+		Downloaded int              `json:"downloaded"`
+		Scored     int              `json:"scored"`
+		Posts      []TournamentPost `json:"posts"`
+	}
+	get := func() respBody {
+		t.Helper()
+		rsp, err := http.Get(ts.URL + "/api/tournament?rounds=2&source=offline")
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		defer rsp.Body.Close()
+		var out respBody
+		if err := json.NewDecoder(rsp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+	download := func(id, score int) {
+		db.UpsertMeta(&Post{ID: id, Tags: "x", Score: score, FileURL: fmt.Sprintf("https://x/%d.jpg", id)})
+		db.SetDownloaded(id, fmt.Sprintf("data/save/%d.jpg", id), fmt.Sprintf("thumbs/%d.jpg", id))
+	}
+
+	// 1. Библиотека пуста: турнир собрать не из чего.
+	out := get()
+	if out.Error != ErrTournamentNotEnough.Code {
+		t.Fatalf("пустая библиотека: error=%q, ожидался %q", out.Error, ErrTournamentNotEnough.Code)
+	}
+	if out.Downloaded != 0 || out.Scored != 0 || out.Available != 0 {
+		t.Errorf("пустая библиотека: %+v — ожидались нули во всех счётчиках", out)
+	}
+
+	// 2. Посты скачаны, но без оценки буры: участвовать не в чем (эталон финала
+	// показывать нечем).
+	for i := 1; i <= 6; i++ {
+		download(i, 0)
+	}
+	out = get()
+	if out.Downloaded != 6 || out.Scored != 0 || out.Available != 0 {
+		t.Errorf("без оценки: %+v — ожидались downloaded=6 scored=0 available=0", out)
+	}
+
+	// 3. Оценка есть, но годных постов меньше, чем участников: available — это
+	// «сколько подходит под фильтры», downloaded — «сколько лежит всего».
+	for i := 7; i <= 8; i++ {
+		download(i, 5)
+	}
+	out = get()
+	if out.Downloaded != 8 || out.Scored != 2 || out.Available != 2 || len(out.Posts) != 0 {
+		t.Errorf("мало постов: %+v — ожидались downloaded=8 scored=2 available=2 posts=0", out)
+	}
+}
+
 // HTTP-уровень: маршрут /api/tournament/posts, порядок постов и missing.
 // Порядок важен не для красоты — по нему клиент рисует галерею, и перестановка
 // перемешала бы участников относительно сетки.

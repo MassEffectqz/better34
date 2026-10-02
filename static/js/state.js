@@ -1552,6 +1552,12 @@ export const App = {
       // профиль и вкладку «Друзья», иначе счётчики разошлись бы с данными.
       else if (d.type === 'friends') {
         if (typeof this.loadProfile === 'function') this.loadProfile();
+        // Список друзей и открытый профиль друга кэшируются (по id): без сброса
+        // кэша счётчики, «обмен: когда» и лайки друга оставались бы от прошлого
+        // обмена до ручного «Обменяться» — ровно это выглядит как «данные друга
+        // не приходят». Лайки друга теперь живут ТОЛЬКО в снимке, поэтому
+        // устаревший снимок показывал бы неверный список.
+        if (typeof this.invalidateFriendCache === 'function') this.invalidateFriendCache();
         if (typeof this.renderFriends === 'function') this.renderFriends();
         if (this.state.profileOpen && this._profileTabs) {
           this.showToast(t('friends.incoming'));

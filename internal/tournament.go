@@ -113,12 +113,21 @@ func (h *Handler) GetTournament(c *gin.Context) {
 	if len(posts) < size {
 		// Отдельный код: клиенту нужно сказать пользователю, что турнир такого
 		// размера не помещается в библиотеку, а не «что-то сломалось».
-		c.JSON(http.StatusOK, gin.H{
+		//
+		// downloaded/scored считаются БЕЗ фильтров: по одному available нельзя
+		// отличить «скачанных постов нет» от «посты есть, но без оценки буры» и
+		// от «всё отсеяли теги» — а это три разных совета пользователю.
+		resp := gin.H{
 			"error": ErrTournamentNotEnough.Code, "message": ErrTournamentNotEnough.Message,
 			"source": source, "rating": rating, "size": size, "rounds": rounds,
 			"available": available, "posts": []TournamentPost{},
 			"bracket": emptyTournamentBracket(rounds),
-		})
+		}
+		if source == "offline" {
+			all, scored := db.CountDownloadedStats()
+			resp["downloaded"], resp["scored"] = all, scored
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 

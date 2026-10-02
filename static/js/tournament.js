@@ -23,6 +23,14 @@ App._tournament = {
   rounds: 3,
   source: 'offline',
   /**
+   * Фильтр тегов турнира: строка в синтаксисе поиска (пробелы, '-' и '|').
+   * Раньше он молча брался из поисковой строки, и пустая выдача «Из библиотеки»
+   * объяснялась пользователю «нет постов», хотя виноват был забытый запрос.
+   * Теперь фильтр виден на стартовом экране; значение подставляет openTournament.
+   * @type {string}
+   */
+  tags: '',
+  /**
    * Фильтр рейтинга турнира: '' (все), 'sfw', 'nsfw' («18+») — те же значения,
    * что у переключателя в шапке, чтобы словари рейтингов и ожидания пользователя
    * совпадали. Значения по умолчанию нет: открытие турнира подставляет глобальный
@@ -68,6 +76,10 @@ App.openTournament = function () {
   // Фильтр рейтинга по умолчанию — тот же, что выбран для ленты в шапке:
   // отдельная настройка в игре молча разошлась бы с настройкой сайта.
   this._tournament.rating = (this.state && this.state.ratingFilter) || '';
+  // Теги — из поисковой строки на момент открытия: турнир обычно запускают по
+  // тому, что человек ищет сейчас. Поле видно на стартовом экране и стирается
+  // одной кнопкой, поэтому случайный фильтр больше не выглядит как «нет постов».
+  this._tournament.tags = (this.state && this.state.query) || '';
   this.state.tournamentOpen = true;
   this.renderTournament();
   const root = this.els.tournamentRoot;
@@ -267,6 +279,20 @@ App.renderTournamentSetup = function () {
         '</div>' +
         '<p class="tr-hint">' + esc(srcHint) + '</p>' +
       '</div>' +
+      // Теги. Пустое поле — вся библиотека (или свежая выдача источника).
+      // Именно невидимый фильтр из поисковой строки давал «в библиотеке нет
+      // постов», поэтому фильтр показан, правится и стирается кнопкой.
+      '<div class="tr-section"><div class="tr-label">' + esc(t('tr.tags')) + '</div>' +
+        '<div class="tr-tags">' +
+          '<input type="text" class="tr-input" data-tr="tags" autocomplete="off" spellcheck="false"' +
+            ' value="' + esc(tm.tags || '') + '"' +
+            ' placeholder="' + esc(t('tr.tagsPh')) + '"' +
+            ' aria-label="' + esc(t('tr.tags')) + '">' +
+          (tm.tags ? '<button type="button" class="tr-clear" data-tr="tags-clear"' +
+            ' title="' + esc(t('tr.tagsClear')) + '" aria-label="' + esc(t('tr.tagsClear')) + '">' +
+            icon('x', 14) + '</button>' : '') +
+        '</div>' +
+      '</div>' +
       // Рейтинг. Для оффлайн-турнира он сужает библиотеку прямо в SQL, для
       // онлайна — метатеги в запросе плюс досчистка на сервере; «доступно» в
       // обоих случаях считается по отфильтрованному набору, и при нехватке
@@ -302,10 +328,48 @@ App.renderTournamentSetup = function () {
       this.renderTournamentSetup();
     });
   }
+  // Поле тегов. Значение пишем в состояние сразу, но разметку НЕ перерисовываем:
+  // иначе на каждом символе терялся бы фокус и каретка прыгала бы в начало.
+  const tagsInput = root.querySelector('[data-tr="tags"]');
+  if (tagsInput) {
+    tagsInput.addEventListener('input', () => { tm.tags = tagsInput.value; });
+  }
+  const tagsClear = root.querySelector('[data-tr="tags-clear"]');
+  if (tagsClear) {
+    tagsClear.addEventListener('click', () => {
+      tm.tags = '';
+      this.renderTournamentSetup();
+    });
+  }
   const start = root.querySelector('[data-tr="start"]');
   if (start) start.addEventListener('click', () => this.startTournament());
   const close = root.querySelector('[data-tr="close"]');
   if (close) close.addEventListener('click', () => this.closeTournament());
+};
+
+// Почему постов не хватило — по данным ответа, а не догадкой. Порядок важен:
+// пустая библиотека объясняет всё остальное («доступно 0» бывает и при пустой
+// библиотеке, и когда всё отсеяли теги), а в онлайне библиотека ни при чём —
+// там виноват фильтр рейтинга или источник.
+/** @this {AppType} */
+App._trNotEnoughMsg = function (d) {
+  const size = d.size, available = d.available;
+  // Источник берём из ответа, а при его отсутствии — из состояния игры: ответ
+  // авторитетнее, но и запрос без поля source (старый сервер, тесты) не должен
+  // превращать онлайн-турнир в «библиотека пуста».
+  const src = d.source || this._tournament.source;
+  if (src !== 'online') {
+    // downloaded/scored приходят без фильтров: по одному available «нет
+    // скачанного» не отличить от «всё скачанное без оценки буры».
+    if (d.downloaded === 0) return t('tr.emptyLib');
+    if (d.scored === 0) return t('tr.noScores', { downloaded: d.downloaded });
+  }
+  if (this._tournament.rating) {
+    return t('tr.notEnoughRating', {
+      rating: this._tournament.rating === 'nsfw' ? '18+' : 'SFW', available, size,
+    });
+  }
+  return t('tr.notEnough', { available, size });
 };
 
 // Загрузка участников и засев сетки.
@@ -317,21 +381,17 @@ App.startTournament = async function () {
   // rating уходит только когда он выбран: пустой «все» не должен ездить в URL,
   // иначе отличать две разные ссылки одного и того же турнира невозможно.
   if (tm.rating) qs.set('rating', tm.rating);
-  const cur = this.state.query || '';
-  if (cur) qs.set('tags', cur);
+  // Теги — из поля стартового экрана. tm.tags === '' — это осознанное «без
+  // фильтра», поэтому на поисковую строку падаем только когда поля нет вовсе
+  // (вызов мимо openTournament: deep link, тесты).
+  const tags = (tm.tags == null ? (this.state.query || '') : tm.tags).trim();
+  if (tags) qs.set('tags', tags);
   try {
     // Путь БЕЗ /api: префикс подставляет API._fetchGet сам, иначе уходит
     // /api/api/tournament → 404.
     const d = await API.get('/tournament?' + qs.toString(), { fresh: true });
     if (d.error === 'tournament_not_enough_posts') {
-      // С фильтром рейтинга объясняем именно его: «в библиотеке только 0»
-      // после выбора SFW в онлайне — это не про библиотеку, а про источник.
-      const msg = tm.rating
-        ? t('tr.notEnoughRating', {
-            rating: tm.rating === 'nsfw' ? '18+' : 'SFW', available: d.available, size: d.size,
-          })
-        : t('tr.notEnough', { available: d.available, size: d.size });
-      this.showToast(msg, 'error');
+      this.showToast(this._trNotEnoughMsg(d), 'error');
       tm.loading = false;
       this.renderTournamentSetup();
       return;
@@ -461,6 +521,11 @@ App.tournamentKey = function (e) {
   // Enter по кнопке должен нажимать саму кнопку (Start, «Открыть пост»), а не
   // запускать новый турнир поверх финального экрана.
   if (tag === 'BUTTON' || tag === 'A') return;
+  // Поле тегов на стартовом экране: набор текста, каретка, выделение — его дело.
+  // Без этого «1girl» выбирало бы сторону матча (цифры 1/2 — хоткеи игры), а
+  // стрелки уводили бы выбор с поля. Enter из поля запускает турнир: это то же
+  // самое, что кнопка «Начать», и ожидаемо для поля фильтра.
+  if ((tag === 'INPUT' || tag === 'TEXTAREA') && e.key !== 'Enter') return;
   const match = this._currentMatch();
   if (!match) {
     if (e.key === 'Enter') { e.preventDefault(); this.startTournament(); }

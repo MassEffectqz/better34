@@ -1,10 +1,3 @@
-// Р–РёРІР°СЏ РїСЂРѕРІРµСЂРєР° РѕР±РјРµРЅР° РјРµР¶РґСѓ Р”Р’РЈРњРЇ СЂРµР°Р»СЊРЅРѕ Р·Р°РїСѓС‰РµРЅРЅС‹РјРё РёРЅСЃС‚Р°РЅСЃР°РјРё.
-// РџРѕРґРЅРёРјР°РµРј РґРІР° СЃРµСЂРІРµСЂР° РЅР° СЂР°Р·РЅС‹С… РїРѕСЂС‚Р°С…, СЂРµРіРёСЃС‚СЂРёСЂСѓРµРј РїРѕ Р°РєРєР°СѓРЅС‚Сѓ,
-// РѕР±РјРµРЅРёРІР°РµРјСЃСЏ friend-РєРѕРґР°РјРё Рё Р¶РјС‘Рј В«РѕР±РјРµРЅСЏС‚СЊСЃСЏВ». РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ Р»Р°Р№Рє,
-// СЃРґРµР»Р°РЅРЅС‹Р№ РЅР° A, РґРѕРµС…Р°Р» РґРѕ B, Рё РЅР°РѕР±РѕСЂРѕС‚.
-//
-// Р—Р°РїСѓСЃРє: BRIEFLY_TEST_BIN=briefly.exe go test -run TestTwoInstancesSync ./internal/
-// Р‘РµР· РїРµСЂРµРјРµРЅРЅРѕР№ РѕРєСЂСѓР¶РµРЅРёСЏ С‚РµСЃС‚ РїСЂРѕРїСѓСЃРєР°РµС‚СЃСЏ (РЅСѓР¶РµРЅ СЃРѕР±СЂР°РЅРЅС‹Р№ Р±РёРЅР°СЂРЅРёРє).
 package internal
 
 import (
@@ -242,30 +235,36 @@ func TestTwoInstancesSync(t *testing.T) {
 	}
 	var profB liveProfile
 	apiJSON(t, "GET", baseB+"/api/profile", cookieB, nil, &profB)
-	if !containsID(profB.Liked, 777) {
-		t.Errorf("Р»Р°Р№Рє СЃ A РЅРµ РґРѕРµС…Р°Р» РґРѕ B: %v", profB.Liked)
+	// Лайк с A — это лайк A: в «Моих лайках» B его быть не должно, иначе профиль
+	// показывал бы вкусы друга — ровно то, на что жаловался пользователь.
+	if containsID(profB.Liked, 777) {
+		t.Errorf("чужой лайк 777 попал в мои лайки на B: %v", profB.Liked)
 	}
 
-	// РћР±СЂР°С‚РЅРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ.
+	// Обратное направление.
 	if code := apiJSON(t, "POST", baseB+"/api/like/888", cookieB, map[string]bool{"liked": true}, nil); code != 200 {
 		t.Fatalf("B: like = %d", code)
 	}
 	apiJSON(t, "POST", baseA+"/api/friends/sync", cookieA, nil, nil)
 	var profA liveProfile
 	apiJSON(t, "GET", baseA+"/api/profile", cookieA, nil, &profA)
-	if !containsID(profA.Liked, 888) {
-		t.Errorf("Р»Р°Р№Рє СЃ B РЅРµ РґРѕРµС…Р°Р» РґРѕ A: %v", profA.Liked)
+	if containsID(profA.Liked, 888) {
+		t.Errorf("чужой лайк 888 попал в мои лайки на A: %v", profA.Liked)
 	}
-	// РќР°С€ СЃРѕР±СЃС‚РІРµРЅРЅС‹Р№ Р»Р°Р№Рє 777 РЅР° A РѕР±СЏР·Р°РЅ СѓС†РµР»РµС‚СЊ.
+	// Наш собственный лайк 777 на A обязан уцелеть.
 	if !containsID(profA.Liked, 777) {
-		t.Errorf("РЅР°С€ Р»Р°Р№Рє 777 РїСЂРѕРїР°Р» РїРѕСЃР»Рµ РѕР±РјРµРЅР°: %v", profA.Liked)
+		t.Errorf("наш лайк 777 пропал после обмена: %v", profA.Liked)
 	}
 
-	// РРґРµРјРїРѕС‚РµРЅС‚РЅРѕСЃС‚СЊ: РїРѕРІС‚РѕСЂРЅС‹Р№ РѕР±РјРµРЅ РЅРµ РїР»РѕРґРёС‚ РґСѓР±Р»Рё.
+	// Идемпотентность: повторный обмен не плодит дубли и не тащит чужое в наши
+	// лайки. Лайки друга видны в ЕГО профиле (снимок), а не в моём.
 	apiJSON(t, "POST", baseA+"/api/friends/sync", cookieA, nil, nil)
-	apiJSON(t, "GET", baseB+"/api/profile", cookieB, nil, &profB)
-	if n := countID(profB.Liked, 777); n != 1 {
-		t.Errorf("РїРѕСЃР»Рµ РґРІСѓС… РѕР±РјРµРЅРѕРІ Р»Р°Р№Рє РІСЃС‚СЂРµС‡Р°РµС‚СЃСЏ %d СЂР°Р·, Р¶РґР°Р»Рё 1", n)
+	apiJSON(t, "GET", baseA+"/api/profile", cookieA, nil, &profA)
+	if n := countID(profA.Liked, 777); n != 1 {
+		t.Errorf("после двух обменов наш лайк встречается %d раз, ждали 1", n)
+	}
+	if containsID(profA.Liked, 888) {
+		t.Errorf("после двух обменов чужой лайк в моих: %v", profA.Liked)
 	}
 
 	// РЎРїРёСЃРѕРє РґСЂСѓР·РµР№ Рё РѕС‚СЃСѓС‚СЃС‚РІРёРµ РѕС€РёР±РєРё РїРѕСЃР»Рµ СѓСЃРїРµС€РЅРѕРіРѕ РѕР±РјРµРЅР°.
@@ -283,7 +282,7 @@ func TestTwoInstancesSync(t *testing.T) {
 	}
 	apiJSON(t, "POST", baseB+"/api/collection", cookieB, map[string]string{"name": "albumB"}, &collB)
 	apiJSON(t, "POST", baseB+"/api/collection/"+collB.ID+"/post", cookieB, map[string]any{"post_id": 888}, nil)
-	// Обмен ещё раз: снимок профиля обновляется только при sync, а вкусы B мы
+	// Обмен ещё раз: снимок профиля B обновляется при нашем обмене, а вкусы B мы
 	// завели после прошлого. Без этого проверка смотрела бы на устаревший снимок.
 	apiJSON(t, "POST", baseA+"/api/friends/sync", cookieA, nil, nil)
 
@@ -317,7 +316,10 @@ func TestTwoInstancesSync(t *testing.T) {
 	// Дверь с VPN-адресом в Host (регрессия 403).
 	{
 		var payload struct {
-			OK bool `json:"ok"`
+			OK     bool `json:"ok"`
+			Merged struct {
+				Likes int `json:"likes"`
+			} `json:"merged"`
 		}
 		code := friendDoorRequest(t, "POST", baseB+"/api/friend/ingest",
 			keyB, "26.130.42.36:3000", baseA,
@@ -328,12 +330,34 @@ func TestTwoInstancesSync(t *testing.T) {
 		if code != http.StatusOK {
 			t.Errorf("obmen s VPN-adresom v Host = %d, zhdal 200 (bylo 403)", code)
 		}
+		// Лайк A учтён как ЧУЖОЙ (merged.likes), а не влит в мои лайки.
+		if payload.Merged.Likes != 1 {
+			t.Errorf("merged.likes = %d, ждали 1 (лайк друга учтён как чужой)", payload.Merged.Likes)
+		}
 		var profAfter struct {
 			Liked []int `json:"liked_posts"`
 		}
 		apiJSON(t, "GET", baseB+"/api/profile", cookieB, nil, &profAfter)
-		if !containsID(profAfter.Liked, 9001) {
-			t.Errorf("layk iz obmena ne primenilsya: %v", profAfter.Liked)
+		if containsID(profAfter.Liked, 9001) {
+			t.Errorf("лайк из обмена попал в мои лайки: %v", profAfter.Liked)
+		}
+		// Снимок обновляется и «дверью»: лайки друга показываются только из него,
+		// поэтому без обновления страница друга отставала бы до планового обмена.
+		var listB struct {
+			Friends []friendView `json:"friends"`
+		}
+		apiJSON(t, "GET", baseB+"/api/friends", cookieB, nil, &listB)
+		if len(listB.Friends) == 0 {
+			t.Fatal("у B нет друзей: профиль друга смотреть негде")
+		}
+		var friendProf struct {
+			Friend struct {
+				Likes []int `json:"likes"`
+			} `json:"friend"`
+		}
+		apiJSON(t, "GET", baseB+"/api/friends/"+listB.Friends[0].ID+"/profile", cookieB, nil, &friendProf)
+		if !containsID(friendProf.Friend.Likes, 9001) {
+			t.Errorf("лайк из «двери» не виден в профиле друга: %v", friendProf.Friend.Likes)
 		}
 	}
 
@@ -363,10 +387,15 @@ func TestTwoInstancesSync(t *testing.T) {
 		if prof.Friend.SyncedAt == "" {
 			t.Error("в профиле друга нет synced_at: снимок не сохранился")
 		}
-		// Лайки B: 777 и 888 (см. выше) должны быть видны как его, плюс 9001,
-		// который приехал отдельным запросом «дверью».
-		if !containsID(prof.Friend.Likes, 777) || !containsID(prof.Friend.Likes, 888) {
-			t.Errorf("лайки друга в профиле: %v, ждали 777 и 888", prof.Friend.Likes)
+		// Лайки B в его профиле — только ЕГО лайки: 888, который он поставил сам.
+		// Наш 777 сюда попадать не должен: иначе снимок приписывал бы другу наши
+		// вкусы (раньше так и было — лайк «эхом» возвращался от него вместе с его
+		// собственными, потому что обмен сливал лайки в один профиль).
+		if !containsID(prof.Friend.Likes, 888) {
+			t.Errorf("лайк друга 888 не виден в профиле: %v", prof.Friend.Likes)
+		}
+		if containsID(prof.Friend.Likes, 777) {
+			t.Errorf("мой лайк 777 приписан другу: %v", prof.Friend.Likes)
 		}
 		if !containsID(prof.Friend.Disliked, 5555) {
 			t.Errorf("скрытое друга (5555) не в профиле: %v", prof.Friend.Disliked)

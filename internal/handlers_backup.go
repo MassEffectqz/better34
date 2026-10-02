@@ -80,6 +80,9 @@ func (h *Handler) ImportProfile(c *gin.Context) {
 	p.mu.Lock()
 	for _, id := range in.LikedPosts {
 		p.LikedPosts[id] = true
+		// Лайки из бэкапа — мои: без метки их вычистил бы первый обмен с другом
+		// (см. applyFriendPayload).
+		p.OwnLikes[id] = true
 		delete(p.HiddenPosts, id)
 		if _, ok := p.LikedAt[id]; !ok && in.LikedAt != nil {
 			if ts, ok := in.LikedAt[id]; ok {

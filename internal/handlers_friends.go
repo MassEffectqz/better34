@@ -356,6 +356,11 @@ func (h *Handler) FriendIngest(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "friend_bad_body"})
 		return
 	}
+	// Снимок обновляем и здесь, а не только при нашем исходящем обмене: лайки
+	// друга в профиль не вливаются, поэтому показывать их можно ТОЛЬКО из
+	// снимка — без этой строки страница друга оставалась бы пустой до
+	// следующего планового обмена, хотя данные уже пришли.
+	GetFriendStore(user).noteSnapshot(fr.ID(), snapshotFrom(&in))
 	// Клиенту нужен сигнал перерисовать лайки/коллекции/комментарии.
 	publishSSE(map[string]any{"type": "friends", "incoming": sender})
 	c.JSON(http.StatusOK, gin.H{"ok": true, "merged": stats})

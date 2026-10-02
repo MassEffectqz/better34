@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { App } from '../state.js';
+import { API } from '../api.js';
 import '../friends.js';
 
 let passed = 0, failed = 0;
@@ -335,6 +336,50 @@ const reset = () => { hist.calls = []; hist.state = null; bodyCls._s = new Set()
   a2._friendProfile.tab = 'likes';
   await a2.renderFriendProfileTabs();
   check('на вкладке лайков полоса сетки видна', !bar.classList.contains('hidden'));
+}
+// ── 11. Регрессия: обмен сбрасывает кэши друзей ───────────────────────────────
+// SSE-событие «friends» (фоновый обмен каждые 5 минут, приход снимка) раньше
+// вызывало renderFriends() без сброса кэша: список, счётчики и открытая
+// страница друга оставались от прошлого обмена, пока пользователь сам не
+// нажмёт «Обменяться». Теперь лайки друга живут только в снимке, поэтому
+// устаревший снимок показывал бы чужие лайки, которых у друга уже нет.
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+  const root = join(here, '..', '..');
+  const state = readFileSync(join(root, 'js', 'state.js'), 'utf8');
+  check('SSE-событие friends сбрасывает кэш друзей',
+    state.includes('this.invalidateFriendCache()'), 'нет вызова в state.js');
+
+  const a = makeApp();
+  const box = getEl('friend-profile');
+  let renders = 0;
+  a.renderFriendProfile = function () { renders++; return Promise.resolve(); };
+
+  // Список друзей: пока кэш тёплый, loadFriends не ходит в сеть — после сброса ходит.
+  let gets = 0;
+  const origGet = API.get;
+  API.get = async () => { gets++; return { friends: [{ id: 'x', url: '' }] }; };
+  await a.loadFriends(false);
+  await a.loadFriends(false);
+  const warmGets = gets;
+  await a.loadFriends(false);
+  check('прогретый кэш списка не перечитывается', gets === warmGets, 'gets=' + gets);
+
+  a._friendProfile = { id: 'x', tab: 'likes', shown: 60, data: { friend: { id: 'x' } } };
+  box.classList.remove('hidden');
+  a.invalidateFriendCache();
+  await a.loadFriends(false);
+  check('после сброса список друзей уходит в сеть', gets > warmGets, 'gets=' + gets);
+  check('снимок профиля друга обнулён', a._friendProfile.data === null);
+  check('открытая страница друга перерисована', renders === 1, 'renders=' + renders);
+
+  renders = 0;
+  box.classList.add('hidden');
+  a._friendProfile = { id: 'x', tab: 'likes', shown: 60, data: { friend: {} } };
+  a.invalidateFriendCache();
+  check('скрытая страница не перерисовывается впустую', renders === 0, 'renders=' + renders);
+  check('у скрытой страницы снимок тоже сброшен', a._friendProfile.data === null);
+  API.get = origGet;
 }
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
