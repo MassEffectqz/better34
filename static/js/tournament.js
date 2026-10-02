@@ -67,7 +67,32 @@ App._tournament = {
   links: null,
   /** @type {boolean} запрос ссылок участников уже идёт — второй раз не шлём */
   linksLoading: false,
+  /**
+   * Автодополнение тегов на стартовом экране. Работает по тому же словарю,
+   * что и поиск в шапке, но рисуется внутри оверлея турнира.
+   * @type {object[]} подсказки текущего слова (сырые записи /suggest)
+   */
+  sug: [],
+  /** @type {number} индекс активной подсказки, -1 — ни одна не выбрана */
+  sugIdx: -1,
+  /** @type {number} номер запроса: ответы с устаревшим seq молча отбрасываются */
+  sugSeq: 0,
+  /** @type {any} отложенный запуск подсказок (debounce) */
+  sugTimer: null,
+  /**
+   * @type {number} токен отрисовки. Стартовый экран перерисовывается целиком
+   * (смена раунда, источника, чип тега), и ответ подсказок, пришедший на
+   * предыдущую разметку, обязан быть отброшен — иначе он отрисовал бы список
+   * в узде, которого больше нет.
+   */
+  sugToken: 0,
 };
+
+// Пауза перед запросом подсказок и предел списка — те же, что в шапке: там
+// 200 мс и 12 строк. Разные значения в двух полях выглядели бы как «одно поле
+// думает быстрее другого».
+const TR_SUGG_DELAY_MS = 200;
+const TR_SUGG_MAX = 12;
 
 App.openTournament = function () {
   // Если перед открытием висел просмотр участника — closeViewer вернёт нас в
@@ -113,6 +138,9 @@ App.closeTournament = function () {
   this._tournament.open = false;
   this._tournament.loading = false;
   this.state.tournamentOpen = false;
+  // Отложенный запрос /suggest обязан умереть вместе с экраном: ответ придёт
+  // уже в закрытый турнир и без sugSeq-guard переоткроет список поверх пустоты.
+  this._trHideSuggest();
   const root = this.els.tournamentRoot;
   if (root) { root.innerHTML = ''; root.classList.add('hidden'); }
   this.invalidateFeedCache();
@@ -386,10 +414,217 @@ App._trTagPicker = function () {
   return out + '</div>';
 };
 
-// Стартовый экран: пресет раундов, источник картинок и фильтр рейтинга.
+// ── Автодополнение тегов ────────────────────────────────────────────────────
+// Словарь и ранжирование берём у поиска (suggestWord + mergeSuggestions +
+// /suggest-local + /suggest), чтобы поле турнира подсказывало ровно то же, что
+// и строка в шапке. Своих вызовов /suggest здесь нет намеренно: словарь тегов
+// один на весь сайт, второй источник правды только разошёлся бы с шапкой.
+//
+// Гонок тут три, и каждая закрывается своим номером:
+//  * sugSeq — пользователь набирает быстрее, чем отвечает сеть;
+//  * sugToken — стартовый экран перерисован (сменили раунд/источник/чип), и
+//    предыдущему ответу уже некуда положиться;
+//  * debounce — не долбим /suggest на каждый символ.
+
+// Значение подсказки: запись из /suggest либо голая строка.
+App._trSuggValue = function (item) {
+  if (item == null) return '';
+  return String(item.value || item.label || item);
+};
+
+// Слово под кареткой + границы для подстановки. suggestWord уже умеет не
+// отправлять служебные префиксы (-tag, ~tag) в запрос и находить слово по
+// каретке, а не по концу строки, поэтому переиспользуем его, а не копируем.
+App._trSuggestWord = function (inp) {
+  if (typeof this.suggestWord === 'function') return this.suggestWord(inp);
+  // Фолбэк на случай, если tournament.js загрузили без search.js (тесты).
+  const v = inp.value || '';
+  const pos = typeof inp.selectionStart === 'number' ? inp.selectionStart : v.length;
+  let start = Math.max(0, Math.min(pos, v.length));
+  let end = start;
+  const isBreak = (c) => c === ' ' || c === '\t' || c === '\n' || c === '|';
+  while (start > 0 && !isBreak(v[start - 1])) start--;
+  while (end < v.length && !isBreak(v[end])) end++;
+  const raw = v.slice(start, end);
+  const m = raw.match(/^[-+~^]+/);
+  const prefix = m ? m[0] : '';
+  return { start, end, raw, prefix, word: raw.slice(prefix.length) };
+};
+
+// Прячем список и гасим отложенный запрос. Вызывается перед любой полной
+// перерисовкой стартового экрана и при выходе из поля.
+App._trHideSuggest = function () {
+  const tm = this._tournament;
+  clearTimeout(tm.sugTimer);
+  tm.sugTimer = null;
+  tm.sug = [];
+  tm.sugIdx = -1;
+  // Номер увеличиваем всегда: ответ на уже скрытый список обязан отброситься,
+  // иначе он переоткроет список после того, как пользователь ушёл из поля.
+  tm.sugSeq++;
+  const root = this.els.tournamentRoot;
+  const box = root && root.querySelector ? root.querySelector('[data-tr="sugg"]') : null;
+  if (box) { box.innerHTML = ''; box.hidden = true; }
+  const inp = root && root.querySelector ? root.querySelector('[data-tr="tags"]') : null;
+  if (inp) {
+    inp.setAttribute('aria-expanded', 'false');
+    inp.removeAttribute('aria-activedescendant');
+  }
+};
+
+// Отрисовка списка подсказок. Активная строка помечена и классом, и
+// aria-selected: без aria-activedescendant скринридер не знает, какая
+// подсказка будет подставлена по Enter.
+App._trRenderSuggest = function () {
+  const tm = this._tournament;
+  const root = this.els.tournamentRoot;
+  const box = root && root.querySelector ? root.querySelector('[data-tr="sugg"]') : null;
+  if (!box) return;
+  if (!tm.sug.length) { box.innerHTML = ''; box.hidden = true; return; }
+  let out = '';
+  for (let i = 0; i < tm.sug.length; i++) {
+    const value = this._trSuggValue(tm.sug[i]);
+    const on = i === tm.sugIdx;
+    out += '<button type="button" class="tr-sugg-item' + (on ? ' on' : '') + '"' +
+      ' role="option" id="tr-sugg-' + i + '"' +
+      ' aria-selected="' + (on ? 'true' : 'false') + '"' +
+      ' data-tr-sugg="' + esc(value) + '">' + esc(value) + '</button>';
+  }
+  box.innerHTML = out;
+  box.hidden = false;
+  const inp = root.querySelector('[data-tr="tags"]');
+  if (inp) {
+    inp.setAttribute('aria-expanded', 'true');
+    if (tm.sugIdx >= 0 && tm.sug[tm.sugIdx]) {
+      inp.setAttribute('aria-activedescendant', 'tr-sugg-' + tm.sugIdx);
+    } else {
+      inp.removeAttribute('aria-activedescendant');
+    }
+  }
+};
+
+// Запрос подсказок для слова `tail`. Локальная база отвечает почти мгновенно,
+// удалённый источник медленнее — рисуем локальные сразу, не дожидаясь гонки.
+App._trFetchSuggest = function (tail) {
+  const tm = this._tournament;
+  const seq = ++tm.sugSeq;
+  const token = tm.sugToken;
+  const localP = API.get('/suggest-local?q=' + encodeURIComponent(tail))
+    .then(d => d.tags || []).catch(() => []);
+  const remoteP = API.get('/suggest?q=' + encodeURIComponent(tail))
+    .then(r => r.tags || []).catch(() => []);
+
+  // Ответ годится, только если пользователь всё ещё в том же слове, экран не
+  // перерисован и турнир открыт.
+  const stale = () => tm.sugSeq !== seq || tm.sugToken !== token || !tm.open;
+  localP.then(local => {
+    if (stale() || !local.length) return;
+    tm.sug = this.mergeSuggestions(local, [], tail).slice(0, TR_SUGG_MAX);
+    tm.sugIdx = tm.sug.length ? 0 : -1;
+    this._trRenderSuggest();
+  });
+  Promise.all([localP, remoteP]).then(([local, remote]) => {
+    if (stale()) return;
+    // Удалённый источник — правда по счётчикам, поэтому перерисовываем список
+    // целиком, даже если локальные подсказки уже показаны.
+    tm.sug = this.mergeSuggestions(local, remote || [], tail).slice(0, TR_SUGG_MAX);
+    tm.sugIdx = tm.sug.length ? 0 : -1;
+    this._trRenderSuggest();
+  });
+};
+
+// Ввод в поле тегов: значение в состояние, подсказки — по слову под кареткой.
+App._trOnTagsInput = function () {
+  const tm = this._tournament;
+  const root = this.els.tournamentRoot;
+  const inp = root && root.querySelector ? root.querySelector('[data-tr="tags"]') : null;
+  if (!inp) return;
+  tm.tags = inp.value;
+  const w = this._trSuggestWord(inp);
+  clearTimeout(tm.sugTimer);
+  tm.sugTimer = null;
+  // Два символа — тот же порог, что в шапке: по одному символу словарь отдаёт
+  // сотни совпадений, и такой список просто закрывает всё поле.
+  if (w.word.length >= 2) {
+    this._trHideSuggest();
+    tm.sugTimer = setTimeout(() => this._trFetchSuggest(w.word), TR_SUGG_DELAY_MS);
+  } else {
+    this._trHideSuggest();
+  }
+};
+
+// Клик мимо блока с полем закрывает список подсказок. Вынесено отдельным
+// методом, чтобы обработчик документа был один (см. _trOutsideBound).
+App._trDismissOnOutside = function (e) {
+  const tm = this._tournament;
+  if (!tm.sug.length) return;
+  if (e.target && e.target.closest && e.target.closest('.tr-tags')) return;
+  this._trHideSuggest();
+};
+
+// Навигация по списку и вставка. Выделенную подсказку вставляют и Enter, и
+// Tab: во втором случае «Начать» перехватил бы клавишу и запустил турнир.
+// Возвращаем true, если клавиша обработана, — вызывающий обязан это знать,
+// чтобы не отдать её дальше в логику игры.
+App._trSuggestKey = function (e) {
+  const tm = this._tournament;
+  const items = tm.sug || [];
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!items.length) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    const n = items.length;
+    tm.sugIdx = e.key === 'ArrowDown' ? (tm.sugIdx + 1) % n : (tm.sugIdx - 1 + n) % n;
+    this._trRenderSuggest();
+    return true;
+  }
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    if (!items.length) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    this._trApplySuggest(this._trSuggValue(items[tm.sugIdx >= 0 ? tm.sugIdx : 0]));
+    return true;
+  }
+  if (e.key === 'Escape' && items.length) {
+    // Первый Esc закрывает подсказки, а не весь турнир: список — часть поля.
+    e.preventDefault();
+    e.stopPropagation();
+    this._trHideSuggest();
+    return true;
+  }
+  return false;
+};
+
+// Подставить подсказку вместо слова под кареткой. Префикс (-, ~, +) сохраняем:
+// по «-brea» пользователь ждёт исключение тега, а не новый запрос. Хвост после
+// каретки не трогаем — правка тега в середине запроса не должна его стирать.
+App._trApplySuggest = function (value) {
+  const tm = this._tournament;
+  const root = this.els.tournamentRoot;
+  const inp = root && root.querySelector ? root.querySelector('[data-tr="tags"]') : null;
+  if (!inp) return;
+  const w = this._trSuggestWord(inp);
+  const v = inp.value || '';
+  const after = v.slice(w.end);
+  const next = (v.slice(0, w.start) + w.prefix + value + (after ? ' ' + after : ' '))
+    .replace(/\s{2,}/g, ' ');
+  inp.value = next;
+  tm.tags = next;
+  if (typeof inp.setSelectionRange === 'function') {
+    const pos = (inp.value.indexOf(value, w.start) + value.length) || next.length;
+    try { inp.setSelectionRange(pos, pos); } catch { /* некоторые input не умеют */ }
+  }
+  if (inp.focus) inp.focus();
+  this._trHideSuggest();
+};
+
 App.renderTournamentSetup = function () {
   const root = this.els.tournamentRoot;
   const tm = this._tournament;
+  // Любая полная перерисовка обесценивает список подсказок: ответ, пришедший
+  // на старую разметку, обязан отброситься (см. sugToken).
+  this._trHideSuggest();
+  tm.sugToken++;
   const roundsBtns = ROUNDS_PRESETS.map((r) => {
     const size = 1 << r;
     // Скобки обязательны: без них `size - 1` склеивается с соседними строками
@@ -435,10 +670,15 @@ App.renderTournamentSetup = function () {
           '<input type="text" class="tr-input" data-tr="tags" autocomplete="off" spellcheck="false"' +
             ' value="' + esc(tm.tags || '') + '"' +
             ' placeholder="' + esc(t('tr.tagsPh')) + '"' +
-            ' aria-label="' + esc(t('tr.tags')) + '">' +
+            ' role="combobox" aria-expanded="false" aria-autocomplete="list"' +
+            ' aria-controls="tr-sugg-list" aria-label="' + esc(t('tr.tags')) + '">' +
           (tm.tags ? '<button type="button" class="tr-clear" data-tr="tags-clear"' +
             ' title="' + esc(t('tr.tagsClear')) + '" aria-label="' + esc(t('tr.tagsClear')) + '">' +
             icon('x', 14) + '</button>' : '') +
+          // Список подсказок: роль listbox, значение поля — combobox. Подсказки
+          // приходят из того же словаря, что и в шапке (локальная база + бор),
+          // поэтому «1girl» дописывается здесь так же, как в строке поиска.
+          '<div class="tr-sugg" id="tr-sugg-list" data-tr="sugg" role="listbox" aria-label="' + esc(t('tr.suggAria')) + '" hidden></div>' +
         '</div>' +
         // Быстрый выбор из профиля: избранные теги и пресеты запросов.
         this._trTagPicker() +
@@ -482,7 +722,41 @@ App.renderTournamentSetup = function () {
   // иначе на каждом символе терялся бы фокус и каретка прыгала бы в начало.
   const tagsInput = root.querySelector('[data-tr="tags"]');
   if (tagsInput) {
-    tagsInput.addEventListener('input', () => { tm.tags = tagsInput.value; });
+    tagsInput.addEventListener('input', () => this._trOnTagsInput());
+    // Клавиши перехватываем на самом поле: глобальный onKeydown отдал бы Enter
+    // турниру (tournamentKey запускает игру по Enter из поля), а нужен выбор
+    // подсказки. stopPropagation в _trSuggestKey не даёт событию дойти дальше.
+    tagsInput.addEventListener('keydown', (e) => { this._trSuggestKey(e); });
+    // Клик мышью по самому полю не должен закрывать только что открытый список:
+    // фокус уже здесь, пересчитывать слово незачем.
+    tagsInput.addEventListener('click', () => {
+      const tm2 = this._tournament;
+      if (tm2.sug.length) this._trRenderSuggest();
+    });
+  }
+  // Клик по подсказке. Делегирование по контейнеру — список перерисовывается
+  // целиком, и слушатель на каждой строке накапливался бы в памяти.
+  const suggBox = root.querySelector('[data-tr="sugg"]');
+  if (suggBox) {
+    suggBox.addEventListener('mousedown', (e) => {
+      // mousedown, а не click: по умолчанию поле теряет фокус ДО click, список
+      // скрывается, и клик уже никому не достаётся — подсказка не выбиралась.
+      const btn = e.target.closest('[data-tr-sugg]');
+      if (!btn) return;
+      e.preventDefault();
+      this._trApplySuggest(btn.dataset.trSugg);
+    });
+  }
+  // Клик мимо поля закрывает список (как в шапке), но НЕ отменяет саму
+  // обработку клика: кнопки «Начать»/источник живут в этом же оверлее.
+  // Слушатель ставится ОДИН раз на документ: renderTournamentSetup вызывается
+  // на каждый чих (раунд, источник, чип), и новый слушатель в каждой отрисовке
+  // копился бы в памяти, срабатывая по несколько раз на один клик.
+  if (!App._trOutsideBound) {
+    App._trOutsideBound = true;
+    document.addEventListener('mousedown', function (e) {
+      if (typeof this._trDismissOnOutside === 'function') this._trDismissOnOutside(e);
+    });
   }
   const tagsClear = root.querySelector('[data-tr="tags-clear"]');
   if (tagsClear) {

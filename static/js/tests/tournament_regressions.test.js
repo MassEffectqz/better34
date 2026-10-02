@@ -790,5 +790,166 @@ const withEsc = (fn) => {
     a._tournament.viewerOpen === false && a._tournament.viewerReturnPosts === null);
 }
 
+// ── 12. Автодополнение тегов в турнире ───────────────────────────────────────
+// Регрессия на два класса ошибок: (1) подсказка не должна приходить на «-tag»
+// служебным запросом, как это уже исправлено в шапке; (2) ответ, пришедший на
+// предыдущую разметку или после закрытия турнира, обязан отбрасываться.
+{
+  const s = makeClassList();
+  // Мини-разметка стартового экрана: поле тегов + список подсказок.
+  const mkInput = (value, pos) => ({
+    value, selectionStart: pos == null ? value.length : pos,
+    attrs: {}, focused: 0,
+    setAttribute(k, v) { this.attrs[k] = v; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    setSelectionRange(p) { this.selectionStart = p; },
+    focus() { this.focused++; },
+  });
+  const mkSuggestApp = (input) => {
+    const a = Object.create(App);
+    const box = { innerHTML: '', hidden: true, querySelectorAll: () => [] };
+    const root = {
+      innerHTML: '', classList: s,
+      querySelector(sel) {
+        if (sel === '[data-tr="tags"]') return input;
+        if (sel === '[data-tr="sugg"]') return box;
+        return null;
+      },
+      querySelectorAll: () => [], focus() {},
+    };
+    a.els = { tournamentRoot: root };
+    a._tournament = {
+      open: true, tags: '', rounds: 3, source: 'offline', rating: '',
+      sug: [], sugIdx: -1, sugSeq: 0, sugTimer: null, sugToken: 3,
+    };
+    a.state = { query: '', posts: [], profile: { fav_tags: [], presets: [] } };
+    a.renderTournamentSetup = () => {};
+    a.invalidateFeedCache = () => {};
+    a._trChips = () => '';
+    a._trTagPicker = () => '';
+    // Ранжирование как в шапке: по префиксу, с сохранением исходной записи.
+    a.mergeSuggestions = (local, remote, prefix) =>
+      (remote.length ? remote : local)
+        .filter(x => String(x.value).toLowerCase().startsWith(prefix.toLowerCase()))
+        .map(x => ({ value: x.value, count: x.count }));
+    return { a, box, input };
+  };
+
+  // Слово под кареткой и служебный префикс.
+  {
+    const { a, input } = mkSuggestApp(mkInput('solo brea'));
+    const w = a._trSuggestWord(input);
+    check('слово под кареткой отделено от предыдущего', w.word === 'brea' && w.start === 5, JSON.stringify(w));
+    const neg = mkSuggestApp(mkInput('solo -brea'));
+    const nw = neg.a._trSuggestWord(neg.input);
+    check('префикс «-» не входит в слово подсказки', nw.word === 'brea' && nw.prefix === '-', JSON.stringify(nw));
+  }
+
+  // Порог в два символа: по одному словарь отдаёт сотни совпадений.
+  {
+    const { a, input } = mkSuggestApp(mkInput('b'));
+    let fetched = 0;
+    a._trFetchSuggest = () => { fetched++; };
+    a._trOnTagsInput();
+    check('один символ не вызывает запрос подсказок', fetched === 0 && a._tournament.sugTimer === null);
+    input.value = 'br';
+    a._trOnTagsInput();
+    check('два символа запускают отложенный запрос', !!a._tournament.sugTimer);
+    clearTimeout(a._tournament.sugTimer);
+  }
+
+  // Подстановка: префикс сохраняется, хвост после каретки не стирается.
+  {
+    // Каретка стоит за «brea», а не в конце: подсказка применяется к слову ПОД
+    // кареткой, поэтому «cat» справа — это хвост, который обязан уцелеть.
+    const { a, input } = mkSuggestApp(mkInput('solo -brea cat', 10));
+    a._trApplySuggest('breasts');
+    check('подстановка сохраняет префикс исключения',
+      a._tournament.tags === 'solo -breasts cat', a._tournament.tags);
+    check('значение поля и состояния совпадают', input.value === a._tournament.tags);
+    check('каретка встала за подставленным тегом', input.selectionStart === 13, 'pos=' + input.selectionStart);
+  }
+  {
+    // Правка тега в середине: хвост после каретки обязан уцелеть.
+    const { a, input } = mkSuggestApp(mkInput('brea cat'));
+    input.selectionStart = 4;
+    a._trApplySuggest('breasts');
+    check('правка тега в середине не стирает хвост',
+      a._tournament.tags === 'breasts cat', a._tournament.tags);
+  }
+
+  // Клавиатура: стрелки перемещают выделение, Enter вставляет, Esc закрывает
+  // список (а не весь турнир).
+  {
+    const { a, input } = mkSuggestApp(mkInput('bre'));
+    a._tournament.sug = [{ value: 'breasts' }, { value: 'breeches' }];
+    a._tournament.sugIdx = 0;
+    const ev = (key) => {
+      const e = { key, prevented: false, stopped: false,
+        preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; } };
+      return { e, handled: a._trSuggestKey(e) };
+    };
+    const down = ev('ArrowDown');
+    check('стрелка вниз двигает выделение', down.handled && a._tournament.sugIdx === 1 && down.e.prevented);
+    const up = ev('ArrowUp');
+    check('стрелка вверх возвращает назад', up.handled && a._tournament.sugIdx === 0);
+    const enter = ev('Enter');
+    // Завершающий пробел — как в шапке: сразу за подставленным тегом удобно
+    // допечатать следующий, не нажимая пробел вручную.
+    check('Enter вставляет выделенную подсказку',
+      enter.handled && a._tournament.tags.trim() === 'breasts', JSON.stringify(a._tournament.tags));
+    // Enter не должен дойти до tournamentKey — иначе он запустит турнир.
+    check('Enter перехвачен и не уходит в логику игры', enter.e.stopped === true);
+
+    a._tournament.sug = [{ value: 'breasts' }];
+    a._tournament.sugIdx = 0;
+    input.value = 'bre';
+    const esc = ev('Escape');
+    check('Esc закрывает список, а не турнир',
+      esc.handled && esc.e.stopped && a._tournament.sug.length === 0 && a._tournament.open === true);
+    const esc2 = ev('Escape');
+    check('второй Esc не перехватывается (списка уже нет)', esc2.handled === false);
+  }
+
+  // Enter без открытого списка должен дойти до игры: без этого турнир было бы
+  // невозможно запустить, не набрав ни одного символа.
+  {
+    const { a } = mkSuggestApp(mkInput('solo'));
+    const e = { key: 'Enter', preventDefault() {}, stopPropagation() {} };
+    check('Enter без подсказок не перехватывается', a._trSuggestKey(e) === false);
+  }
+
+  // Гонка: перерисовка экрана и закрытие турнира убивают отложенный ответ.
+  {
+    const { a, box, input } = mkSuggestApp(mkInput('bre'));
+    const token = a._tournament.sugToken;
+    a._tournament.sugToken++;
+    a._trHideSuggest();
+    check('перерисовка экрана сбрасывает список', a._tournament.sug.length === 0 && box.hidden === true);
+    check('токен отрисовки вырос', a._tournament.sugToken === token + 1);
+    input.value = 'bre';
+    check('поле осталось доступным после сброса', input.value === 'bre');
+  }
+
+  // Закрытый турнир не должен рисовать подсказки.
+  {
+    const { a, box } = mkSuggestApp(mkInput('bre'));
+    a._tournament.open = false;
+    const seq = a._tournament.sugSeq;
+    // Повторяем условие stale из _trFetchSuggest при закрытом турнире.
+    const staleClosed = () => a._tournament.sugSeq !== seq || !a._tournament.open;
+    check('ответ при закрытом турнире отбрасывается', staleClosed() === true && box.hidden === true);
+  }
+
+  // Экранирование: тег из подсказок не может вырваться из атрибута.
+  {
+    const { a, box } = mkSuggestApp(mkInput('x'));
+    a._tournament.sug = [{ value: '"><script>alert(1)</script>' }];
+    a._tournament.sugIdx = 0;
+    withEsc(() => a._trRenderSuggest());
+    check('XSS: значение подсказки экранировано', !box.innerHTML.includes('<script>'), box.innerHTML.slice(0, 200));
+  }
+}
+
 console.log(`\nИтог: ${passed} ok, ${failed} fail`);
 if (failed) process.exit(1);
