@@ -8,8 +8,10 @@ package internal
 //                    Аутентификация — заголовок X-Briefly-Friend-Key.
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -153,31 +155,25 @@ type friendProfileView struct {
 	CommentPosts []int                `json:"comment_posts"`
 }
 
-// GET /api/friends/:id/profile — профиль друга: его лайки, дизлайки и теги.
+// friendProfileViewOf собирает профиль друга для UI из записи и её снимка.
 //
-// Отдельный эндпоинт, а не поле в /api/friends: список открывается часто, а
-// снимок весит до 5000 id. Плюс он не должен попадать в localStorage.
-func (h *Handler) FriendProfile(c *gin.Context) {
-	user := c.GetString("briefly_user")
-	f, ok := GetFriendStore(user).Get(c.Param("id"))
-	if !ok {
-		friendErr(c, ErrFriendNotFound)
-		return
-	}
+// Посты отдаём только id: клиент сам добирает их через /api/posts-by-ids,
+// где работает наш локальный кэш. Так картинки друзей рисуются без новых
+// запросов к сети, а снимок остаётся лёгким.
+func friendProfileViewOf(f Friend) friendProfileView {
 	snap := f.Snapshot
+	// Данных ещё нет — отдаём пустой профиль, а не 404: друг существует, просто
+	// обмена ещё не было. UI покажет подсказку «нажмите Обновить».
 	if snap == nil {
-		// Данных ещё нет: отдаём пустой профиль, а не 404 — друг существует,
-		// просто обмена ещё не было. UI покажет подсказку «нажмите Обменяться».
-		c.JSON(http.StatusOK, gin.H{"friend": friendProfileView{
+		return friendProfileView{
 			ID: f.ID(), URL: f.URL, Nickname: f.Nickname, Avatar: f.Avatar,
 			LastSync: f.LastSync,
 			Likes:    []int{}, Disliked: []int{}, FavTags: []string{},
 			DislikedTags: []friendDislikedTag{}, Collections: []FriendSnapshotColl{},
 			CommentPosts: []int{},
-		}})
-		return
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"friend": friendProfileView{
+	return friendProfileView{
 		ID: f.ID(), URL: f.URL, Nickname: f.Nickname, Avatar: f.Avatar,
 		LastSync: f.LastSync, SyncedAt: snap.SyncedAt,
 		Likes:        nonNilInts(snap.Likes),
@@ -186,7 +182,60 @@ func (h *Handler) FriendProfile(c *gin.Context) {
 		DislikedTags: snap.DislikedTags,
 		Collections:  snap.Collections,
 		CommentPosts: nonNilInts(snap.CommentPosts),
-	}})
+	}
+}
+
+// GET /api/friends/:id/profile — профиль друга: его лайки, дизлайки и теги.
+//
+// Здесь же — обмен с этим другом: открыть профиль = увидеть свежие данные.
+// Фонового обмена нет (и не было нужды ждать его минуту), поэтому единственные
+// моменты, когда данные друга меняются, — открытие профиля и кнопка
+// «Обновить». Не дождались мёртвого друга — отдаём прошлый снимок, а строка
+// «обмен» в UI объяснит причину.
+//
+// Отдельный эндпоинт, а не поле в /api/friends: список открывается часто, а
+// снимок весит до 5000 id. Плюс он не должен попадать в localStorage.
+func (h *Handler) FriendProfile(c *gin.Context) {
+	user := c.GetString("briefly_user")
+	store := GetFriendStore(user)
+	id := c.Param("id")
+	if _, ok := store.Get(id); !ok {
+		friendErr(c, ErrFriendNotFound)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), friendProfileOpenBudget)
+	defer cancel()
+	if _, err := SyncOneFriendCtx(ctx, user, id, friendSelfURL(c)); err != nil {
+		// Друг выключен, ключ не тот, адрес недоступен — причина уже записана в
+		// LastError друга и всплывёт в строке «обмен».
+		log.Printf("friends: профиль %s не обновился: %v", id, err)
+	}
+	f, _ := store.Get(id) // после обмена запись могла исчезнуть — тогда пустая
+	c.JSON(http.StatusOK, gin.H{"friend": friendProfileViewOf(f)})
+}
+
+// POST /api/friends/sync/:id — обмен с одним другом (кнопка «Обновить» в его
+// профиле). Отвечает свежим профилем, чтобы клиент не делал второй запрос:
+// повторный GET /profile синхронизировал бы друга второй раз.
+func (h *Handler) SyncOneFriend(c *gin.Context) {
+	user := c.GetString("briefly_user")
+	store := GetFriendStore(user)
+	id := c.Param("id")
+	if _, ok := store.Get(id); !ok {
+		friendErr(c, ErrFriendNotFound)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), friendSyncBudget)
+	defer cancel()
+	st, err := SyncOneFriendCtx(ctx, user, id, friendSelfURL(c))
+	f, _ := store.Get(id)
+	body := gin.H{"friend": friendProfileViewOf(f), "synced": st, "ok": err == nil}
+	if err != nil {
+		// 200 с ok:false, а не 4xx/5xx — снимок в ответе всё равно полезен
+		// (показываем прошлые данные), а UI переведёт код через friendErrText.
+		body["error"] = err.Error()
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 // nonNilInts и nonNilStrings: пустой слайс сериализуется в [] вместо null —
@@ -319,7 +368,13 @@ func (h *Handler) FriendShare(c *gin.Context) {
 	c.JSON(http.StatusOK, payload)
 }
 
-// POST /api/friend/ingest — принять payload друга и влить в профиль.
+// POST /api/friend/ingest — принять payload друга.
+//
+// Применяем ли данные — нет: обмен стал по требованию (открыл профиль или
+// нажал «Обновить»), а чужой push в фоне — это и есть то самое пассивное
+// обновление, которого больше нет (см. SyncOneFriendCtx). Эндпоинт остаётся:
+// наши данные друг тянет сам — GET /api/friend/share, когда открывает наш профиль.
+//
 // Троттлинг здесь — тот же аргумент, что и в FriendShare: его даёт ключ,
 // общий лимит /api и капы на размер принимаемых данных.
 func (h *Handler) FriendIngest(c *gin.Context) {
@@ -348,20 +403,13 @@ func (h *Handler) FriendIngest(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "friend_bad_body"})
 		return
 	}
-	// fr.URL — пространство имён для чужих комментариев: логины с разных
-	// инстансов не сливаются (см. friendCommentUsername).
-	sender := fr.URL
-	stats, err := applyFriendPayload(&in, sender, GetAccounts().Profile(user))
-	if err != nil {
+	if in.Version != friendPayloadVersion {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "friend_bad_body"})
 		return
 	}
-	// Снимок обновляем и здесь, а не только при нашем исходящем обмене: лайки
-	// друга в профиль не вливаются, поэтому показывать их можно ТОЛЬКО из
-	// снимка — без этой строки страница друга оставалась бы пустой до
-	// следующего планового обмена, хотя данные уже пришли.
-	GetFriendStore(user).noteSnapshot(fr.ID(), snapshotFrom(&in))
-	// Клиенту нужен сигнал перерисовать лайки/коллекции/комментарии.
-	publishSSE(map[string]any{"type": "friends", "incoming": sender})
-	c.JSON(http.StatusOK, gin.H{"ok": true, "merged": stats})
+	// Данные НЕ применяем: см. док функции. Ответ 200 с applied:false, чтобы
+	// старый инстанс не считал это ошибкой и не сыпал ретраями.
+	log.Printf("friends: push от %s проигнорирован (лайков %d, коллекций %d) — обмен по требованию",
+		fr.URL, len(in.Likes), len(in.Collections))
+	c.JSON(http.StatusOK, gin.H{"ok": true, "applied": false})
 }

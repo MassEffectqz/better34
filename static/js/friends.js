@@ -222,6 +222,12 @@ App.openFriendProfile = async function (id, tab, opts) {
   } else {
     this._friendProfile.tab = wantTab;
   }
+  // Снимок друга при каждом открытии берём заново: обмен с ним делает сервер
+  // именно на GET /friends/:id/profile, и показывать закешированные данные
+  // значило бы «открыл профиль — увидел то, что было при прошлом заходе».
+  // (Кэш остаётся для перерисовок ВНУТРИ открытой страницы — вкладки, сетка.)
+  friendProfileCache.delete(id);
+  this._friendProfile.data = null;
   // Класс на body прячет ленту (см. CSS): страница друга отдельная, а не
   // поверхность поверх сетки, иначе при скролле выглядывали бы обе.
   document.body.classList.add('friend-profile-open');
@@ -350,14 +356,28 @@ App.invalidateFriendCache = function (opts) {
   go(this.renderFriendProfile());
 };
 
-/** Обмен по кнопке из профиля: сбрасываем кэш и перерисовываем. */
+/**
+ * Кнопка «Обновить» в профиле друга: обмен с ОДНИМ другом и перерисовка из
+ * ответа.
+ *
+ * Именно /friends/sync/:id, а не общий /friends/sync: повторный GET /profile
+ * после обмена дёрнул бы обмен у друга второй раз (сервер синхронизирует при
+ * открытии профиля), а здесь ответ уже содержит свежий снимок.
+ */
 App._friendProfileSync = async function (st) {
   const btn = $('btn-friend-profile-sync');
   if (btn) btn.disabled = true;
   try {
-    await API.post('/friends/sync');
-    this.invalidateFriendCache({ render: false });
-    await this.renderFriendProfile();
+    const res = await API.post(`/friends/sync/${encodeURIComponent(st.id)}`);
+    if (res && res.friend) {
+      friendProfileCache.set(st.id, res);
+      st.data = res;
+    }
+    await this.renderFriendProfileTabs();
+    this._friendSideWhen((st.data && st.data.friend) || {});
+    if (res && res.ok === false) {
+      this.showToast(friendErrText(res.error), 'error');
+    }
   } catch {
     this.showToast(t('friends.syncFailed'));
   } finally {

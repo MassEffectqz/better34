@@ -7,6 +7,7 @@ package internal
 //  * повторный обмен не плодит дубли (комментарии дедуплицируются).
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -408,6 +410,228 @@ func containsLike(ls []friendLike, id int) bool {
 		}
 	}
 	return false
+}
+
+// ── Обмен по требованию (открытие профиля / кнопка «Обновить») ───────────────
+
+// isolateFriendsData уводит data/ во временный каталог и пересоздаёт
+// синглтоны: SyncOneFriendCtx ходит в аккаунты (ник, аватар) и legacy-профиль,
+// а тесты не должны трогать боевой каталог.
+func isolateFriendsData(t *testing.T) {
+	t.Helper()
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+	resetGlobalTestState(t)
+}
+
+// registerOnDemandStore кладёт хранилище друзей в глобальную карту: иначе
+// GetFriendStore создал бы пустое новое и не нашло бы нашего друга.
+func registerOnDemandStore(t *testing.T, username string) *FriendStore {
+	t.Helper()
+	s := &FriendStore{path: filepath.Join(t.TempDir(), "f.json"), byID: map[string]*Friend{}}
+	friendStoresMu.Lock()
+	friendStores[username] = s
+	friendStoresMu.Unlock()
+	t.Cleanup(func() {
+		friendStoresMu.Lock()
+		delete(friendStores, username)
+		friendStoresMu.Unlock()
+	})
+	return s
+}
+
+func addTestFriend(t *testing.T, s *FriendStore, url, key, name string) Friend {
+	t.Helper()
+	fr, err := s.AddFriend(friendCodePrefix+":"+url+":"+key+":"+name, "https://26.1.1.1:3000", "me", "Я")
+	if err != nil {
+		t.Fatalf("AddFriend: %v", err)
+	}
+	return *fr
+}
+
+// Обмен по требованию: снимок друга сохранён, наши лайки ушли, LastSync записан.
+func TestSyncOneFriendOnDemand(t *testing.T) {
+	isolateFriendsData(t)
+	theirs := &friendPayload{
+		Version: friendPayloadVersion, App: "briefly", User: "vasya",
+		Likes:       []friendLike{{PostID: 4242, LikedAt: 300}},
+		Collections: []friendCollection{{Name: "его альбом", Posts: []int{4242}}},
+	}
+	var got friendPayload
+	key := strings.Repeat("55", 32)
+	srv := friendTestServer(t, key, theirs, &got)
+	defer srv.Close()
+
+	store := registerOnDemandStore(t, "demand")
+	fr := addTestFriend(t, store, srv.URL, key, "Вася")
+
+	ctx, cancel := context.WithTimeout(context.Background(), friendSyncBudget)
+	defer cancel()
+	st, err := SyncOneFriendCtx(ctx, "demand", fr.ID(), "https://26.1.1.1:3000")
+	if err != nil {
+		t.Fatalf("SyncOneFriendCtx: %v", err)
+	}
+	if st.Likes != 1 {
+		t.Errorf("статистика = %+v, ждали один новый лайк", st)
+	}
+	cur, _ := store.Get(fr.ID())
+	if cur.Snapshot == nil || len(cur.Snapshot.Likes) != 1 || cur.Snapshot.Likes[0] != 4242 {
+		t.Fatalf("снимок = %+v, ждали его лайк 4242", cur.Snapshot)
+	}
+	// Альбом друга — в его снимке и только там (в наших альбомах его быть не должно).
+	if len(cur.Snapshot.Collections) != 1 || cur.Snapshot.Collections[0].Name != "его альбом" {
+		t.Errorf("коллекции снимка = %+v", cur.Snapshot.Collections)
+	}
+	// Наш payload другу ушёл целиком (заполненность — из профиля АККАУНТА, см.
+	// SyncOneFriendCtx; содержимое проверено в TestSyncOneFriendBothDirections).
+	if got.Version != friendPayloadVersion {
+		t.Errorf("другу ушёл мусор вместо payload: version=%d", got.Version)
+	}
+	if cur.LastSync == "" {
+		t.Error("LastSync не записан: в профиле не покажется «обмен: когда»")
+	}
+	if cur.LastError != "" {
+		t.Errorf("после успешного обмена записана ошибка: %q", cur.LastError)
+	}
+}
+
+// Мёртвый друг не должен держать открытие профиля: дедлайн обрывает обмен, причина
+// попадает в LastError (её покажет UI), а снимок остаётся прежним — лучше старые
+// данные, чем пустая страница.
+func TestSyncOneFriendOnDemandRespectsDeadline(t *testing.T) {
+	isolateFriendsData(t)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slow.Close()
+
+	store := registerOnDemandStore(t, "slow")
+	fr := addTestFriend(t, store, slow.URL, strings.Repeat("66", 32), "Медленный")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := SyncOneFriendCtx(ctx, "slow", fr.ID(), "https://26.1.1.1:3000"); err == nil {
+		t.Fatal("обмен с недоступным другом должен вернуть ошибку")
+	}
+	if d := time.Since(start); d > 250*time.Millisecond {
+		t.Errorf("обмен шёл %v — дедлайн открытия профиля не сработал", d)
+	}
+	cur, _ := store.Get(fr.ID())
+	if cur.LastError == "" {
+		t.Error("причина не записана в LastError: UI не сможет объяснить сбой")
+	}
+	if cur.Snapshot != nil {
+		t.Error("снимок записан при неудачном обмене — профиль друга должен остаться прежним")
+	}
+}
+
+// Открытие профиля друга само обновляет его данные: синк живёт в обработчике
+// GET /friends/:id/profile (фонового цикла больше нет).
+func TestFriendProfileSyncsOnOpen(t *testing.T) {
+	isolateFriendsData(t)
+	theirs := &friendPayload{
+		Version: friendPayloadVersion, App: "briefly", User: "vasya",
+		Likes: []friendLike{{PostID: 4242, LikedAt: 300}},
+	}
+	var got friendPayload
+	key := strings.Repeat("77", 32)
+	srv := friendTestServer(t, key, theirs, &got)
+	defer srv.Close()
+
+	store := registerOnDemandStore(t, "demand")
+	fr := addTestFriend(t, store, srv.URL, key, "Вася")
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/api/friends/:id/profile", func(c *gin.Context) {
+		c.Set("briefly_user", "demand")
+		NewHandler().FriendProfile(c)
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/friends/"+fr.ID()+"/profile", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Friend struct {
+			Likes []int `json:"likes"`
+		} `json:"friend"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (%s)", err, w.Body.String())
+	}
+	if len(out.Friend.Likes) != 1 || out.Friend.Likes[0] != 4242 {
+		t.Errorf("открытие профиля показало %v, ждали свежие лайки друга [4242]", out.Friend.Likes)
+	}
+	cur, _ := store.Get(fr.ID())
+	if cur.Snapshot == nil || len(cur.Snapshot.Likes) != 1 {
+		t.Error("снимок друга не сохранён при открытии профиля")
+	}
+}
+
+// Кнопка «Обновить» (POST /friends/sync/:id) обменивается с ОДНИМ другом и
+// отдаёт свежий профиль в том же ответе — второй запрос клиенту не нужен.
+func TestSyncOneFriendEndpointReturnsFreshProfile(t *testing.T) {
+	isolateFriendsData(t)
+	theirs := &friendPayload{
+		Version: friendPayloadVersion, App: "briefly", User: "vasya",
+		Likes: []friendLike{{PostID: 909, LikedAt: 1}},
+	}
+	var got friendPayload
+	key := strings.Repeat("88", 32)
+	srv := friendTestServer(t, key, theirs, &got)
+	defer srv.Close()
+
+	store := registerOnDemandStore(t, "demand")
+	fr := addTestFriend(t, store, srv.URL, key, "Вася")
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/api/friends/sync/:id", func(c *gin.Context) {
+		c.Set("briefly_user", "demand")
+		NewHandler().SyncOneFriend(c)
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/friends/sync/"+fr.ID(), nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		OK     bool `json:"ok"`
+		Friend struct {
+			Likes []int `json:"likes"`
+		} `json:"friend"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !out.OK {
+		t.Error("обмен по кнопке должен быть успешным: ok=false")
+	}
+	if len(out.Friend.Likes) != 1 || out.Friend.Likes[0] != 909 {
+		t.Errorf("ответ не содержит свежего снимка: %v", out.Friend.Likes)
+	}
+
+	// Несуществующий друг — ошибка, а не пустой успех.
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/friends/sync/нет-такого", nil))
+	if w.Code == http.StatusOK {
+		t.Error("обмен с несуществующим другом не должен отвечать 200")
+	}
+}
+
+// Несуществующий друг — ошибка, а не пустой профиль и не паника.
+func TestSyncOneFriendOnDemandUnknownID(t *testing.T) {
+	isolateFriendsData(t)
+	registerOnDemandStore(t, "ghost")
+	if _, err := SyncOneFriendCtx(context.Background(), "ghost", "нет-такого", "https://26.1.1.1:3000"); err != ErrFriendNotFound {
+		t.Errorf("несуществующий друг: %v, ждали ErrFriendNotFound", err)
+	}
 }
 
 func TestSyncOneFriendToleratesDeadFriend(t *testing.T) {

@@ -18,6 +18,7 @@ package internal
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -55,7 +56,6 @@ const (
 	maxFriendCollsPC = 2000
 	maxFriendText    = 500
 	maxFriendName    = 64
-	friendSyncPeriod = 5 * time.Minute
 )
 
 var (
@@ -898,9 +898,21 @@ func applyFriendPayload(in *friendPayload, instance string, p *Profile) (mergeSt
 
 // ── HTTP-обмен между инстансами ──────────────────────────────────────────────
 
-// friendClientTimeout короче обычного: синк идёт в фоне и не должен висеть
-// на мёртвом друге дольше, чем цикл опроса.
+// friendClientTimeout короче обычного: синк идёт по требованию и не должен
+// висеть на мёртвом друге дольше, чем живёт запрос пользователя.
 const friendClientTimeout = 20 * time.Second
+
+// Потолки обмена по требованию (фонового цикла больше нет):
+//
+//	friendSyncBudget         — кнопка «Обменяться»/«Обновить»: пользователь сам
+//	                           ждёт, можно дать полный обмен.
+//	friendProfileOpenBudget  — открытие профиля друга: страница должна
+//	                           открыться быстро. Не дождались — отдаём прошлый
+//	                           снимок, а строка «обмен» покажет причину.
+const (
+	friendSyncBudget        = 12 * time.Second
+	friendProfileOpenBudget = 8 * time.Second
+)
 
 // friendHTTPClient не проверяет сертификат: у каждого инстанса свой
 // self-signed (tls.go), CA нет. Безопасность обеспечивается НЕ TLS, а тем,
@@ -924,11 +936,18 @@ var friendHTTPClient = &http.Client{
 // получатель сверяет его со своим списком, чтобы понять, кто пришёл (ключ
 // один на пользователя и сам по себе друга не различает).
 func friendRequest(method, url, key, from string, body []byte) (*http.Response, error) {
+	return friendRequestCtx(context.Background(), method, url, key, from, body)
+}
+
+// friendRequestCtx — то же с контекстом: обмен по требованию (открытие профиля
+// друга) ограничен по времени, иначе мёртвый друг держал бы вьювер на спиннере,
+// пока отдаёт свой 20-секундный таймаут.
+func friendRequestCtx(ctx context.Context, method, url, key, from string, body []byte) (*http.Response, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, url, rdr)
+	req, err := http.NewRequestWithContext(ctx, method, url, rdr)
 	if err != nil {
 		return nil, err
 	}
@@ -983,7 +1002,11 @@ func friendErrCode(raw []byte) string {
 
 // fetchFromFriend забирает payload друга.
 func fetchFromFriend(f Friend) (*friendPayload, error) {
-	resp, err := friendRequest(http.MethodGet, f.URL+"/api/friend/share", f.Key, f.URL, nil)
+	return fetchFromFriendCtx(context.Background(), f)
+}
+
+func fetchFromFriendCtx(ctx context.Context, f Friend) (*friendPayload, error) {
+	resp, err := friendRequestCtx(ctx, http.MethodGet, f.URL+"/api/friend/share", f.Key, f.URL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,13 +1028,17 @@ func fetchFromFriend(f Friend) (*friendPayload, error) {
 
 // sendToFriend отдаёт наш payload другу.
 func sendToFriend(f Friend, p *friendPayload) (int, error) {
+	return sendToFriendCtx(context.Background(), f, p)
+}
+
+func sendToFriendCtx(ctx context.Context, f Friend, p *friendPayload) (int, error) {
 	body, err := json.Marshal(p)
 	if err != nil {
 		return 0, err
 	}
 	// Авторизуемся ключом ДРУГА (f.Key): он же выдал его в своём friend-коде,
 	// поэтому на приёме friendByKey() узнает владельца ключа.
-	resp, err := friendRequest(http.MethodPost, f.URL+"/api/friend/ingest", f.Key, p.Instance, body)
+	resp, err := friendRequestCtx(ctx, http.MethodPost, f.URL+"/api/friend/ingest", f.Key, p.Instance, body)
 	if err != nil {
 		return 0, err
 	}
@@ -1029,8 +1056,12 @@ func sendToFriend(f Friend, p *friendPayload) (int, error) {
 // уже после того, как мы учли его, — при асинхронной встречной синхронизации
 // это убирает взаимное «эхо».
 func syncOneFriend(f Friend, instance, user, nickname, avatar string, p *Profile) (mergeStats, error) {
+	return syncOneFriendCtx(context.Background(), f, instance, user, nickname, avatar, p)
+}
+
+func syncOneFriendCtx(ctx context.Context, f Friend, instance, user, nickname, avatar string, p *Profile) (mergeStats, error) {
 	var st mergeStats
-	if theirs, err := fetchFromFriend(f); err == nil {
+	if theirs, err := fetchFromFriendCtx(ctx, f); err == nil {
 		got, err := applyFriendPayload(theirs, f.URL, p)
 		if err != nil {
 			return st, err
@@ -1046,7 +1077,7 @@ func syncOneFriend(f Friend, instance, user, nickname, avatar string, p *Profile
 		st.Likes = -1
 	}
 	out := buildFriendPayload(instance, user, nickname, avatar, p)
-	if _, err := sendToFriend(f, out); err != nil {
+	if _, err := sendToFriendCtx(ctx, f, out); err != nil {
 		if st.Likes < 0 {
 			return st, err
 		}
@@ -1055,6 +1086,8 @@ func syncOneFriend(f Friend, instance, user, nickname, avatar string, p *Profile
 }
 
 // ── Фоновая синхронизация ────────────────────────────────────────────────────
+// (фоновой синхронизации больше нет: обмен идёт по требованию — при открытии
+// профиля друга и по кнопке «Обновить». См. SyncOneFriendCtx.)
 
 // friendIdentity — кто мы для друзей: логин, ник и аватар из аккаунта.
 func friendIdentity(username string) (nickname, avatar string) {
@@ -1064,34 +1097,47 @@ func friendIdentity(username string) (nickname, avatar string) {
 	return "", ""
 }
 
-// SyncAllFriends прогоняет обмен со всеми друзьями пользователя. Ошибка
-// одного не мешает остальным: иначе один выключенный друг блокировал бы
-// обмен со всеми.
-func SyncAllFriends(username, selfURL string) map[string]mergeStats {
+// SyncOneFriendCtx прогоняет обмен с одним другом (по id) и записывает
+// результат в запись: LastSync или текст ошибки. Именно эта функция — единственный
+// путь обмена со временем жизни запроса, который задаёт вызывающий (открытие
+// профиля, кнопка «Обновить»).
+//
+// Ошибка не стирает данные: снимок друга остаётся прежним, а UI покажет причину
+// в строке «обмен» — молчаливая пустая страница была бы хуже старого списка.
+func SyncOneFriendCtx(ctx context.Context, username, id, selfURL string) (mergeStats, error) {
 	store := GetFriendStore(username)
-	list := store.List()
-	out := make(map[string]mergeStats, len(list))
-	if len(list) == 0 {
-		return out
+	f, ok := store.Get(id)
+	if !ok {
+		return mergeStats{}, ErrFriendNotFound
 	}
 	p := GetAccounts().Profile(username)
 	nickname, avatar := friendIdentity(username)
-	for _, f := range list {
-		st, err := syncOneFriend(f, selfURL, username, nickname, avatar, p)
-		msg := ""
+	st, err := syncOneFriendCtx(ctx, f, selfURL, username, nickname, avatar, p)
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+		log.Printf("friends: sync %s failed: %v", f.URL, err)
+	}
+	store.noteSync(id, msg)
+	return st, err
+}
+
+// SyncAllFriends прогоняет обмен со всеми друзьями пользователя — только по
+// явной кнопке. Фонового цикла больше нет: обмен без запроса пользователя
+// означал, что данные друга тихо меняются у него перед глазами.
+//
+// Ошибка одного не мешает остальным: иначе один выключенный друг блокировал бы
+// обмен со всеми.
+func SyncAllFriends(username, selfURL string) map[string]mergeStats {
+	out := make(map[string]mergeStats)
+	for _, f := range GetFriendStore(username).List() {
+		ctx, cancel := context.WithTimeout(context.Background(), friendSyncBudget)
+		st, err := SyncOneFriendCtx(ctx, username, f.ID(), selfURL)
+		cancel()
 		if err != nil {
-			msg = err.Error()
-		}
-		store.noteSync(f.ID(), msg)
-		if err != nil {
-			log.Printf("friends: sync %s failed: %v", f.URL, err)
 			continue
 		}
 		out[f.ID()] = st
-		if st.total() > 0 {
-			// Клиенту нужен сигнал: он перерисует лайки/коллекции.
-			publishSSE(map[string]any{"type": "friends", "id": f.ID()})
-		}
 	}
 	return out
 }
@@ -1194,26 +1240,8 @@ func externalIPv4(wantIface string) []string {
 	return append(vpn, rest...)
 }
 
-// StartFriendSyncLoop запускает фоновый обмен. Инстансы-друзья работают
-// независимо и могут быть выключены, поэтому синк и должен быть фоновым:
-// пользователю не нужно ничего нажимать.
-func StartFriendSyncLoop() {
-	go func() {
-		// Первый проход — через минуту после старта: даём сети и TLS
-		// подняться, иначе первая же попытка уйдёт в пустоту. Дальше — раз
-		// в friendSyncPeriod.
-		time.Sleep(time.Minute)
-		t := time.NewTicker(friendSyncPeriod)
-		defer t.Stop()
-		for range t.C {
-			self := SelfURL()
-			if self == "" {
-				continue
-			}
-			accs := GetAccounts()
-			for _, u := range accs.Users() {
-				SyncAllFriends(u.Username, self)
-			}
-		}
-	}()
-}
+// StartFriendSyncLoop больше не существует: обмен с друзьями идёт только по
+// требованию — при открытии профиля друга (GET /api/friends/:id/profile) и по
+// кнопке «Обновить» (POST /api/friends/sync/:id). Фоновый цикл каждые пять
+// минут менял данные друга у пользователя перед глазами без всякого запроса с
+// его стороны; теперь он видит актуальное ровно тогда, когда сам это попросил.

@@ -337,18 +337,18 @@ const reset = () => { hist.calls = []; hist.state = null; bodyCls._s = new Set()
   await a2.renderFriendProfileTabs();
   check('на вкладке лайков полоса сетки видна', !bar.classList.contains('hidden'));
 }
-// ── 11. Регрессия: обмен сбрасывает кэши друзей ───────────────────────────────
-// SSE-событие «friends» (фоновый обмен каждые 5 минут, приход снимка) раньше
-// вызывало renderFriends() без сброса кэша: список, счётчики и открытая
-// страница друга оставались от прошлого обмена, пока пользователь сам не
-// нажмёт «Обменяться». Теперь лайки друга живут только в снимке, поэтому
-// устаревший снимок показывал бы чужие лайки, которых у друга уже нет.
+// ── 11. Кэш друзей и обмен по требованию ─────────────────────────────────────
+// Пассивного обновления больше нет: ни фонового цикла на сервере, ни SSE-события
+// 'friends', которое перерисовывало профиль и вкладку «Друзья» у пользователя в
+// фоне. Данные друга меняются только там, где он сам попросил: открыл профиль
+// (GET /friends/:id/profile синхронизирует на сервере) или нажал «Обновить».
 {
   const here = dirname(fileURLToPath(import.meta.url));
   const root = join(here, '..', '..');
   const state = readFileSync(join(root, 'js', 'state.js'), 'utf8');
-  check('SSE-событие friends сбрасывает кэш друзей',
-    state.includes('this.invalidateFriendCache()'), 'нет вызова в state.js');
+  check('обработчика SSE friends больше нет (нет пассивной перерисовки)',
+    !/d\.type === 'friends'/.test(state) && !state.includes('invalidateFriendCache'),
+    'в state.js остался фоновый сброс кэша друзей');
 
   const a = makeApp();
   const box = getEl('friend-profile');
@@ -415,6 +415,56 @@ const reset = () => { hist.calls = []; hist.state = null; bodyCls._s = new Set()
   // Лайк из вьювера — тот же POST /api/like/:id, что и в сетке ленты.
   check('вьювер лайкает пост по /api/like/:id',
     /feedToggleLike[\s\S]{0,200}?\/like\/\$\{post\.id\}/.test(viewer));
+}
+// ── 13. Обмен только по требованию: открытие профиля и кнопка «Обновить» ───
+// Открытие профиля обязано каждый раз идти в сеть: сервер на этом запросе
+// синхронизируется с другом, и закешированный снимок означал бы «открыл — увидел
+// то, что было при прошлом заходе».
+{
+  const a = Object.create(App);
+  a.state = { posts: [], query: '', profile: { liked_posts: [], hidden_posts: [] } };
+  a._lastURL = '/';
+  a.renderFriendProfileTabs = async function () {};
+  a._wireFriendGrid = function () {};
+  a._friendSideWhen = function () {};
+  a.closeFriendProfile = function () {};
+  getEl('friend-profile').classList.add('hidden');
+
+  let gets = 0;
+  const origGet = API.get;
+  API.get = async () => {
+    gets++;
+    return { friend: { id: 'abc123', url: '', likes: [], disliked: [], fav_tags: [], disliked_tags: [], collections: [] } };
+  };
+  await a.openFriendProfile('abc123', 'likes', { push: false });
+  const first = gets;
+  check('открытие профиля берёт снимок у сервера', first === 1, 'gets=' + gets);
+  // Переключение вкладок ВНУТРИ открытой страницы сеть не дёргает.
+  await a._friendProfileTab('collections');
+  check('вкладки внутри профиля не ходят в сеть', gets === first, 'gets=' + gets);
+  await a.openFriendProfile('abc123', 'likes', { push: false });
+  check('повторное открытие снова обновляется', gets === first + 1, 'gets=' + gets);
+  API.get = origGet;
+}
+{
+  // Кнопка «Обновить» зовёт обмен с ОДНИМ другом: общий /friends/sync дёргал бы
+  // всех остальных, а ответ здесь уже содержит свежий снимок — второй GET
+  // /profile синхронизировал бы друга повторно.
+  const a = makeApp();
+  a._friendSideWhen = function () {};
+  const toasts = [];
+  a.showToast = (msg, kind) => { toasts.push([msg, kind]); };
+  const calls = [];
+  const origPost = API.post;
+  API.post = async (url) => {
+    calls.push(url);
+    return { ok: true, friend: { id: 'abc123', likes: [1], disliked: [], fav_tags: [], disliked_tags: [], collections: [] } };
+  };
+  await a._friendProfileSync({ id: 'abc123' });
+  API.post = origPost;
+  check('кнопка «Обновить» бьёт только в /friends/sync/:id',
+    calls.length === 1 && calls[0] === '/friends/sync/abc123',
+    JSON.stringify({ calls, toasts }));
 }
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

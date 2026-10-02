@@ -1548,21 +1548,9 @@ export const App = {
       else if (d.type === 'result') applyResult(d);
       else if (d.type === 'comment' && this._onCommentEvent) this._onCommentEvent(d.post_id);
       else if (d.type === 'remote' && d.id > 0) this.onRemotePost(d.id);
-      // Обмен с друзьями принёс новые лайки/коллекции/комментарии: обновляем
-      // профиль и вкладку «Друзья», иначе счётчики разошлись бы с данными.
-      else if (d.type === 'friends') {
-        if (typeof this.loadProfile === 'function') this.loadProfile();
-        // Список друзей и открытый профиль друга кэшируются (по id): без сброса
-        // кэша счётчики, «обмен: когда» и лайки друга оставались бы от прошлого
-        // обмена до ручного «Обменяться» — ровно это выглядит как «данные друга
-        // не приходят». Лайки друга теперь живут ТОЛЬКО в снимке, поэтому
-        // устаревший снимок показывал бы неверный список.
-        if (typeof this.invalidateFriendCache === 'function') this.invalidateFriendCache();
-        if (typeof this.renderFriends === 'function') this.renderFriends();
-        if (this.state.profileOpen && this._profileTabs) {
-          this.showToast(t('friends.incoming'));
-        }
-      }
+      // События 'friends' больше нет: обмен с друзьями идёт только по запросу
+      // (открытие профиля или кнопка «Обновить»), поэтому в фоне перерисовывать
+      // профиль и вкладку «Друзья» нечего. Кто обменялся — тот и перерисует.
       else if (d.type === 'post_saved' && this.state.isLocal && this.state.autoRefreshFeed) {
         this.loadPosts(true);
       }

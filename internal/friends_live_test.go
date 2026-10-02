@@ -313,13 +313,14 @@ func TestTwoInstancesSync(t *testing.T) {
 	var del struct {
 		OK bool `json:"ok"`
 	}
-	// Дверь с VPN-адресом в Host (регрессия 403).
+	// Дверь с VPN-адресом в Host (регрессия 403) + новое поведение приёма:
+	// чужой push больше НЕ применяется (обмен по требованию), поэтому в ответе
+	// applied:false, и подсунутый лайк не появляется ни в профиле B, ни в его
+	// снимке A.
 	{
 		var payload struct {
-			OK     bool `json:"ok"`
-			Merged struct {
-				Likes int `json:"likes"`
-			} `json:"merged"`
+			OK      bool `json:"ok"`
+			Applied bool `json:"applied"`
 		}
 		code := friendDoorRequest(t, "POST", baseB+"/api/friend/ingest",
 			keyB, "26.130.42.36:3000", baseA,
@@ -330,19 +331,19 @@ func TestTwoInstancesSync(t *testing.T) {
 		if code != http.StatusOK {
 			t.Errorf("obmen s VPN-adresom v Host = %d, zhdal 200 (bylo 403)", code)
 		}
-		// Лайк A учтён как ЧУЖОЙ (merged.likes), а не влит в мои лайки.
-		if payload.Merged.Likes != 1 {
-			t.Errorf("merged.likes = %d, ждали 1 (лайк друга учтён как чужой)", payload.Merged.Likes)
+		if payload.Applied {
+			t.Error("чужой push применён: обмен должен идти по требованию (открытие профиля/кнопка)")
 		}
 		var profAfter struct {
 			Liked []int `json:"liked_posts"`
 		}
 		apiJSON(t, "GET", baseB+"/api/profile", cookieB, nil, &profAfter)
 		if containsID(profAfter.Liked, 9001) {
-			t.Errorf("лайк из обмена попал в мои лайки: %v", profAfter.Liked)
+			t.Errorf("лайк из чужого push попал в мои лайки: %v", profAfter.Liked)
 		}
-		// Снимок обновляется и «дверью»: лайки друга показываются только из него,
-		// поэтому без обновления страница друга отставала бы до планового обмена.
+
+		// Профиль друга у B обновляется при ОТКРЫТИИ: GET сам синхронизируется с
+		// A, и в нём видны настоящие лайки A (777), а не подсунутый 9001.
 		var listB struct {
 			Friends []friendView `json:"friends"`
 		}
@@ -356,8 +357,11 @@ func TestTwoInstancesSync(t *testing.T) {
 			} `json:"friend"`
 		}
 		apiJSON(t, "GET", baseB+"/api/friends/"+listB.Friends[0].ID+"/profile", cookieB, nil, &friendProf)
-		if !containsID(friendProf.Friend.Likes, 9001) {
-			t.Errorf("лайк из «двери» не виден в профиле друга: %v", friendProf.Friend.Likes)
+		if !containsID(friendProf.Friend.Likes, 777) {
+			t.Errorf("настоящий лайк A (777) не виден в профиле друга после открытия: %v", friendProf.Friend.Likes)
+		}
+		if containsID(friendProf.Friend.Likes, 9001) {
+			t.Errorf("подсунутый лайк 9001 попал в снимок: %v", friendProf.Friend.Likes)
 		}
 	}
 
