@@ -238,6 +238,131 @@ App._trWires = function (round) {
   return out + '</div>';
 };
 
+/**
+ * Теги и пресеты, которые имеет смысл предложить в турнире: избранные теги
+ * профиля и сохранённые запросы.
+ *
+ * Раньше фильтр приходилось набирать руками, и это был единственный способ его
+ * задать — опечатка давала «постов нет», а правильный тег вспомнить трудно.
+ * Теперь теги берутся из профиля: это ровно то, чем человек уже пользуется.
+ *
+ * @returns {{tags: string[], presets: object[]}}
+ */
+App._trTagSources = function () {
+  const p = (this.state && this.state.profile) || {};
+  const tags = [];
+  const seen = new Set();
+  // Порядок профиля сохраняем: он уже отсортирован по частоте использования.
+  for (const tag of p.fav_tags || []) {
+    const clean = String(tag || '').trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tags.push(clean);
+  }
+  // Пресеты — это запросы целиком, а не теги, поэтому в общий список они не
+  // попадают: у них своя кнопка (применяет весь запрос разом).
+  const presets = (p.presets || []).filter(pr => pr && (pr.kind || 'query') === 'query' && String(pr.query || '').trim());
+  return { tags, presets };
+};
+
+// Тег уже стоит в фильтре? Проверяем без учёта «-»/«+»: чип означает «этот
+// тег», а не «этот тег с минусом».
+App._trFilterHasTag = function (tag) {
+  const want = String(tag || '').trim().toLowerCase();
+  if (!want) return false;
+  return String(this._tournament.tags || '')
+    .split('|')
+    .some(group => group.split(/\s+/).some(tok => tok.replace(/^[-+]/, '').toLowerCase() === want));
+};
+
+/**
+ * Переключает тег в фильтре: если он уже есть — убираем (вместе с его
+ * «-tag»), если нет — добавляем. Так один и тот же чип и добавляет, и убирает,
+ * и не нужно отдельной кнопки очистки.
+ */
+App._trToggleTag = function (tag) {
+  const tm = this._tournament;
+  const clean = String(tag || '').trim();
+  if (!clean) return;
+  const cur = String(tm.tags || '').trim();
+  const want = clean.toLowerCase();
+  const groups = cur ? cur.split('|').map(g => g.trim()).filter(Boolean) : [];
+  let found = false;
+  const kept = [];
+  for (const g of groups) {
+    const toks = g.split(/\s+/).filter(Boolean).filter(tok => {
+      if (tok.replace(/^[-+]/, '').toLowerCase() === want) {
+        found = true;
+        return false;
+      }
+      return true;
+    });
+    if (toks.length) kept.push(toks.join(' '));
+  }
+  // Найден был — фильтр без него, не найден — прежний плюс тег.
+  tm.tags = found ? kept.join(' | ') : (cur ? cur + ' ' + clean : clean);
+  this.renderTournamentSetup();
+  // Фокус возвращаем в поле: после клика по чипу пользователь почти всегда
+  // продолжает печатать, и без этого каретка «убегает» на страницу.
+  const input = this.els.tournamentRoot.querySelector('[data-tr="tags"]');
+  if (input && input.focus) {
+    input.focus();
+    if (typeof input.setSelectionRange === 'function') {
+      const n = input.value.length;
+      input.setSelectionRange(n, n);
+    }
+  }
+};
+
+// Пресет подставляет запрос целиком; повторный клик по уже применённому
+// снимает фильтр (как в ленте, где повторный клик по пресету его снимает).
+App._trApplyPreset = function (id) {
+  const tm = this._tournament;
+  const pr = ((this.state && this.state.profile && this.state.profile.presets) || [])
+    .find(x => x && x.id === id);
+  if (!pr) return;
+  const q = String(pr.query || '').trim();
+  tm.tags = (q && tm.tags === q) ? '' : q;
+  this.renderTournamentSetup();
+};
+
+// Ряд быстрого выбора под полем тегов. Рисуется, только когда есть что
+// предложить: пустая подпись «избранных тегов нет» — шум.
+//
+// Источник — state.profile, его грузит вход (auth.js). Отдельного запроса здесь
+// намеренно нет: открытие турнира не должно ходить в сеть (и падать на офлайне),
+// а пустой профиль даёт просто пустой ряд.
+App._trTagPicker = function () {
+  const { tags, presets } = this._trTagSources();
+  if (!tags.length && !presets.length) return '';
+  let out = '<div class="tr-tags-pick">';
+  if (tags.length) {
+    out += '<div class="tr-tags-pick-label">' + esc(t('tr.tagPick')) + '</div>';
+    out += '<div class="tr-tags-pick-row">';
+    for (const tag of tags) {
+      const on = this._trFilterHasTag(tag);
+      out += '<button type="button" class="tr-tagpick' + (on ? ' on' : '') + '"' +
+        ' data-tr-tag="' + esc(tag) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' +
+        ' title="' + esc(tag) + '">' + esc(tag) + '</button>';
+    }
+    out += '</div>';
+  }
+  if (presets.length) {
+    out += '<div class="tr-tags-pick-label">' + esc(t('tr.presetPick')) + '</div>';
+    out += '<div class="tr-tags-pick-row">';
+    for (const pr of presets) {
+      const on = String(pr.query || '').trim() === String(this._tournament.tags || '').trim();
+      out += '<button type="button" class="tr-tagpick preset' + (on ? ' on' : '') + '"' +
+        ' data-tr-preset="' + esc(pr.id) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' +
+        ' title="' + esc(pr.query || '') + '">' + esc(pr.name || pr.query) + '</button>';
+    }
+    out += '</div>';
+  }
+  return out + '</div>';
+};
+
 // Стартовый экран: пресет раундов, источник картинок и фильтр рейтинга.
 App.renderTournamentSetup = function () {
   const root = this.els.tournamentRoot;
@@ -292,6 +417,8 @@ App.renderTournamentSetup = function () {
             ' title="' + esc(t('tr.tagsClear')) + '" aria-label="' + esc(t('tr.tagsClear')) + '">' +
             icon('x', 14) + '</button>' : '') +
         '</div>' +
+        // Быстрый выбор из профиля: избранные теги и пресеты запросов.
+        this._trTagPicker() +
       '</div>' +
       // Рейтинг. Для оффлайн-турнира он сужает библиотеку прямо в SQL, для
       // онлайна — метатеги в запросе плюс досчистка на сервере; «доступно» в
@@ -339,6 +466,18 @@ App.renderTournamentSetup = function () {
     tagsClear.addEventListener('click', () => {
       tm.tags = '';
       this.renderTournamentSetup();
+    });
+  }
+  // Чипы из профиля. Делегирование по контейнеру, а не на каждый чип: набор
+  // меняется при каждой перерисовке, и слушатели на старых кнопках остались бы
+  // висеть в памяти (и на кнопке, которой уже нет в DOM).
+  const picks = root.querySelector('.tr-tags-pick');
+  if (picks) {
+    picks.addEventListener('click', (ev) => {
+      const tagBtn = ev.target.closest('[data-tr-tag]');
+      if (tagBtn) { this._trToggleTag(tagBtn.dataset.trTag); return; }
+      const presetBtn = ev.target.closest('[data-tr-preset]');
+      if (presetBtn) this._trApplyPreset(presetBtn.dataset.trPreset);
     });
   }
   const start = root.querySelector('[data-tr="start"]');

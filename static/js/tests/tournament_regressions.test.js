@@ -47,6 +47,27 @@ function posts(n) {
 
 console.log('Регрессии турнира\n');
 
+// esc() экранирует через DOM, а мок createElement в этом файле ничего не
+// кладёт в innerHTML — поэтому ЗНАЧЕНИЕ поля и чипов проверяем с «настоящим»
+// элементом, подменяя фабрику ровно на время отрисовки.
+const escElement = () => {
+  let text = '';
+  return {
+    classList: makeClassList(), setAttribute() {}, appendChild() {}, dataset: {},
+    get textContent() { return text; },
+    set textContent(v) { text = String(v); },
+    get innerHTML() {
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    },
+    set innerHTML(v) { text = String(v); },
+  };
+};
+const withEsc = (fn) => {
+  const orig = globalThis.document.createElement;
+  globalThis.document.createElement = escElement;
+  try { return fn(); } finally { globalThis.document.createElement = orig; }
+};
+
 // ── 1. Иконка кубка есть в наборе иконок ─────────────────────────────────
 {
   const svg = icon('trophy', 16);
@@ -568,24 +589,7 @@ console.log('Регрессии турнира\n');
 
   // esc() экранирует через DOM, а мок createElement в этом файле ничего не
   // кладёт в innerHTML — поэтому ЗНАЧЕНИЕ поля проверяем с «настоящим»
-  // элементом, подменяя фабрику ровно на время отрисовки.
-  const escElement = () => {
-    let text = '';
-    return {
-      classList: makeClassList(), setAttribute() {}, appendChild() {}, dataset: {},
-      get textContent() { return text; },
-      set textContent(v) { text = String(v); },
-      get innerHTML() {
-        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      },
-      set innerHTML(v) { text = String(v); },
-    };
-  };
-  const withEsc = (fn) => {
-    const orig = globalThis.document.createElement;
-    globalThis.document.createElement = escElement;
-    try { return fn(); } finally { globalThis.document.createElement = orig; }
-  };
+  // элементом, подменяя фабрику ровно на время отрисовки (withEsc выше).
 
   // Поле есть в разметке, заполнено текущим фильтром и подписано.
   const ui = mkApp('cat');
@@ -614,6 +618,92 @@ console.log('Регрессии турнира\n');
   o.openTournament();
   check('при открытии поле тегов берёт поисковую строку',
     o._tournament.tags === 'yuri', String(o._tournament.tags));
+}
+
+// ── 10. Теги турнира выбираются из профиля, без ручного ввода ────────────────
+// Набирать теги руками — сплошной шанс опечататься и получить «постов нет».
+// Избранные теги и пресеты запросов лежат в профиле, поэтому стартовый экран
+// предлагает их готовыми кнопками.
+{
+  const mkPick = (tags, presets) => {
+    // Свой конструктор: mkApp из секции 9 живёт в её блоке и сюда не виден.
+    const a = Object.create(App);
+    a.els = {
+      tournamentRoot: {
+        innerHTML: '', classList: { add() {}, remove() {} },
+        querySelectorAll: () => [], querySelector: () => null, focus() {},
+      },
+    };
+    a._tournament = {
+      open: true, loading: false, posts: null, bracket: [], rounds: 3,
+      source: 'offline', rating: '', tags: '', resolved: new Set(), winner: null,
+      stats: { played: 0, wins: 0 }, links: null, linksLoading: false,
+    };
+    a.state = { query: '', tournamentOpen: true, profile: { fav_tags: tags, presets: presets || [] } };
+    a.showToast = () => {};
+    a.invalidateFeedCache = () => {};
+    a.closeViewer = () => {};
+    return a;
+  };
+
+  // Чипы рисуются из избранных тегов профиля и помечают уже выбранные.
+  const p1 = mkPick(['cat', 'girl']);
+  p1._tournament.tags = 'girl';
+  withEsc(() => p1.renderTournamentSetup());
+  const pick1 = p1.els.tournamentRoot.innerHTML;
+  check('избранные теги профиля показаны чипами',
+    /data-tr-tag="cat"/.test(pick1) && /data-tr-tag="girl"/.test(pick1), pick1.slice(0, 200));
+  check('уже выбранный тег помечен активным',
+    /data-tr-tag="girl"[^>]*aria-pressed="true"/.test(pick1) || /aria-pressed="true"[^>]*data-tr-tag="girl"/.test(pick1),
+    (pick1.match(/[^<>]*data-tr-tag="girl"[^<>]*/) || [''])[0]);
+  check('невыбранный тег не активен', !/aria-pressed="true"[^>]*data-tr-tag="cat"/.test(pick1));
+
+  // Клик по чипу добавляет тег, повторный — убирает (и чистит «-tag»).
+  const p2 = mkPick(['cat', 'girl']);
+  withEsc(() => p2.renderTournamentSetup());
+  p2._trToggleTag('cat');
+  check('клик по чипу добавляет тег в фильтр', p2._tournament.tags === 'cat', p2._tournament.tags);
+  p2._trToggleTag('girl');
+  check('второй тег дописывается через пробел', p2._tournament.tags === 'cat girl', p2._tournament.tags);
+  p2._trToggleTag('cat');
+  check('повторный клик убирает тег', p2._tournament.tags === 'girl', p2._tournament.tags);
+
+  // «-tag» — это тот же тег: чип должен снять исключение, а не добавить дубль.
+  const p3 = mkPick(['cat']);
+  p3._tournament.tags = 'solo -cat';
+  withEsc(() => p3.renderTournamentSetup());
+  p3._trToggleTag('cat');
+  check('чип снимает и исключение -tag', p3._tournament.tags === 'solo', p3._tournament.tags);
+
+  // Группы «|» не разваливаются: пустая группа после удаления не остаётся.
+  const p4 = mkPick(['cat']);
+  p4._tournament.tags = 'cat | girl';
+  withEsc(() => p4.renderTournamentSetup());
+  p4._trToggleTag('cat');
+  check('удаление тега не оставляет пустой группы', p4._tournament.tags === 'girl', p4._tournament.tags);
+
+  // Пресет подставляет запрос целиком; повторный клик снимает фильтр.
+  const p5 = mkPick([], [{ id: 'p1', name: 'Котики', query: 'cat neko' }]);
+  withEsc(() => p5.renderTournamentSetup());
+  check('пресеты показаны именем, а не запросом',
+    /data-tr-preset="p1"[^>]*>Котики</.test(p5.els.tournamentRoot.innerHTML),
+    (p5.els.tournamentRoot.innerHTML.match(/[^<>]*data-tr-preset[^<>]*/) || [''])[0]);
+  p5._trApplyPreset('p1');
+  check('пресет подставляет запрос целиком', p5._tournament.tags === 'cat neko', p5._tournament.tags);
+  p5._trApplyPreset('p1');
+  check('повторный клик по пресету снимает фильтр', p5._tournament.tags === '', p5._tournament.tags);
+
+  // Пустой профиль: ряда нет вовсе (пустая подпись «избранных тегов нет» — шум).
+  const p6 = mkPick([], []);
+  withEsc(() => p6.renderTournamentSetup());
+  check('без избранных тегов ряд выбора не рисуется',
+    !/tr-tags-pick/.test(p6.els.tournamentRoot.innerHTML));
+
+  // Кавычка в теге не должна вырваться из атрибута (XSS через профиль).
+  const p7 = mkPick(['a" onclick="alert(1)']);
+  withEsc(() => p7.renderTournamentSetup());
+  check('кавычка в теге экранируется', !/onclick="alert/.test(p7.els.tournamentRoot.innerHTML),
+    (p7.els.tournamentRoot.innerHTML.match(/data-tr-tag="[^"]*/) || [''])[0]);
 }
 
 
