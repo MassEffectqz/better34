@@ -14,7 +14,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #app{display:flex;flex-direction:column;height:100vh;height:100dvh}
 .skip-link{position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;z-index:var(--z-tooltip)}
 .skip-link:focus{position:fixed;top:8px;left:8px;width:auto;height:auto;padding:8px 16px;background:var(--accent);color:#fff;border-radius:8px;font-size:14px;z-index:var(--z-tooltip)}
-#header{background:var(--surface);border-bottom:1px solid var(--border);padding:max(8px,env(safe-area-inset-top)) 16px 8px 16px;flex-shrink:0;z-index:100;position:relative}
+#header{background:var(--surface-glass);backdrop-filter:blur(14px) saturate(180%);-webkit-backdrop-filter:blur(14px) saturate(180%);border-bottom:1px solid var(--border-glass);padding:max(8px,env(safe-area-inset-top)) 16px 8px 16px;flex-shrink:0;z-index:100;position:relative}
 @supports (animation-timeline: scroll()) {
   #header{animation:header-scroll-shadow linear both;animation-timeline:scroll(root);animation-range:0px 48px}
   @keyframes header-scroll-shadow{to{box-shadow:0 4px 18px rgba(0,0,0,.35)}}
@@ -39,7 +39,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
    Firefox 121+). Старые браузеры полагаются на JS-класс .visible. */
 .search-box:has(#search-input:not(:placeholder-shown)) .search-clear{opacity:1}
 .search-clear:hover{color:var(--text);background:var(--hover)}
-.suggestions,.history-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--surface2);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);max-height:200px;overflow-y:auto;display:none;z-index:200}
+.suggestions,.history-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--surface-glass);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%);border:1px solid var(--border-glass);border-top:none;border-radius:0 0 var(--radius) var(--radius);max-height:220px;overflow-y:auto;display:none;z-index:200;box-shadow:var(--shadow-glass)}
 .suggestions.active,.history-dropdown.active{display:block}
 .suggestion-item{padding:8px 16px;cursor:pointer;font-size:.85rem;color:var(--text-dim);transition:background var(--transition);display:flex;align-items:center;justify-content:space-between;gap:8px}
 .suggestion-item:hover,.suggestion-item.active{background:var(--hover);color:var(--text)}
@@ -94,10 +94,22 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 /* Popover normalization */
 .header-menu[popover],
-.grid-menu[popover]{position:fixed;inset:auto;margin:0;border:1px solid var(--border);background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);color:var(--text);padding:4px}
+.grid-menu[popover]{position:fixed;inset:auto;margin:0;border:1px solid var(--border-glass);background:var(--surface-glass);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%);border-radius:var(--radius);box-shadow:var(--shadow-glass);color:var(--text);padding:4px;opacity:0;transform:scale(.96) translateY(-4px);transition:opacity var(--transition),transform var(--transition),display var(--transition) allow-discrete,overlay var(--transition) allow-discrete}
 .grid-menu[popover]{padding:8px}
 .header-menu[popover]:popover-open,
-.grid-menu[popover]:popover-open{display:block}
+.grid-menu[popover]:popover-open{display:block;opacity:1;transform:scale(1) translateY(0)}
+@starting-style{
+  .header-menu[popover]:popover-open,
+  .grid-menu[popover]:popover-open{opacity:0;transform:scale(.96) translateY(-4px)}
+}
+@media (prefers-reduced-motion: reduce){
+  .header-menu[popover],
+  .grid-menu[popover]{transform:none!important;transition-duration:.01ms!important}
+  @starting-style{
+    .header-menu[popover]:popover-open,
+    .grid-menu[popover]:popover-open{transform:none!important}
+  }
+}
 
 /* CSS Anchor Positioning (Chromium 125+, Safari 18.2+) */
 @supports (anchor-name: --a) {

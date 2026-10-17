@@ -6,7 +6,7 @@
    числовым префиксом и списком <link> в static/index.html (сверху вниз).
    Правьте здесь, а не в соседних частях: specificity и порядок важны. */
 
-.panel-backdrop{position:fixed;inset:0;background:rgba(8,8,10,.44);backdrop-filter:blur(2px);z-index:480;opacity:0;pointer-events:none;transition:opacity .28s ease}
+.panel-backdrop{position:fixed;inset:0;background:rgba(8,8,10,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:480;opacity:0;pointer-events:none;transition:opacity .28s ease}
 .panel-backdrop.active{opacity:1;pointer-events:auto}
 .profile-hero::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:3px;background:linear-gradient(90deg,transparent,var(--accent),var(--accent-dim),transparent);opacity:.75;pointer-events:none;z-index:2}
 .stat{position:relative;overflow:hidden}

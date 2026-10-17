@@ -40,9 +40,24 @@ App.openViewer = function (index) {
   }
    // a11y (#4): фон скрываем от скринридеров (aria-hidden), а не просто скрываем.
    if (main) this.setAriaHidden(main, true);
-   this.withViewTransition(() => {
+   const post = this.state.posts[index];
+   const cardImg = post ? document.querySelector(`.post-card[data-id="${post.id}"] img`) : null;
+   if (cardImg) cardImg.style.viewTransitionName = 'hero-post';
+   const vt = this.withViewTransition(() => {
      this.els.viewer.classList.remove('hidden');
+     this.renderViewer();
+     const vImg = this.els.viewerContent.querySelector('img');
+     if (vImg) vImg.style.viewTransitionName = 'hero-post';
    });
+   if (vt && typeof vt.finished?.finally === 'function') {
+     vt.finished.finally(() => {
+       if (cardImg) cardImg.style.viewTransitionName = '';
+       const vImg = this.els.viewerContent.querySelector('img');
+       if (vImg) vImg.style.viewTransitionName = '';
+     });
+   } else if (cardImg) {
+     cardImg.style.viewTransitionName = '';
+   }
    // focusable контейнер + trap Tab внутри хедера вьювера.
    this.els.viewerContent.setAttribute('tabindex', '-1');
    if (typeof this.trapFocus === 'function') {
@@ -50,10 +65,8 @@ App.openViewer = function (index) {
    }
   this._showViewerHud();
   document.body.style.overflow = 'hidden';
-  this.renderViewer();
   if (!this._zoomControlsBound) { this._zoomControlsBound = true; this._bindZoomControls(); }
   if (!this._viewerNewTabBound) { this._viewerNewTabBound = true; this._bindViewerNewTab(); }
-  const post = this.state.posts[index];
   // Видео всегда открываем в полноэкранном режиме просмотра.
   if (post && post.file_type === 'video' && !this._viewerIsFullscreen()) {
     this.toggleFullscreen();
@@ -120,9 +133,23 @@ App.closeViewer = function (opts) {
   if (this._tournament && this._tournament.viewerOpen && typeof this._trReturnFromViewer === 'function') {
     this._trReturnFromViewer();
   }
-  this.withViewTransition(() => {
+  const curPost = this.state.posts[this.state.viewerIndex];
+  const cardImg = curPost ? document.querySelector(`.post-card[data-id="${curPost.id}"] img`) : null;
+  const vImg = this.els.viewerContent.querySelector('img');
+  if (vImg) vImg.style.viewTransitionName = 'hero-post';
+  if (cardImg) cardImg.style.viewTransitionName = 'hero-post';
+  const vt = this.withViewTransition(() => {
     this.els.viewer.classList.add('hidden');
   });
+  if (vt && typeof vt.finished?.finally === 'function') {
+    vt.finished.finally(() => {
+      if (cardImg) cardImg.style.viewTransitionName = '';
+      if (vImg) vImg.style.viewTransitionName = '';
+    });
+  } else {
+    if (cardImg) cardImg.style.viewTransitionName = '';
+    if (vImg) vImg.style.viewTransitionName = '';
+  }
   // a11y (#4): возвращаем фону скринридеры + убираем диалог-атрибуты.
   const main = document.getElementById('main');
   if (main) this.setAriaHidden(main, false);

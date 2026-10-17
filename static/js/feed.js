@@ -843,6 +843,7 @@ App.createPostCard = function (post) {
   if (isFirstScreen) { img.loading = 'eager'; img.fetchPriority = 'high'; }
   else img.loading = 'lazy';
   img.addEventListener('load', () => img.classList.add('loaded'));
+  if (img.complete) img.classList.add('loaded');
   img.addEventListener('error', () => {
     if (!img.dataset.err) {
       img.dataset.err = '1';
