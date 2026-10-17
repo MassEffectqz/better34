@@ -57,6 +57,10 @@
 .viewer-tag:hover{color:var(--accent)}
 .viewer-tag.tag-fav{color:var(--accent);border:1px solid var(--accent-dim)}.viewer-tag.tag-query{color:var(--success);border:1px solid var(--success);background:rgba(52,211,153,.08)}
 .viewer-tag.tag-hidden{color:var(--error);border:1px solid var(--error);text-decoration:line-through}
+.viewer-tag.tag-cat-artist{color:#f87171}
+.viewer-tag.tag-cat-character{color:#34d399}
+.viewer-tag.tag-cat-copyright{color:#c084fc}
+.viewer-tag.tag-cat-meta{color:#fbbf24}
 /* Уровни объяснений к тегам. note — без цвета, только подсказка. */
 .viewer-tag[data-odd]{cursor:help}
 .viewer-tag.tag-odd-yellow{color:var(--odd-yellow);border:1px solid var(--odd-yellow);background:color-mix(in srgb,var(--odd-yellow) 12%,transparent)}

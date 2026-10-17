@@ -308,6 +308,24 @@ App._bindViewerTagDelegation = function () {
   });
 };
 
+App.classifyTag = function (tag) {
+  if (!tag) return 'general';
+  const lower = tag.toLowerCase();
+  if (lower.startsWith('artist:') || lower.endsWith('_(artist)') || lower.endsWith('_(style)')) {
+    return 'artist';
+  }
+  if (lower.startsWith('character:') || lower.endsWith('_(cosplay)')) {
+    return 'character';
+  }
+  if (lower.startsWith('copyright:') || lower.startsWith('series:')) {
+    return 'copyright';
+  }
+  if (lower.startsWith('meta:') || /^(highres|absurdres|translated|commentary|pool:\d+|source:)/i.test(lower)) {
+    return 'meta';
+  }
+  return 'general';
+};
+
 App._renderViewerTags = function () {
   const post = this.state.posts[this.state.viewerIndex];
   const viewerTags = this.els.viewerTags;
@@ -325,9 +343,10 @@ App._renderViewerTags = function () {
   allTags.forEach(tag => {
     const span = document.createElement('span');
     const lvl = this.OddTags && this.OddTags.levelOf ? this.OddTags.levelOf(tag) : null;
+    const cat = this.classifyTag(tag);
     // Цвет только у yellow/red. Уровень note — это «просто объяснение»:
     // тег выглядит как обычный, но с подсказкой.
-    span.className = 'viewer-tag' + (isFav(tag) ? ' tag-fav' : '') + (isHid(tag) ? ' tag-hidden' : '') + (isQ(tag) ? ' tag-query' : '') + (lvl === 'yellow' || lvl === 'red' ? ' tag-odd-' + lvl : '');
+    span.className = 'viewer-tag' + (isFav(tag) ? ' tag-fav' : '') + (isHid(tag) ? ' tag-hidden' : '') + (isQ(tag) ? ' tag-query' : '') + (lvl === 'yellow' || lvl === 'red' ? ' tag-odd-' + lvl : '') + (cat !== 'general' ? ' tag-cat-' + cat : '');
     span._brieflyTag = tag;
     // Всплывашка превью тега (tag_popover.js) цепляется к data-tag.
     span.dataset.tag = tag;
@@ -676,6 +695,49 @@ App.sharePost = async function () {
   this.showToast(ok ? t('viewer.shareCopied') : t('viewer.shareFailed'), ok ? 'success' : 'error');
 };
 
+/**
+ * Копирование изображения в буфер обмена (Async Clipboard API).
+ * @this {AppType}
+ */
+App.copyCurrentImage = async function () {
+  const post = this.state.posts[this.state.viewerIndex];
+  if (!post) return;
+  const img = this.els.viewerContent.querySelector('img');
+  if (!img) {
+    this.showToast(t('viewer.copyImageUnsupported'), 'info');
+    return;
+  }
+  const nav = typeof navigator !== 'undefined' ? navigator : null;
+  const win = typeof window !== 'undefined' ? window : null;
+  if (!nav || !nav.clipboard || !nav.clipboard.write || !win || !win.ClipboardItem) {
+    this.showToast(t('viewer.copyImageNotSupported'), 'error');
+    return;
+  }
+  try {
+    const res = await fetch(img.src);
+    const blob = await res.blob();
+    let pngBlob = blob;
+    if (blob.type !== 'image/png' && typeof win.createImageBitmap === 'function') {
+      const bitmap = await win.createImageBitmap(blob);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(bitmap, 0, 0);
+        pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      }
+    }
+    await nav.clipboard.write([
+      new win.ClipboardItem({ 'image/png': pngBlob }),
+    ]);
+    this.showToast(t('viewer.imageCopied'), 'success');
+  } catch (err) {
+    console.warn('copyCurrentImage failed:', err);
+    this.showToast(t('viewer.copyImageFailed'), 'error');
+  }
+};
+
 App.renderViewer = function (force) {
   const post = this.state.posts[this.state.viewerIndex];
   if (!post) return;
@@ -688,6 +750,12 @@ App.renderViewer = function (force) {
   if (staleOrig && typeof staleOrig.remove === 'function') staleOrig.remove();
 
   const isVideo = post.file_type === 'video';
+  if (this.els.viewerPip) {
+    this.els.viewerPip.classList.toggle('hidden', !isVideo);
+  }
+  if (this.els.viewerCopyImage) {
+    this.els.viewerCopyImage.classList.toggle('hidden', isVideo);
+  }
   // Perf (#8): метрики контейнера могли измениться (новое медиа) — сброс кэша.
   this._zoomMetricsCache = null;
   // Дедуп (#17): единая точка расчёта URL медиа (раньше логика «downloaded /

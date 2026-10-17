@@ -10,9 +10,49 @@
   "orientation": "any",
   "background_color": "#0f0f0f",
   "theme_color": "#0f0f0f",
+  "categories": ["entertainment", "photo"],
   "icons": [
     { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
     { "src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
-  ]
+  ],
+  "shortcuts": [
+    {
+      "name": "Случайный пост",
+      "short_name": "Случайный",
+      "description": "Открыть случайный арт",
+      "url": "/?action=random",
+      "icons": [{ "src": "/static/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Рекомендации",
+      "short_name": "Рекомендации",
+      "description": "Умные рекомендации на основе ваших лайков",
+      "url": "/?action=recommend",
+      "icons": [{ "src": "/static/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Выбери лучшее (Турнир)",
+      "short_name": "Турнир",
+      "description": "Интерактивный турнир сравнения артов",
+      "url": "/?action=tournament",
+      "icons": [{ "src": "/static/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Локальные посты",
+      "short_name": "Локальные",
+      "description": "Сохранённые на диске посты",
+      "url": "/?action=local",
+      "icons": [{ "src": "/static/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
 }

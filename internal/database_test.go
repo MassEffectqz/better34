@@ -246,6 +246,30 @@ func TestBackupNowCreatesSnapshot(t *testing.T) {
 	}
 }
 
+func TestBackupNowCreatesGzipSnapshot(t *testing.T) {
+	t.Setenv("BRIEFLY_DB_BACKUP_GZIP", "1")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "posts.db")
+	db := NewPostDB(dbPath)
+	defer db.Close()
+	db.AddOrUpdate(&Post{ID: 1, Tags: "naruto blonde", Downloaded: true})
+
+	if err := db.BackupNow(); err != nil {
+		t.Fatalf("BackupNow: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(dir, "backups"))
+	if err != nil {
+		t.Fatalf("read backups dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 backup file, got %d", len(entries))
+	}
+	if !strings.HasSuffix(entries[0].Name(), ".db.gz") {
+		t.Fatalf("unexpected backup name: %s, expected .db.gz", entries[0].Name())
+	}
+}
+
 func TestBackupPrune(t *testing.T) {
 	dir := t.TempDir()
 	backupDir := filepath.Join(dir, "backups")

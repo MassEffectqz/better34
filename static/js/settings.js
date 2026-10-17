@@ -255,6 +255,7 @@ App.findDuplicates = async function () {
   if (info) info.classList.add('hidden');
   this.els.btnCleanDups.classList.add('hidden');
   if (this.els.btnMergeDups) this.els.btnMergeDups.classList.add('hidden');
+  if (this.els.btnCompareDups) this.els.btnCompareDups.classList.add('hidden');
   this._dupsGroups = [];
   try {
     const d = await API.get('/dups');
@@ -270,6 +271,11 @@ App.findDuplicates = async function () {
     this.els.btnCleanDups.textContent = t('btn.cleanDupsN', {n: total});
     this.els.btnCleanDups.classList.remove('hidden');
     this._dupsGroups = groups;
+    const hasPair = groups.some(g => (g.posts || []).filter(p => p && p.id > 0).length >= 2);
+    if (hasPair && this.els.btnCompareDups) {
+      this.els.btnCompareDups.textContent = t('diff.compare');
+      this.els.btnCompareDups.classList.remove('hidden');
+    }
     const merges = collectMergeRequests(groups);
     const mergeTotal = merges.reduce((s, m) => s + m.remove_ids.length, 0);
     if (mergeTotal && this.els.btnMergeDups) {
@@ -295,6 +301,7 @@ App.cleanDuplicates = async function () {
     this.showToast(t('msg.filesDeleted', {n: r.count || 0}), 'success');
     this.els.dupsInfo.classList.add('hidden');
     this.els.btnCleanDups.classList.add('hidden');
+    if (this.els.btnCompareDups) this.els.btnCompareDups.classList.add('hidden');
     this._dupsTotal = 0;
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
 };
@@ -322,6 +329,7 @@ App.mergeDuplicates = async function () {
     }
     this.showToast(`Объединено постов: ${done}`, 'success');
     if (this.els.btnMergeDups) this.els.btnMergeDups.classList.add('hidden');
+    if (this.els.btnCompareDups) this.els.btnCompareDups.classList.add('hidden');
     this._dupsGroups = [];
     this.findDuplicates();
   } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }

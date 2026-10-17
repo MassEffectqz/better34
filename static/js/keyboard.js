@@ -81,6 +81,8 @@ App.onKeydown = function (e) {
       else this.startSlideshow();
     }
     else if (code === 'KeyM' && isVid) { e.preventDefault(); this.toggleVideoMute(); }
+    else if (code === 'KeyP' && isVid) { e.preventDefault(); this.togglePictureInPicture(); }
+    else if (code === 'KeyC' && !isVid) { e.preventDefault(); this.copyCurrentImage(); }
     else if (code === 'Equal' || code === 'KeyQ') { e.preventDefault(); this.toggleLikeCurrent(); }
     else if (code === 'Minus' || code === 'KeyE') { e.preventDefault(); this.toggleHideCurrent(); }
     else if (code === 'KeyZ') { e.preventDefault(); this.toggleViewerZoom(); }

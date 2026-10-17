@@ -12,6 +12,7 @@ import './profile.js';
 import './collections.js';
 import './friends.js';
 import './tournament.js';
+import './diff.js';
 import './settings.js';
 import './aliases.js';
 import './social.js';

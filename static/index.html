@@ -144,6 +144,8 @@
         <button id="viewer-hide" class="btn-icon" title="Дизлайк" data-i18n-title="viewer.dislike" aria-label="Скрыть (E)" data-i18n-aria="viewer.dislikeAria"><i data-lucide="heartOff" data-size="20"></i></button>
         <button id="viewer-source" class="btn-icon hidden" title="Открыть на источнике (Ctrl — в новой вкладке)" data-i18n-title="viewer.sourceBtn" aria-label="Открыть на источнике" data-i18n-aria="viewer.sourceAria"><i data-lucide="externalLink" data-size="20"></i></button>
         <button id="viewer-share" class="btn-icon" title="Поделиться" data-i18n-title="viewer.shareBtn" aria-label="Поделиться постом" data-i18n-aria="viewer.shareAria"><i data-lucide="share2" data-size="20"></i></button>
+        <button id="viewer-copy-image" class="btn-icon" title="Скопировать изображение (C)" data-i18n-title="viewer.copyImage" aria-label="Скопировать изображение (C)" data-i18n-aria="viewer.copyImage"><i data-lucide="copy" data-size="20"></i></button>
+        <button id="viewer-pip" class="btn-icon hidden" title="Картинка в картинке (P)" data-i18n-title="video.pipBtn" aria-label="Картинка в картинке (P)" data-i18n-aria="video.pipBtn"><i data-lucide="pip" data-size="20"></i></button>
         <div class="collect-control">
           <button class="btn-icon" id="viewer-collect" title="В коллекцию" data-i18n-title="batch.collect" aria-label="В коллекцию" data-i18n-aria="batch.collect"><i data-lucide="folder" data-size="20"></i></button>
           <div id="collect-menu" class="collect-menu hidden"></div>
@@ -505,6 +507,7 @@
           <span class="setting-label" data-i18n="maint.dups">Дубликаты</span>
           <button id="btn-find-dups" class="btn-primary btn-sm"><span data-i18n="btn.findDups">Найти дубликаты</span></button>
           <span id="dups-info" class="dups-info hidden"></span>
+          <button id="btn-compare-dups" class="btn-primary btn-sm hidden"><span data-i18n="diff.compare">Сравнить</span></button>
           <button id="btn-clean-dups" class="btn-primary btn-sm hidden"><span data-i18n="btn.cleanDups">Удалить дубликаты</span></button>
           <button id="btn-merge-dups" class="btn-primary btn-sm hidden"><span data-i18n="btn.mergeDups">Объединить дубликаты</span></button>
         </div>
@@ -605,6 +608,25 @@
         <button class="btn-icon" id="help-close"><i data-lucide="x" data-size="18"></i></button>
       </div>
       <div id="help-body" class="help-body"></div>
+    </div>
+  </div>
+
+  <div id="diff-modal" class="diff-modal hidden" role="dialog" aria-modal="true" aria-labelledby="diff-title">
+    <div class="diff-container">
+      <div class="diff-header">
+        <h2 id="diff-title" class="diff-title" data-i18n="diff.title">Сравнение изображений</h2>
+        <button id="diff-close" class="btn-icon" aria-label="Закрыть" data-i18n-aria="diff.close"><i data-lucide="x" data-size="18"></i></button>
+      </div>
+      <div class="diff-body" id="diff-body">
+        <div class="diff-pane" id="diff-pane-a">
+          <div class="diff-meta" id="diff-meta-a"></div>
+          <div class="diff-image-wrapper"><img id="diff-img-a" src="" alt="Post A"></div>
+        </div>
+        <div class="diff-pane" id="diff-pane-b">
+          <div class="diff-meta" id="diff-meta-b"></div>
+          <div class="diff-image-wrapper"><img id="diff-img-b" src="" alt="Post B"></div>
+        </div>
+      </div>
     </div>
   </div>
 

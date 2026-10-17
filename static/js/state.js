@@ -119,7 +119,7 @@ export const App = {
       confirmOk: _('confirm-ok'), confirmCancel: _('confirm-cancel'), confirmClose: _('confirm-close'), confirmBackdrop: _('confirm-backdrop'),
       helpModal: _('help-modal'), helpBody: _('help-body'), helpClose: _('help-close'), helpBackdrop: _('help-backdrop'),
       tournamentRoot: _('tournament-root'),
-      btnFindDups: _('btn-find-dups'), btnCleanDups: _('btn-clean-dups'), btnMergeDups: _('btn-merge-dups'), dupsInfo: _('dups-info'),
+      btnFindDups: _('btn-find-dups'), btnCleanDups: _('btn-clean-dups'), btnMergeDups: _('btn-merge-dups'), btnCompareDups: _('btn-compare-dups'), dupsInfo: _('dups-info'),
       viewerCollect: _('viewer-collect'), collectMenu: _('collect-menu'),
       collectionName: _('collection-name'), btnCreateCollection: _('btn-create-collection'), collectionsList: _('collections-list'), tbCollections: _('tb-collections'),
       btnCollectionsZipAll: _('btn-collections-zip-all'),
@@ -127,6 +127,7 @@ export const App = {
       btnExportProfile: _('btn-export-profile'), btnImportProfile: _('btn-import-profile'), profileImportFile: _('profile-import-file'),
       btnQRLogin: _('btn-qr-login'),
       viewerSource: _('viewer-source'), viewerShare: _('viewer-share'),
+      viewerCopyImage: _('viewer-copy-image'), viewerPip: _('viewer-pip'),
       viewerShareM: _('viewer-share-mobile'), backToTop: _('back-to-top'),
     };
     this.loadTheme();
@@ -184,6 +185,36 @@ export const App = {
    * ссылка показывала обычную выдачу.
    */
   applyInitialRoute(target) {
+    if (typeof window !== 'undefined' && window.location && window.location.search) {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const action = params.get('action');
+        const shareText = params.get('text') || params.get('share_text') || params.get('title') || '';
+        const shareUrl = params.get('url') || '';
+
+        if (shareText || shareUrl) {
+          const combined = (shareText + ' ' + shareUrl).trim();
+          this.state.query = combined;
+          this.setSearchValue(combined);
+          this.loadPosts(true).catch(() => {});
+          return;
+        }
+
+        if (action === 'random') {
+          this.loadPosts(true).then(() => { this.randomPost(); }).catch(() => {});
+          return;
+        } else if (action === 'recommend') {
+          this.toggleRecommend();
+          return;
+        } else if (action === 'tournament') {
+          this.openTournament();
+          return;
+        } else if (action === 'local') {
+          this.toggleLocal();
+          return;
+        }
+      } catch {}
+    }
     if (!target || !target.matched) {
       this.loadPosts(true).catch(() => {});
       return;
@@ -417,6 +448,8 @@ export const App = {
     e.viewerHide.addEventListener('click', () => this.toggleHideCurrent());
     // Поделиться: системное меню на телефоне, копирование ссылки на десктопе.
     if (e.viewerShare) e.viewerShare.addEventListener('click', () => { this.sharePost(); });
+    if (e.viewerCopyImage) e.viewerCopyImage.addEventListener('click', () => { this.copyCurrentImage(); });
+    if (e.viewerPip) e.viewerPip.addEventListener('click', () => { this.togglePictureInPicture(); });
     if (e.viewerShareM) e.viewerShareM.addEventListener('click', () => { this.sharePost(); });
     if (e.viewerLikeM) e.viewerLikeM.addEventListener('click', () => this.toggleLikeCurrent());
     if (e.viewerHideM) e.viewerHideM.addEventListener('click', () => this.toggleHideCurrent());
@@ -652,6 +685,17 @@ export const App = {
     e.btnFindDups.addEventListener('click', () => go(this.findDuplicates()));
     e.btnCleanDups.addEventListener('click', () => go(this.cleanDuplicates()));
     if (e.btnMergeDups) e.btnMergeDups.addEventListener('click', () => go(this.mergeDuplicates()));
+    if (e.btnCompareDups) {
+      e.btnCompareDups.addEventListener('click', () => {
+        for (const g of (this._dupsGroups || [])) {
+          const posts = (g.posts || []).filter(p => p && p.id > 0);
+          if (posts.length >= 2) {
+            this.openCompareModal(posts[0], posts[1]);
+            return;
+          }
+        }
+      });
+    }
     if (e.batchZip) e.batchZip.addEventListener('click', () => this.batchZipDownload());
     if (e.viewerCollect) {
       e.viewerCollect.addEventListener('click', (ev) => {
@@ -1562,6 +1606,13 @@ export const App = {
     };
     const updateFromStatus = (d) => {
       const activeCount = (d.queued || 0) + (d.active || 0);
+      if (typeof navigator !== 'undefined' && 'setAppBadge' in navigator) {
+        if (activeCount > 0) {
+          navigator.setAppBadge(activeCount).catch(() => {});
+        } else {
+          navigator.clearAppBadge().catch(() => {});
+        }
+      }
       if (this.els.btnHeaderQueue) {
         if (activeCount > 0) {
           this.els.btnHeaderQueue.classList.remove('hidden');

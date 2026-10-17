@@ -88,6 +88,9 @@ App.videoChangeVolume = function (delta) {
   try {
     if (v.muted && delta > 0) v.muted = false;
     v.volume = Math.min(1, Math.max(0, Math.round(((v.volume || 0) + delta) * 100) / 100));
+    const p = App._loadVideoPrefs();
+    p.volume = v.volume;
+    App._saveVideoPrefs();
   } catch { /* noop */ }
   return true;
 };

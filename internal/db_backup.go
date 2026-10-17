@@ -1,8 +1,10 @@
 package internal
 
 import (
+	"compress/gzip"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -82,8 +84,47 @@ func (db *PostDB) BackupNow() error {
 	_ = os.Chmod(dst, 0o600)
 	log.Printf("[db] backup created: %s", dst)
 
+	if dbBackupGzip() {
+		gzDst := dst + ".gz"
+		if err := compressFile(dst, gzDst); err != nil {
+			log.Printf("[db] backup compress failed: %v", err)
+		} else {
+			log.Printf("[db] backup compressed: %s", gzDst)
+		}
+	}
+
 	pruneBackups(dir, dbBackupQuota(), dbBackupMaxAge())
 	return nil
+}
+
+func compressFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	gw := gzip.NewWriter(out)
+	if _, err := io.Copy(gw, in); err != nil {
+		_ = gw.Close()
+		return err
+	}
+	if err := gw.Close(); err != nil {
+		return err
+	}
+	_ = in.Close()
+	return os.Remove(src)
+}
+
+func dbBackupGzip() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("BRIEFLY_DB_BACKUP_GZIP")))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 // pruneBackups удаляет самые старые копии при превышении лимита количества
@@ -102,7 +143,9 @@ func pruneBackups(dir string, quota, maxAge int) {
 	var files []backupFile
 	var total int64
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), "posts-") || !strings.HasSuffix(e.Name(), ".db") {
+		isBackup := !e.IsDir() && strings.HasPrefix(e.Name(), "posts-") &&
+			(strings.HasSuffix(e.Name(), ".db") || strings.HasSuffix(e.Name(), ".db.gz"))
+		if !isBackup {
 			continue
 		}
 		info, err := e.Info()
