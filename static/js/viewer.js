@@ -9,6 +9,17 @@ const VIEWER_X_ICO = icon('x', 9);
 const SS_PLAY_ICO = () => icon('play', 16, true) + ' ' + t('viewer.slideshow');
 const SS_PAUSE_ICO = () => icon('pause', 16, true) + ' ' + t('viewer.slideshow');
 
+App.withViewTransition = function (fn) {
+  if (typeof document !== 'undefined' && typeof document.startViewTransition === 'function' && !(typeof this._trMotionOff === 'function' && this._trMotionOff())) {
+    try {
+      return document.startViewTransition(fn);
+    } catch {
+      return Promise.resolve(fn());
+    }
+  }
+  return Promise.resolve(fn());
+};
+
 App.openViewer = function (index) {
   if (index < 0 || index >= this.state.posts.length) return;
   this.stopSlideshow();
@@ -29,7 +40,9 @@ App.openViewer = function (index) {
   }
    // a11y (#4): фон скрываем от скринридеров (aria-hidden), а не просто скрываем.
    if (main) this.setAriaHidden(main, true);
-   this.els.viewer.classList.remove('hidden');
+   this.withViewTransition(() => {
+     this.els.viewer.classList.remove('hidden');
+   });
    // focusable контейнер + trap Tab внутри хедера вьювера.
    this.els.viewerContent.setAttribute('tabindex', '-1');
    if (typeof this.trapFocus === 'function') {
@@ -107,7 +120,9 @@ App.closeViewer = function (opts) {
   if (this._tournament && this._tournament.viewerOpen && typeof this._trReturnFromViewer === 'function') {
     this._trReturnFromViewer();
   }
-  this.els.viewer.classList.add('hidden');
+  this.withViewTransition(() => {
+    this.els.viewer.classList.add('hidden');
+  });
   // a11y (#4): возвращаем фону скринридеры + убираем диалог-атрибуты.
   const main = document.getElementById('main');
   if (main) this.setAriaHidden(main, false);

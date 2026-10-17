@@ -70,5 +70,12 @@
 .tag-hint{display:inline-flex;align-items:center;justify-content:center;width:.9em;height:.9em;margin-left:3px;border:1px solid currentColor;border-radius:50%;font-size:.6rem;line-height:1;opacity:.5;cursor:help;flex-shrink:0}
 .tag-hint:hover{opacity:.9}
 .viewer-progress{font-size:.75rem;color:var(--text-dim);text-align:center;margin-top:4px}
+@supports (view-transition-name: none) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.18s;
+    animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+}
 
 

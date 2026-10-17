@@ -15,6 +15,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .skip-link{position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;z-index:var(--z-tooltip)}
 .skip-link:focus{position:fixed;top:8px;left:8px;width:auto;height:auto;padding:8px 16px;background:var(--accent);color:#fff;border-radius:8px;font-size:14px;z-index:var(--z-tooltip)}
 #header{background:var(--surface);border-bottom:1px solid var(--border);padding:max(8px,env(safe-area-inset-top)) 16px 8px 16px;flex-shrink:0;z-index:100;position:relative}
+@supports (animation-timeline: scroll()) {
+  #header{animation:header-scroll-shadow linear both;animation-timeline:scroll(root);animation-range:0px 48px}
+  @keyframes header-scroll-shadow{to{box-shadow:0 4px 18px rgba(0,0,0,.35)}}
+}
 #header::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;background:linear-gradient(90deg,transparent,var(--accent),var(--accent-dim),transparent);opacity:.55;pointer-events:none;z-index:2}
 #header.offline::after{background:linear-gradient(90deg,transparent,var(--error),var(--error),transparent);opacity:.8}
 #header.offline .header-content::before{content:'● офлайн';color:var(--error);font-size:var(--font-xs);margin-left:auto;padding:2px 6px;border:1px solid var(--error);border-radius:var(--radius-sm);opacity:.8}

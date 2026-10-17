@@ -5,6 +5,7 @@
   "description": "Инструменты фронтенда better34: lint, типо-проверка, тесты, бандл и единый quality gate",
   "scripts": {
     "lint": "eslint static/js",
+    "oxlint": "oxlint static/js",
     "typecheck": "tsc -p . && tsc -p tsconfig.tests.json && tsc -p tsconfig.typed-tests.json",
     "test": "node --test \"static/js/tests/*.test.js\"",
     "build": "esbuild static/js/app.js --bundle --minify --outfile=static/js/dist/app.js --format=esm && node scripts/precompress.mjs",
@@ -16,7 +17,7 @@
     "check:embed": "node scripts/check-embed.mjs",
     "check:batch": "node scripts/check-batch.mjs",
     "check:race": "go test -race . ./internal/...",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run check:go && npm run check:i18n && npm run check:icons && npm run check:mobile && npm run check:css && npm run check:embed && npm run check:batch",
+    "check": "npm run oxlint && npm run lint && npm run typecheck && npm test && npm run build && npm run check:go && npm run check:i18n && npm run check:icons && npm run check:mobile && npm run check:css && npm run check:embed && npm run check:batch",
     "check:ci": "npm run check && npm run check:race"
   },
   "devDependencies": {
@@ -24,9 +25,13 @@
     "@types/node": "^26.6.2",
     "esbuild": "^0.25",
     "eslint": "^9",
+    "oxlint": "^1.88.0",
     "typescript": "^5"
   },
   "allowScripts": {
     "esbuild@0.25.12": true
+  },
+  "dependencies": {
+    "idb": "^8.0.4"
   }
 }

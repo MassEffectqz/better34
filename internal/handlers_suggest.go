@@ -17,42 +17,20 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jellydator/ttlcache/v3"
 )
 
-var suggestCache = struct {
-	sync.RWMutex
-	m   map[string]cachedSuggest
-	ttl time.Duration
-}{m: make(map[string]cachedSuggest), ttl: 5 * time.Minute}
+var suggestCache = ttlcache.New[string, []TagSuggestion](
+	ttlcache.WithTTL[string, []TagSuggestion](5*time.Minute),
+	ttlcache.WithCapacity[string, []TagSuggestion](512),
+)
 
-const suggestCacheMax = 512
-
-type cachedSuggest struct {
-	tags      []TagSuggestion
-	expiresAt time.Time
+func init() {
+	go suggestCache.Start()
 }
 
 func suggestCachePut(q string, tags []TagSuggestion) {
-	suggestCache.Lock()
-	defer suggestCache.Unlock()
-	if _, ok := suggestCache.m[q]; !ok && len(suggestCache.m) >= suggestCacheMax {
-		now := time.Now()
-		var oldestKey string
-		var oldest time.Time
-		for k, c := range suggestCache.m {
-			if now.After(c.expiresAt) {
-				delete(suggestCache.m, k)
-				continue
-			}
-			if oldest.IsZero() || c.expiresAt.Before(oldest) {
-				oldestKey, oldest = k, c.expiresAt
-			}
-		}
-		if len(suggestCache.m) >= suggestCacheMax && oldestKey != "" {
-			delete(suggestCache.m, oldestKey)
-		}
-	}
-	suggestCache.m[q] = cachedSuggest{tags: tags, expiresAt: time.Now().Add(suggestCache.ttl)}
+	suggestCache.Set(q, tags, ttlcache.DefaultTTL)
 }
 
 func (h *Handler) SuggestLocal(c *gin.Context) {
@@ -88,13 +66,10 @@ func (h *Handler) SuggestTags(c *gin.Context) {
 	// подсказки другого сайта не должны отдаваться из кэша.
 	cacheKey := h.provider().Name() + "\x1f" + q
 
-	suggestCache.RLock()
-	if cached, ok := suggestCache.m[cacheKey]; ok && time.Now().Before(cached.expiresAt) {
-		suggestCache.RUnlock()
-		c.JSON(http.StatusOK, gin.H{"tags": cached.tags})
+	if item := suggestCache.Get(cacheKey); item != nil {
+		c.JSON(http.StatusOK, gin.H{"tags": item.Value()})
 		return
 	}
-	suggestCache.RUnlock()
 
 	tags, err := h.provider().SuggestTags(q)
 	if err != nil {

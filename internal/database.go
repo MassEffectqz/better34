@@ -198,47 +198,8 @@ func NewPostDB(path string) *PostDB {
 		log.Printf("[db] ping %s: %v", path, err)
 		panic(err)
 	}
-	if _, err := sqlDB.Exec(postsTables); err != nil {
-		log.Printf("[db] schema: %v", err)
-		panic(err)
-	}
-	// Миграция существующих БД: колонка md5 для дедупликации скачиваний.
-	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN md5 TEXT NOT NULL DEFAULT ''`); err == nil {
-		log.Printf("[db] добавлена колонка md5")
-	}
-	// phash — визуальный отпечаток для «похожих», blurhash — плейсхолдер.
-	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN phash TEXT NOT NULL DEFAULT ''`); err == nil {
-		log.Printf("[db] добавлена колонка phash")
-	}
-	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN blurhash TEXT NOT NULL DEFAULT ''`); err == nil {
-		log.Printf("[db] добавлена колонка blurhash")
-	}
-	// source — метка провайдера/хоста, откуда скачан пост («откуда пост»).
-	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN source TEXT NOT NULL DEFAULT ''`); err == nil {
-		log.Printf("[db] добавлена колонка source")
-	}
-	// parent_id — родитель/дети постов (danbooru-style связки).
-	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0`); err == nil {
-		log.Printf("[db] добавлена колонка parent_id")
-	}
-	// phash_seed — корзина для быстрого поиска «похожих»(старшие 16 бит pHash).
-	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN phash_seed INTEGER NOT NULL DEFAULT 0`); err == nil {
-		log.Printf("[db] добавлена колонка phash_seed")
-	}
-	// has_comments/comment_count — признак и число комментариев источника.
-	// Заполняется из выдачи (has_comments у gelbooru) и при загрузке
-	// комментариев источника; по умолчанию 0, чтобы старые БД не гадали.
-	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN has_comments INTEGER NOT NULL DEFAULT 0`); err == nil {
-		log.Printf("[db] добавлена колонка has_comments")
-	}
-	// comment_count — последнее известное число комментариев источника (для
-	// бейджа в ленте). Факт «источник уже опрашивался» хранится отдельно, в
-	// source_comments_state: он привязан к паре (пост, сайт).
-	if _, err := sqlDB.Exec(`ALTER TABLE posts ADD COLUMN comment_count INTEGER NOT NULL DEFAULT 0`); err == nil {
-		log.Printf("[db] добавлена колонка comment_count")
-	}
-	if _, err := sqlDB.Exec(postsIndexes); err != nil {
-		log.Printf("[db] indexes: %v", err)
+	if err := RunMigrations(sqlDB); err != nil {
+		log.Printf("[db] migrations: %v", err)
 		panic(err)
 	}
 

@@ -12,6 +12,8 @@ import { t } from './i18n.js';
 // toast — безопасная обёртка: в реальном приложении showToast приходит из
 // toast.js, а в изолированных тестах (импортируют этот модуль без toast.js)
 // его нет — не должны падать на уведомлении.
+import { openDB } from 'idb';
+
 const toast = (msg, kind) => {
   if (typeof App !== 'undefined' && App.showToast) App.showToast(msg, kind);
 };
@@ -25,6 +27,16 @@ let _dbPromise = null;
 
 function idb() {
   if (_dbPromise) return _dbPromise;
+  if (typeof IDBRequest !== 'undefined') {
+    _dbPromise = openDB(DB_NAME, DB_VER, {
+      upgrade(db) {
+        if (!db.objectStoreNames.contains('queue')) {
+          db.createObjectStore('queue', { keyPath: 'id', autoIncrement: true });
+        }
+      },
+    });
+    return _dbPromise;
+  }
   _dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VER);
     req.onupgradeneeded = () => {
@@ -37,6 +49,44 @@ function idb() {
     req.onerror = () => reject(req.error);
   });
   return _dbPromise;
+}
+
+async function dbAdd(storeName, item) {
+  const db = await idb();
+  if (db && typeof db.add === 'function') {
+    return db.add(storeName, item);
+  }
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).add(item);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function dbGetAll(storeName) {
+  const db = await idb();
+  if (db && typeof db.getAll === 'function') {
+    return db.getAll(storeName);
+  }
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbDelete(storeName, id) {
+  const db = await idb();
+  if (db && typeof db.delete === 'function') {
+    return db.delete(storeName, id);
+  }
+  return new Promise((resolve) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).delete(id);
+    tx.oncomplete = resolve;
+  });
 }
 
 // Что можно безопасно отложить. Любые не-GET методы — кандидаты, кроме
@@ -77,13 +127,7 @@ async function registerSync() {
 export async function enqueueMutation(method, endpoint, body) {
   if (!isQueueable(endpoint, method)) return false;
   try {
-    const db = await idb();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction('queue', 'readwrite');
-      tx.objectStore('queue').add({ method, endpoint, body: body || null, ts: Date.now() });
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
+    await dbAdd('queue', { method, endpoint, body: body || null, ts: Date.now() });
     registerSync();
     if (typeof App !== 'undefined' && App.showToast) {
       App.showToast(t('offline.deferred'), 'info');
@@ -96,13 +140,7 @@ export async function enqueueMutation(method, endpoint, body) {
 
 async function listAll() {
   try {
-    const db = await idb();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction('queue', 'readonly');
-      const req = tx.objectStore('queue').getAll();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error);
-    });
+    return await dbGetAll('queue');
   } catch {
     return [];
   }
@@ -110,12 +148,7 @@ async function listAll() {
 
 async function removeItem(id) {
   try {
-    const db = await idb();
-    await new Promise((resolve) => {
-      const tx = db.transaction('queue', 'readwrite');
-      tx.objectStore('queue').delete(id);
-      tx.oncomplete = resolve;
-    });
+    await dbDelete('queue', id);
   } catch { /* очередь не починится — пропускаем */ }
 }
 

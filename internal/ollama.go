@@ -273,11 +273,20 @@ func (h *Handler) NlSearch(c *gin.Context) {
 		q = q[:300]
 	}
 	if !ollamaAvailable() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ollama недоступна на " + ollamaBase()})
+		// Оффлайн фоллбэк: если Ollama не запущена, пробуем локальный словарь семантики
+		if local := LocalSemanticTranslate(q); local != "" {
+			c.JSON(http.StatusOK, gin.H{"query": local, "model": "local-semantic"})
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ollama недоступна на " + ollamaBase() + ", а локальный словарь не смог разобрать фразу"})
 		return
 	}
 	query, err := ollamaToTags(q, h.provider())
 	if err != nil {
+		if local := LocalSemanticTranslate(q); local != "" {
+			c.JSON(http.StatusOK, gin.H{"query": local, "model": "local-semantic"})
+			return
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": "модель не ответила: " + err.Error()})
 		return
 	}
