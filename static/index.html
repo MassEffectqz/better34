@@ -41,8 +41,27 @@
         <input type="text" id="search-input" placeholder="Поиск тегов..." data-i18n-ph="search.placeholder" spellcheck="false" autocomplete="off" title="Пробел — И · -тег — исключить · | — чередование лент · / или Ctrl+K — фокус" data-i18n-title="search.hint">
         <span id="query-meta" class="query-meta" title="Часть тегов фильтруется локально (лимит источника)" data-i18n-title="search.metaHint"></span>
         <button class="search-clear" id="search-clear" aria-label="Очистить" data-i18n-aria="search.clear"><i data-lucide="x" data-size="14"></i></button>
+        <button class="search-action-btn hidden" id="btn-save-folder" title="Сохранить как умную папку" data-i18n-title="smartFolder.saveSearch" aria-label="Сохранить как умную папку" data-i18n-aria="smartFolder.saveSearch"><i data-lucide="bookmark" data-size="14"></i></button>
+        <button class="search-action-btn" id="btn-color-filter" title="Фильтр по цвету" data-i18n-title="color.filterTitle" aria-label="Фильтр по цвету" data-i18n-aria="color.filterTitle" popovertarget="color-popover"><i data-lucide="palette" data-size="14"></i></button>
         <div id="suggestions" class="suggestions"></div>
         <div id="history-dropdown" class="history-dropdown"></div>
+        <div id="color-popover" class="color-popover hidden" popover="auto">
+          <div class="color-popover-title" data-i18n="color.filterTitle">Фильтр по цвету</div>
+          <div class="color-grid">
+            <button type="button" class="color-btn" data-color="" title="Все цвета" data-i18n-title="color.all"><span class="color-dot dot-all"></span><span data-i18n="color.all">Все цвета</span></button>
+            <button type="button" class="color-btn" data-color="red" title="Красный" data-i18n-title="color.red"><span class="color-dot dot-red"></span><span data-i18n="color.red">Красный</span></button>
+            <button type="button" class="color-btn" data-color="orange" title="Оранжевый" data-i18n-title="color.orange"><span class="color-dot dot-orange"></span><span data-i18n="color.orange">Оранжевый</span></button>
+            <button type="button" class="color-btn" data-color="yellow" title="Жёлтый" data-i18n-title="color.yellow"><span class="color-dot dot-yellow"></span><span data-i18n="color.yellow">Жёлтый</span></button>
+            <button type="button" class="color-btn" data-color="green" title="Зелёный" data-i18n-title="color.green"><span class="color-dot dot-green"></span><span data-i18n="color.green">Зелёный</span></button>
+            <button type="button" class="color-btn" data-color="teal" title="Бирюзовый" data-i18n-title="color.teal"><span class="color-dot dot-teal"></span><span data-i18n="color.teal">Бирюзовый</span></button>
+            <button type="button" class="color-btn" data-color="blue" title="Синий" data-i18n-title="color.blue"><span class="color-dot dot-blue"></span><span data-i18n="color.blue">Синий</span></button>
+            <button type="button" class="color-btn" data-color="purple" title="Фиолетовый" data-i18n-title="color.purple"><span class="color-dot dot-purple"></span><span data-i18n="color.purple">Фиолетовый</span></button>
+            <button type="button" class="color-btn" data-color="pink" title="Розовый" data-i18n-title="color.pink"><span class="color-dot dot-pink"></span><span data-i18n="color.pink">Розовый</span></button>
+            <button type="button" class="color-btn" data-color="light" title="Светлый" data-i18n-title="color.light"><span class="color-dot dot-light"></span><span data-i18n="color.light">Светлый</span></button>
+            <button type="button" class="color-btn" data-color="dark" title="Тёмный" data-i18n-title="color.dark"><span class="color-dot dot-dark"></span><span data-i18n="color.dark">Тёмный</span></button>
+            <button type="button" class="color-btn" data-color="monochrome" title="Монохром" data-i18n-title="color.monochrome"><span class="color-dot dot-mono"></span><span data-i18n="color.monochrome">Монохром</span></button>
+          </div>
+        </div>
       </div>
       <div id="search-chips" class="search-chips"></div>
       <div class="header-actions">
@@ -107,6 +126,7 @@
   <div id="scroll-progress" aria-hidden="true"></div>
 
   <main id="main">
+    <div id="smart-folders-bar" class="smart-folders-bar hidden"></div>
     <div id="mode-bar" class="mode-bar hidden">
       <span id="mode-bar-text"></span>
       <button class="btn-icon btn-icon-sm hidden" id="mode-bar-refresh" title="Обновить подборку" data-i18n-title="rec.refreshTitle"><i data-lucide="refresh" data-size="14"></i></button>
@@ -128,6 +148,7 @@
     <div class="viewer-container">
     <div class="viewer-head" id="viewer-head">
       <span id="viewer-info" class="viewer-info"></span>
+      <div id="viewer-palette" class="viewer-palette" title="Цветовая палитра" data-i18n-title="color.palette"></div>
       <div id="viewer-relations" class="viewer-relations hidden"></div>
       <div class="viewer-actions">
         <div class="zoom-controls" id="viewer-zoom-controls">

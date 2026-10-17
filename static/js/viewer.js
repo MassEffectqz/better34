@@ -967,6 +967,7 @@ App.renderViewer = function (force) {
 
   this._renderViewerTags();
   this._renderViewerRelations(post);
+  if (typeof this.renderViewerPalette === 'function') this.renderViewerPalette(post);
 
   this.els.viewerLike.innerHTML = isLiked
     ? icon('heart', 20, true)

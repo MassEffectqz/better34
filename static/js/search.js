@@ -572,6 +572,7 @@ App.search = async function (query) {
   this.updateViewedToggle();
   this.pushState(query, null);
   this.renderQueryChips(query);
+  if (typeof this.renderSmartFoldersBar === 'function') this.renderSmartFoldersBar();
   // forceRefresh=true: добавляет v=timestamp к URL, чтобы обойти кэш API.get.
   // Без этого поиск возвращал кэшированные результаты предыдущего запроса.
   await this.loadPosts(true, null, true);

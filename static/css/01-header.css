@@ -29,16 +29,21 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .search-box.loading #search-input::placeholder{color:transparent}
 .search-box.loading::after{content:'';position:absolute;right:36px;top:50%;width:16px;height:16px;margin-top:-8px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
 .search-icon{position:absolute;left:12px;color:var(--text-dim);pointer-events:none;flex-shrink:0}
-#search-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 32px 8px 34px;color:var(--text);font-size:.9rem;outline:none;transition:border-color var(--transition)}
+#search-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 84px 8px 34px;color:var(--text);font-size:.9rem;outline:none;transition:border-color var(--transition)}
 #search-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
 #search-input::placeholder{color:var(--text-dim)}
-.search-clear{position:absolute;right:4px;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;border-radius:4px;display:flex;opacity:0;transition:opacity var(--transition)}
+.search-clear{position:absolute;right:58px;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;border-radius:4px;display:flex;opacity:0;transition:opacity var(--transition);z-index:2}
 .search-clear.visible{opacity:1}
 /* Страховка на случай забытого syncSearchClear(): :has() не даёт кнопке
    остаться невидимой, когда в поле есть текст (Chrome 105+, Safari 15.4+,
    Firefox 121+). Старые браузеры полагаются на JS-класс .visible. */
 .search-box:has(#search-input:not(:placeholder-shown)) .search-clear{opacity:1}
 .search-clear:hover{color:var(--text);background:var(--hover)}
+.search-action-btn{position:absolute;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;border-radius:4px;display:flex;align-items:center;justify-content:center;transition:color var(--transition),background var(--transition);z-index:2}
+.search-action-btn:hover{color:var(--text);background:var(--hover)}
+.search-action-btn#btn-color-filter{right:6px}
+.search-action-btn#btn-save-folder{right:32px}
+.search-action-btn.hidden{display:none}
 .suggestions,.history-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--surface-glass);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%);border:1px solid var(--border-glass);border-top:none;border-radius:0 0 var(--radius) var(--radius);max-height:220px;overflow-y:auto;display:none;z-index:200;box-shadow:var(--shadow-glass)}
 .suggestions.active,.history-dropdown.active{display:block}
 .suggestion-item{padding:8px 16px;cursor:pointer;font-size:.85rem;color:var(--text-dim);transition:background var(--transition);display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -94,22 +99,64 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 /* Popover normalization */
 .header-menu[popover],
-.grid-menu[popover]{position:fixed;inset:auto;margin:0;border:1px solid var(--border-glass);background:var(--surface-glass);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%);border-radius:var(--radius);box-shadow:var(--shadow-glass);color:var(--text);padding:4px;opacity:0;transform:scale(.96) translateY(-4px);transition:opacity var(--transition),transform var(--transition),display var(--transition) allow-discrete,overlay var(--transition) allow-discrete}
+.grid-menu[popover],
+.color-popover[popover]{position:fixed;inset:auto;margin:0;border:1px solid var(--border-glass);background:var(--surface-glass);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%);border-radius:var(--radius);box-shadow:var(--shadow-glass);color:var(--text);padding:4px;opacity:0;transform:scale(.96) translateY(-4px);transition:opacity var(--transition),transform var(--transition),display var(--transition) allow-discrete,overlay var(--transition) allow-discrete}
 .grid-menu[popover]{padding:8px}
+.color-popover[popover]{padding:10px}
 .header-menu[popover]:popover-open,
-.grid-menu[popover]:popover-open{display:block;opacity:1;transform:scale(1) translateY(0)}
+.grid-menu[popover]:popover-open,
+.color-popover[popover]:popover-open{display:block;opacity:1;transform:scale(1) translateY(0)}
 @starting-style{
   .header-menu[popover]:popover-open,
-  .grid-menu[popover]:popover-open{opacity:0;transform:scale(.96) translateY(-4px)}
+  .grid-menu[popover]:popover-open,
+  .color-popover[popover]:popover-open{opacity:0;transform:scale(.96) translateY(-4px)}
 }
 @media (prefers-reduced-motion: reduce){
   .header-menu[popover],
-  .grid-menu[popover]{transform:none!important;transition-duration:.01ms!important}
+  .grid-menu[popover],
+  .color-popover[popover]{transform:none!important;transition-duration:.01ms!important}
   @starting-style{
     .header-menu[popover]:popover-open,
-    .grid-menu[popover]:popover-open{transform:none!important}
+    .grid-menu[popover]:popover-open,
+    .color-popover[popover]:popover-open{transform:none!important}
   }
 }
+
+.color-popover{position:absolute;top:100%;right:0;margin-top:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:300;min-width:210px;padding:10px}
+.color-popover.hidden{display:none}
+.color-popover-title{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);margin-bottom:8px;padding-left:2px}
+.color-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:4px}
+.color-btn{display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.78rem;cursor:pointer;transition:all var(--transition);text-align:left}
+.color-btn:hover{background:var(--hover);border-color:var(--accent-dim)}
+.color-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0;border:1px solid rgba(0,0,0,.25)}
+.dot-all{background:linear-gradient(135deg,#f43f5e,#eab308,#22c55e,#3b82f6)}
+.dot-red{background:#ef4444}
+.dot-orange{background:#f97316}
+.dot-yellow{background:#eab308}
+.dot-green{background:#22c55e}
+.dot-teal{background:#14b8a6}
+.dot-blue{background:#3b82f6}
+.dot-purple{background:#a855f7}
+.dot-pink{background:#ec4899}
+.dot-light{background:#f1f5f9;border-color:rgba(0,0,0,.4)}
+.dot-dark{background:#1e293b}
+.dot-mono{background:linear-gradient(135deg,#ffffff 0%,#64748b 50%,#000000 100%)}
+
+.smart-folders-bar{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--surface-glass);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--border-glass);border-radius:var(--radius);margin-bottom:10px;overflow-x:auto;scrollbar-width:none}
+.smart-folders-bar::-webkit-scrollbar{display:none}
+.smart-folders-bar.hidden{display:none}
+.smart-folders-header{display:flex;align-items:center;gap:6px;font-size:.75rem;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;padding-right:8px;border-right:1px solid var(--border);flex-shrink:0}
+.smart-folders-icon{display:flex;align-items:center;color:var(--accent)}
+.smart-folders-label{white-space:nowrap}
+.smart-folders-list{display:flex;align-items:center;gap:6px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
+.smart-folders-list::-webkit-scrollbar{display:none}
+.folder-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px 4px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.8rem;cursor:pointer;white-space:nowrap;transition:all var(--transition);flex-shrink:0}
+.folder-chip:hover{background:var(--hover);border-color:var(--accent-dim);color:var(--text)}
+.folder-chip.active{background:color-mix(in srgb,var(--accent) 18%,var(--surface2));border-color:var(--accent);color:var(--accent);font-weight:600}
+.folder-chip-icon{display:flex;align-items:center;color:var(--accent);opacity:.85}
+.folder-chip-name{max-width:140px;overflow:hidden;text-overflow:ellipsis}
+.folder-chip-del{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:3px;color:var(--text-dim);opacity:.6;transition:all var(--transition);margin-left:2px}
+.folder-chip-del:hover{opacity:1;color:var(--error);background:color-mix(in srgb,var(--error) 15%,transparent)}
 
 /* CSS Anchor Positioning (Chromium 125+, Safari 18.2+) */
 @supports (anchor-name: --a) {
@@ -124,6 +171,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   #provider-menu[popover] {
     position-anchor: --provider-badge;
     top: calc(anchor(bottom) + 4px);
+    right: calc(100vw - anchor(right));
+  }
+
+  #btn-color-filter { anchor-name: --btn-color-filter; }
+  #color-popover[popover] {
+    position-anchor: --btn-color-filter;
+    top: calc(anchor(bottom) + 6px);
     right: calc(100vw - anchor(right));
   }
 }

@@ -13,6 +13,8 @@ import './collections.js';
 import './friends.js';
 import './tournament.js';
 import './diff.js';
+import './color.js';
+import './folders.js';
 import './settings.js';
 import './aliases.js';
 import './social.js';

@@ -108,6 +108,8 @@ export const App = {
       btnExportPresets: _('btn-export-presets'), btnImportPresets: _('btn-import-presets'), presetImportFile: _('preset-import-file'),
       btnHeaderQueue: _('btn-header-queue'), headerQueueCount: _('header-queue-count'),
       btnHeaderMenu: _('btn-header-menu'), headerMenu: _('header-menu'), searchClear: _('search-clear'),
+      btnSaveFolder: _('btn-save-folder'), btnColorFilter: _('btn-color-filter'), colorPopover: _('color-popover'),
+      smartFoldersBar: _('smart-folders-bar'), viewerPalette: _('viewer-palette'),
       providerBadge: _('provider-badge'), providerMenu: _('provider-menu'), providerMenuList: _('provider-menu-list'),
       ratingToggle: _('rating-toggle'), feedProgress: _('feed-progress'), queryMeta: _('query-meta'),
       viewedToggle: _('viewed-toggle'),
@@ -919,6 +921,7 @@ export const App = {
         inp.focus();
       });
     });
+    if (typeof this.initSmartFolders === 'function') this.initSmartFolders();
   },
 
   loadTheme() {
@@ -1327,6 +1330,7 @@ export const App = {
         this.state.profile = await API.get('/profile');
         this._profileFresh = true;
         this.renderProfile();
+        if (typeof this.renderSmartFoldersBar === 'function') this.renderSmartFoldersBar();
       } catch (err) {
         console.error('Failed to load profile:', err);
       }
@@ -1378,6 +1382,9 @@ export const App = {
     const btn = this.els && this.els.searchClear;
     if (!inp || !btn) return;
     btn.classList.toggle('visible', inp.value.length > 0);
+    if (this.els.btnSaveFolder && this.els.btnSaveFolder.classList) {
+      this.els.btnSaveFolder.classList.toggle('hidden', inp.value.trim().length === 0);
+    }
   },
 
   /** Записать запрос в поле поиска и синхронизировать крестик очистки. */
