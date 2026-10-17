@@ -207,6 +207,7 @@ App.scheduleRelated = function (post) {
   this._relToken = (this._relToken || 0) + 1;
   this._relPosts = [];
   this._relLoadedFor = null;
+  this._relCurrentMode = 'all';
   el.classList.add('hidden');
   el.innerHTML = '';
   if (!post || !post.id) return;
@@ -214,47 +215,90 @@ App.scheduleRelated = function (post) {
   // похожих не отправляем, подгрузим после выхода из полного экрана.
   if (this._viewerIsFullscreen()) return;
   clearTimeout(this._relTimer);
-  this._relTimer = setTimeout(() => this.loadRelated(post), 350);
+  this._relTimer = setTimeout(() => this.loadRelated(post, 'all'), 350);
 };
 
-App.loadRelated = async function (post) {
+App.loadRelated = async function (post, mode) {
   const el = this.els.viewerRelated;
   if (!el || !post || !post.id) return;
   // Страховка: таймер из scheduleRelated мог сработать уже в полном экране.
   if (this._viewerIsFullscreen()) return;
+  if (!mode) mode = this._relCurrentMode || 'all';
+  this._relCurrentMode = mode;
   const token = (this._relToken = (this._relToken || 0) + 1);
   this._relPosts = [];
-  el.classList.add('hidden');
-  el.innerHTML = '';
+  if (this._relAbort) {
+    this._relAbort.abort();
+    this._relAbort = null;
+  }
   const ac = new AbortController();
   this._relAbort = ac;
   try {
-    const data = await API.get('/related?id=' + encodeURIComponent(post.id), { signal: ac.signal });
+    const data = await API.get('/related?id=' + encodeURIComponent(post.id) + '&mode=' + encodeURIComponent(mode), { signal: ac.signal });
     if (token !== this._relToken || !this.state.viewerOpen || ac.signal.aborted) return;
     const cur = this.state.posts[this.state.viewerIndex];
     if (!cur || cur.id !== post.id) return;
     this._relLoadedFor = post.id;
     const posts = (data && data.posts) || [];
-    if (!posts.length) {
-      el.classList.remove('hidden');
-      el.innerHTML = '<div class="rel-title">' + t('viewer.relatedEmpty') + '</div>';
-      return;
-    }
     this._relPosts = posts;
     el.classList.remove('hidden');
-    const tagStr = (data.tags || []).map(esc).join(', ');
+
+    const activeMode = (data && data.mode) || mode || 'all';
+    const tagList = (data && data.tags) || [];
+    const tagStr = tagList.map(esc).join(', ');
+    const tagQuery = tagList.join(' ');
+
+    let tabsHtml = '<div class="rel-tabs" role="tablist" aria-label="Similar modes">' +
+      `<button type="button" class="rel-tab ${activeMode === 'all' ? 'active' : ''}" data-mode="all" role="tab" aria-selected="${activeMode === 'all'}">${t('viewer.relatedAll')}</button>`;
+    if (data && (data.has_artist || activeMode === 'artist')) {
+      tabsHtml += `<button type="button" class="rel-tab ${activeMode === 'artist' ? 'active' : ''}" data-mode="artist" role="tab" aria-selected="${activeMode === 'artist'}">${t('viewer.relatedArtist')}</button>`;
+    }
+    if (data && (data.has_character || activeMode === 'char')) {
+      tabsHtml += `<button type="button" class="rel-tab ${activeMode === 'char' ? 'active' : ''}" data-mode="char" role="tab" aria-selected="${activeMode === 'char'}">${t('viewer.relatedChar')}</button>`;
+    }
+    tabsHtml += `<button type="button" class="rel-tab ${activeMode === 'visual' ? 'active' : ''}" data-mode="visual" role="tab" aria-selected="${activeMode === 'visual'}">${t('viewer.relatedVisual')}</button>` +
+      '</div>';
+
+    const searchBtnHtml = tagQuery
+      ? `<button type="button" class="rel-search-btn" data-tags="${esc(tagQuery)}" title="${t('viewer.relatedSearchHint')}">🔍 <span class="rel-tag-highlight">${tagStr}</span></button>`
+      : '';
+
+    const headHtml = '<div class="rel-head">' +
+      '<div class="rel-title-group">' +
+        `<span class="rel-title">${t('viewer.relatedTitle')}</span>` +
+        searchBtnHtml +
+      '</div>' +
+      tabsHtml +
+      '</div>';
+
+    if (!posts.length) {
+      el.innerHTML = headHtml + '<div class="rel-empty">' + t('viewer.relatedEmpty') + '</div>';
+      return;
+    }
+
     // kind=preview: immutable-заголовок и cache-first в service worker.
     const prox = (u) => u ? '/api/proxy?url=' + encodeURIComponent(u) + '&kind=preview' : null;
     el.innerHTML =
-      '<div class="rel-title">' + t('viewer.relatedTitle') + (tagStr ? ': <span style="text-transform:none;font-weight:600">' + tagStr + '</span>' : '') + '</div>' +
+      headHtml +
       '<div class="rel-row">' +
       posts.map((p, i) => {
         const thumb = p.downloaded ? ('/api/thumb/' + p.id) : prox(p.preview_url);
-        // XSS (#7): p.id приходит из внешнего источника — экранируем (esc
-        // безопасен и в атрибутном контексте). A11y (#13): rel-item — кнопка
-        // с ролью и фокусом, иначе ряд «Похожие» недоступен с клавиатуры.
         const pid = esc(p.id);
-        return `<div class="rel-item" role="button" tabindex="0" data-idx="${i}" aria-label="#${pid}" title="#${pid}">${thumb ? `<img src="${thumb}" alt="" loading="lazy" decoding="async">` : ''}<span class="rel-id">#${pid}</span></div>`;
+        const sim = (p.similarity != null && p.similarity > 0)
+          ? `<span class="rel-sim">${p.similarity}%</span>`
+          : '';
+        let badge = '';
+        if (p.match_type === 'artist') {
+          badge = `<span class="rel-badge badge-artist" title="${t('viewer.relatedArtist')}">art</span>`;
+        } else if (p.match_type === 'character') {
+          badge = `<span class="rel-badge badge-char" title="${t('viewer.relatedChar')}">char</span>`;
+        } else if (p.match_type === 'visual') {
+          badge = `<span class="rel-badge badge-visual" title="${t('viewer.relatedVisual')}">vis</span>`;
+        }
+        const tipExtra = (p.matched_tags && p.matched_tags.length)
+          ? ' · ' + esc(p.matched_tags.slice(0, 3).join(', '))
+          : '';
+        return `<div class="rel-item" role="button" tabindex="0" data-idx="${i}" aria-label="#${pid}" title="#${pid}${tipExtra}">${thumb ? `<img src="${thumb}" alt="" loading="lazy" decoding="async">` : ''}${sim}${badge}<span class="rel-id">#${pid}</span></div>`;
       }).join('') +
       '</div>';
   } catch (err) {

@@ -1743,10 +1743,25 @@ export const App = {
   },
 
   /**
-   * Клик по миниатюре «Похожие по тегам». Ctrl/Cmd+ЛКМ работает как у ссылки
-   * (пост открывается в новой вкладке), обычный клик — листание по цепочке.
+   * Клик по миниатюре «Похожие по тегам» или элементам управления (вкладки режимов, поиск).
+   * Ctrl/Cmd+ЛКМ по миниатюре открывает пост в новой вкладке, обычный клик — листание по цепочке.
    */
   onRelatedClick(ev) {
+    const tab = ev && ev.target && ev.target.closest ? ev.target.closest('.rel-tab') : null;
+    if (tab && tab.dataset && tab.dataset.mode) {
+      ev.preventDefault();
+      const cur = this.state.posts[this.state.viewerIndex];
+      if (cur) this.loadRelated(cur, tab.dataset.mode);
+      return;
+    }
+    const sBtn = ev && ev.target && ev.target.closest ? ev.target.closest('.rel-search-btn') : null;
+    if (sBtn && sBtn.dataset && sBtn.dataset.tags) {
+      ev.preventDefault();
+      const q = sBtn.dataset.tags;
+      this.closeViewer();
+      this.search(q);
+      return;
+    }
     const p = this._relPostFromEvent(ev);
     if (!p) return;
     if (this.isOpenInNewTabClick(ev)) {
@@ -1768,10 +1783,29 @@ export const App = {
 
   /**
    * Enter по миниатюре «Похожие по тегам» (role=button) — как клик;
-   * Ctrl/Cmd+Enter — пост в новой вкладке. Space не перехватываем: он
-   * во вьювере управляет слайдшоу.
+   * Ctrl/Cmd+Enter — пост в новой вкладке. Space не перехватываем для миниатюр:
+   * он во вьювере управляет слайдшоу, но для кнопок и вкладок активирует их.
    */
   onRelatedKeydown(ev) {
+    const tab = ev && ev.target && ev.target.closest ? ev.target.closest('.rel-tab') : null;
+    if (tab && tab.dataset && tab.dataset.mode) {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        const cur = this.state.posts[this.state.viewerIndex];
+        if (cur) this.loadRelated(cur, tab.dataset.mode);
+        return;
+      }
+    }
+    const sBtn = ev && ev.target && ev.target.closest ? ev.target.closest('.rel-search-btn') : null;
+    if (sBtn && sBtn.dataset && sBtn.dataset.tags) {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        const q = sBtn.dataset.tags;
+        this.closeViewer();
+        this.search(q);
+        return;
+      }
+    }
     if (ev.key !== 'Enter') return;
     const p = this._relPostFromEvent(ev);
     if (!p) return;

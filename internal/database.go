@@ -915,50 +915,55 @@ func (db *PostDB) SetPostBlurhash(id int, bh string) {
 }
 
 // SimilarPHash возвращает скачанные посты, визуально похожие на данный
-// (расстояние Хэмминга pHash ≤ maxDist). Кандидаты ищутся через бакеты
-// phash_seed ±1: при расстоянии ≤ 12 старшие 4 бита не могут разойтись
-// больше чем на единицу, остальные бакеты можно не сканировать.
+// (расстояние Хэмминга pHash ≤ maxDist). Сканирует легковесные пары (id, phash),
+// гарантируя 100% точность поиска без ложных пропусков при изменении старших бит.
 func (db *PostDB) SimilarPHash(phash string, excludeID, limit, maxDist int) []*Post {
 	target, ok := decodePHash(phash)
 	if !ok {
 		return nil
 	}
-	seed := phashSeed(target)
-	rows, err := db.read.Query(`SELECT `+postCols+` FROM posts WHERE downloaded=1 AND phash<>'' AND id<>? AND phash_seed IN (?,?,?)`,
-		excludeID, seed-1, seed, seed+1)
+	rows, err := db.read.Query(`SELECT id, phash FROM posts WHERE downloaded=1 AND phash<>'' AND id<>?`, excludeID)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 	type scored struct {
-		p    *Post
+		id   int
 		dist int
 	}
 	var candidates []scored
 	for rows.Next() {
-		p, err := scanPost(rows.Scan)
-		if err != nil {
+		var id int
+		var otherPH string
+		if err := rows.Scan(&id, &otherPH); err != nil {
 			continue
 		}
-		other, ok := decodePHash(p.Phash)
+		other, ok := decodePHash(otherPH)
 		if !ok {
 			continue
 		}
 		d := math_popcount(target ^ other)
 		if d <= maxDist {
-			candidates = append(candidates, scored{p, d})
+			candidates = append(candidates, scored{id, d})
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("rows err: %v", err)
+		log.Printf("SimilarPHash rows err: %v", err)
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].dist != candidates[j].dist {
+			return candidates[i].dist < candidates[j].dist
+		}
+		return candidates[i].id < candidates[j].id
+	})
 	if len(candidates) > limit {
 		candidates = candidates[:limit]
 	}
 	out := make([]*Post, 0, len(candidates))
 	for _, c := range candidates {
-		out = append(out, c.p)
+		if p := db.Get(c.id); p != nil {
+			out = append(out, p)
+		}
 	}
 	return out
 }
@@ -981,15 +986,13 @@ func (db *PostDB) FindDownloadedByMd5(md5sum string, excludeID int) int {
 // FindDownloadedByPHash ищет уже скачанный пост, визуально похожий на переданный
 // pHash (расстояние Хэмминга ≤ maxDist) — дедуп пережатых/обрезных копий.
 // При нескольких кандидатах выбирается ближайший, при равных — меньший id.
-// 0 — похожих нет. Поиск идёт через бакет phash_seed (±1).
+// 0 — похожих нет.
 func (db *PostDB) FindDownloadedByPHash(phash string, excludeID, maxDist int) int {
 	target, ok := decodePHash(phash)
 	if !ok || maxDist < 0 {
 		return 0
 	}
-	seed := phashSeed(target)
-	rows, err := db.read.Query(`SELECT id, phash FROM posts WHERE downloaded=1 AND phash<>'' AND id<>? AND phash_seed IN (?,?,?)`,
-		excludeID, seed-1, seed, seed+1)
+	rows, err := db.read.Query(`SELECT id, phash FROM posts WHERE downloaded=1 AND phash<>'' AND id<>?`, excludeID)
 	if err != nil {
 		return 0
 	}
@@ -1010,7 +1013,7 @@ func (db *PostDB) FindDownloadedByPHash(phash string, excludeID, maxDist int) in
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("rows err: %v", err)
+		log.Printf("FindDownloadedByPHash rows err: %v", err)
 	}
 	return best
 }

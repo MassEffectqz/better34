@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -78,58 +79,250 @@ func (h *Handler) GetRelated(c *gin.Context) {
 		return
 	}
 
-	var tags string
-	if p := GetDB().Get(id); p != nil && p.Tags != "" {
-		tags = p.Tags
+	mode := strings.ToLower(strings.TrimSpace(c.Query("type")))
+	if mode == "" {
+		mode = strings.ToLower(strings.TrimSpace(c.Query("mode")))
+	}
+	if mode == "" {
+		mode = "all"
+	}
+
+	db := GetDB()
+	var srcPost *Post
+	if p := db.Get(id); p != nil && p.Tags != "" {
+		srcPost = p
 	} else {
-		posts, err := h.provider().SearchPosts(fmt.Sprintf("id:%d", id), 1, 1, 0)
-		if err == nil && len(posts) > 0 {
-			tags = posts[0].Tags
+		prov := h.provider()
+		if prov != nil {
+			posts, err := prov.SearchPosts(fmt.Sprintf("id:%d", id), 1, 1, 0)
+			if err == nil && len(posts) > 0 {
+				srcPost = &Post{
+					ID:         posts[0].ID,
+					Tags:       posts[0].Tags,
+					FileURL:    posts[0].FileURL,
+					PreviewURL: posts[0].PreviewURL,
+					FileType:   posts[0].FileType,
+					Width:      posts[0].Width,
+					Height:     posts[0].Height,
+					Score:      posts[0].Score,
+					Rating:     posts[0].Rating,
+					Downloaded: false,
+				}
+			}
 		}
 	}
 
-	var picked []string
-	seen := make(map[string]bool)
-	for _, t := range strings.Fields(tags) {
-		tag := strings.ToLower(strings.TrimLeft(t, "+-"))
-		if genericTags[tag] || seen[tag] || len(tag) < 3 || len(tag) > 34 {
-			continue
-		}
-		seen[tag] = true
-		picked = append(picked, tag)
-		if len(picked) == 3 {
-			break
-		}
-	}
-	if len(picked) == 0 {
-		c.JSON(http.StatusOK, gin.H{"posts": []interface{}{}})
+	if srcPost == nil || srcPost.Tags == "" {
+		c.JSON(http.StatusOK, gin.H{"posts": []any{}, "tags": []string{}, "mode": mode, "has_artist": false, "has_character": false})
 		return
 	}
 
-	result, err := h.provider().SearchPosts(strings.Join(picked, " "), 1, 24, 0)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// Режим visual: визуальный поиск похожих по pHash
+	if mode == "visual" {
+		if srcPost.Phash == "" && srcPost.Downloaded && srcPost.FilePath != "" {
+			srcPost.Phash = PerceptualHashFile(srcPost.FilePath)
+			db.SetPostPHash(srcPost.ID, srcPost.Phash)
+		}
+		if srcPost.Phash != "" {
+			simPosts := db.SimilarPHash(srcPost.Phash, id, 24, 16)
+			out := make([]gin.H, 0, len(simPosts))
+			for _, p := range simPosts {
+				d, _ := HammingPHash(srcPost.Phash, p.Phash)
+				simPct := int(math.Max(30, (1.0-float64(d)/20.0)*100))
+				out = append(out, gin.H{
+					"id":           p.ID,
+					"tags":         p.Tags,
+					"file_url":     p.FileURL,
+					"sample_url":   "",
+					"preview_url":  p.PreviewURL,
+					"file_type":    p.FileType,
+					"width":        p.Width,
+					"height":       p.Height,
+					"score":        p.Score,
+					"rating":       p.Rating,
+					"downloaded":   p.Downloaded,
+					"similarity":   simPct,
+					"match_type":   "visual",
+					"matched_tags": []string{},
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"posts":         out,
+				"tags":          []string{},
+				"mode":          "visual",
+				"has_artist":    false,
+				"has_character": false,
+			})
+			return
+		}
+	}
+
+	freqMap := globalTagFreq()
+	analyzed := AnalyzeTags(srcPost.Tags, freqMap)
+	hasArtist := false
+	hasChar := false
+	for _, ct := range analyzed {
+		if ct.Kind == TagKindArtist {
+			hasArtist = true
+		} else if ct.Kind == TagKindCharacter {
+			hasChar = true
+		}
+	}
+
+	primaryQ, fallbackQ, pickedTags := BuildRelatedQueries(analyzed, mode)
+	if primaryQ == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"posts":         []any{},
+			"tags":          []string{},
+			"mode":          mode,
+			"has_artist":    hasArtist,
+			"has_character": hasChar,
+		})
 		return
 	}
 
-	out := make([]gin.H, 0, len(result))
-	for _, p := range result {
-		if p.ID == id {
-			continue
+	candidateMap := make(map[int]*RelatedCandidate)
+	prov := h.provider()
+
+	// 1. Поиск в активном онлайн-провайдере
+	if prov != nil {
+		res, err := prov.SearchPosts(primaryQ, 1, 24, 0)
+		if err == nil {
+			for i := range res {
+				if res[i].ID != id {
+					ph := ""
+					if local := db.Get(res[i].ID); local != nil {
+						ph = local.Phash
+					}
+					candidateMap[res[i].ID] = &RelatedCandidate{
+						ID:         res[i].ID,
+						Tags:       res[i].Tags,
+						FileURL:    res[i].FileURL,
+						SampleURL:  res[i].SampleURL,
+						PreviewURL: res[i].PreviewURL,
+						FileType:   res[i].FileType,
+						Width:      res[i].Width,
+						Height:     res[i].Height,
+						Score:      res[i].Score,
+						Rating:     res[i].Rating,
+						Phash:      ph,
+						Downloaded: false,
+					}
+				}
+			}
 		}
+		// Fallback при малом числе результатов
+		if len(candidateMap) < 12 && fallbackQ != "" && fallbackQ != primaryQ {
+			fbRes, fbErr := prov.SearchPosts(fallbackQ, 1, 24, 0)
+			if fbErr == nil {
+				for i := range fbRes {
+					if fbRes[i].ID != id && candidateMap[fbRes[i].ID] == nil {
+						ph := ""
+						if local := db.Get(fbRes[i].ID); local != nil {
+							ph = local.Phash
+						}
+						candidateMap[fbRes[i].ID] = &RelatedCandidate{
+							ID:         fbRes[i].ID,
+							Tags:       fbRes[i].Tags,
+							FileURL:    fbRes[i].FileURL,
+							SampleURL:  fbRes[i].SampleURL,
+							PreviewURL: fbRes[i].PreviewURL,
+							FileType:   fbRes[i].FileType,
+							Width:      fbRes[i].Width,
+							Height:     fbRes[i].Height,
+							Score:      fbRes[i].Score,
+							Rating:     fbRes[i].Rating,
+							Phash:      ph,
+							Downloaded: false,
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Добираем совпадения из локальной коллекции
+	if len(pickedTags) > 0 {
+		localPosts := db.SearchDownloaded(pickedTags[0])
+		for _, lp := range localPosts {
+			if lp.ID != id && candidateMap[lp.ID] == nil {
+				candidateMap[lp.ID] = &RelatedCandidate{
+					ID:         lp.ID,
+					Tags:       lp.Tags,
+					FileURL:    lp.FileURL,
+					SampleURL:  "",
+					PreviewURL: lp.PreviewURL,
+					FileType:   lp.FileType,
+					Width:      lp.Width,
+					Height:     lp.Height,
+					Score:      lp.Score,
+					Rating:     lp.Rating,
+					Phash:      lp.Phash,
+					Downloaded: lp.Downloaded,
+				}
+			}
+		}
+	}
+
+	candidates := make([]RelatedCandidate, 0, len(candidateMap))
+	for _, cand := range candidateMap {
+		candidates = append(candidates, *cand)
+	}
+
+	// Предпочтения пользователя (скрытые и избранные теги)
+	hiddenTags := make(map[string]bool)
+	favTags := make(map[string]bool)
+	if profile := ProfileFor(c); profile != nil {
+		profile.mu.RLock()
+		for t := range profile.HiddenTags {
+			hiddenTags[strings.ToLower(t)] = true
+		}
+		for t := range profile.FavTags {
+			favTags[strings.ToLower(t)] = true
+		}
+		profile.mu.RUnlock()
+	}
+
+	// 3. Взвешенное переранжирование по коэффициенту Жаккара
+	ranked := RerankRelated(srcPost.Tags, srcPost.Phash, candidates, freqMap, hiddenTags, favTags)
+
+	limit := 24
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+
+	out := make([]gin.H, 0, len(ranked))
+	for _, sc := range ranked {
+		p := sc.Candidate
 		entry := gin.H{
-			"id": p.ID, "tags": p.Tags, "file_url": p.FileURL,
-			"sample_url":  p.SampleURL,
-			"preview_url": p.PreviewURL, "file_type": p.FileType,
-			"width": p.Width, "height": p.Height,
-			"score": p.Score, "rating": p.Rating, "downloaded": false,
+			"id":           p.ID,
+			"tags":         p.Tags,
+			"file_url":     p.FileURL,
+			"sample_url":   p.SampleURL,
+			"preview_url":  p.PreviewURL,
+			"file_type":    p.FileType,
+			"width":        p.Width,
+			"height":       p.Height,
+			"score":        p.Score,
+			"rating":       p.Rating,
+			"downloaded":   p.Downloaded,
+			"similarity":   sc.Similarity,
+			"match_type":   sc.MatchType,
+			"matched_tags": sc.MatchedTags,
 		}
-		if ex := GetDB().Get(p.ID); ex != nil {
+		if ex := db.Get(p.ID); ex != nil {
 			entry["downloaded"] = ex.Downloaded
 		}
 		out = append(out, entry)
 	}
-	c.JSON(http.StatusOK, gin.H{"posts": out, "tags": picked})
+
+	c.JSON(http.StatusOK, gin.H{
+		"posts":         out,
+		"tags":          pickedTags,
+		"mode":          mode,
+		"has_artist":    hasArtist,
+		"has_character": hasChar,
+	})
 }
 
 func (h *Handler) DownloadLiked(c *gin.Context) {
