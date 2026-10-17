@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 )
@@ -195,22 +196,47 @@ func friendProfileViewOf(f Friend) friendProfileView {
 //
 // Отдельный эндпоинт, а не поле в /api/friends: список открывается часто, а
 // снимок весит до 5000 id. Плюс он не должен попадать в localStorage.
+var activeFriendSyncs sync.Map
+
 func (h *Handler) FriendProfile(c *gin.Context) {
 	user := c.GetString("briefly_user")
 	store := GetFriendStore(user)
 	id := c.Param("id")
-	if _, ok := store.Get(id); !ok {
+	f, ok := store.Get(id)
+	if !ok {
 		friendErr(c, ErrFriendNotFound)
 		return
 	}
+	selfURL := friendSelfURL(c)
+
+	if f.Snapshot != nil {
+		// Fast-path: отдаём локальный снимок немедленно, не блокируя UI на сетевой таймаут
+		c.JSON(http.StatusOK, gin.H{"friend": friendProfileViewOf(f)})
+
+		// Фоновое обновление с дедупликацией по user:id
+		syncKey := user + ":" + id
+		if _, loaded := activeFriendSyncs.LoadOrStore(syncKey, struct{}{}); !loaded {
+			go func(bgUser, bgID, bgSelfURL, key string) {
+				defer activeFriendSyncs.Delete(key)
+				ctx, cancel := context.WithTimeout(context.Background(), friendProfileOpenBudget)
+				defer cancel()
+				if _, err := SyncOneFriendCtx(ctx, bgUser, bgID, bgSelfURL); err != nil {
+					log.Printf("friends: async profile %s refresh: %v", bgID, err)
+				}
+			}(user, id, selfURL, syncKey)
+		}
+		return
+	}
+
+	// Первый синк при отсутствии снимка — синхронно в рамках бюджета
 	ctx, cancel := context.WithTimeout(c.Request.Context(), friendProfileOpenBudget)
 	defer cancel()
-	if _, err := SyncOneFriendCtx(ctx, user, id, friendSelfURL(c)); err != nil {
+	if _, err := SyncOneFriendCtx(ctx, user, id, selfURL); err != nil {
 		// Друг выключен, ключ не тот, адрес недоступен — причина уже записана в
 		// LastError друга и всплывёт в строке «обмен».
 		log.Printf("friends: профиль %s не обновился: %v", id, err)
 	}
-	f, _ := store.Get(id) // после обмена запись могла исчезнуть — тогда пустая
+	f, _ = store.Get(id) // после обмена запись могла исчезнуть — тогда пустая
 	c.JSON(http.StatusOK, gin.H{"friend": friendProfileViewOf(f)})
 }
 

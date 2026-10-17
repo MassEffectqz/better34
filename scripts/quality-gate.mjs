@@ -8,10 +8,17 @@ function run(command, args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+const IGNORED_DIRS = new Set(['node_modules', 'tmp', '.git', '.agents', 'data', 'dev', 'static']);
+
 function goFiles(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) return goFiles(full);
+    if (entry.isDirectory()) {
+      if (entry.name.startsWith('.') || IGNORED_DIRS.has(entry.name)) {
+        return [];
+      }
+      return goFiles(full);
+    }
     return entry.name.endsWith('.go') ? [full] : [];
   });
 }

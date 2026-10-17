@@ -268,14 +268,73 @@ App._friendProfileTab = async function (tab) {
   await this.renderFriendProfileTabs();
 };
 
+App._renderFriendProfileSkeleton = function (id, tab) {
+  const box = $('friend-profile');
+  if (!box) return;
+  const known = Array.isArray(friendsCache) ? friendsCache.find(x => x && x.id === id) : null;
+  const name = known ? (known.nickname || known.username || known.url || '') : '';
+  const url = known ? (known.url || '') : '';
+  const avatarOK = known && known.avatar && /^(https?:\/\/|\/|data:image\/)/.test(known.avatar);
+  const avatar = avatarOK
+    ? `<img src="${esc(known.avatar)}" alt="">`
+    : `<span class="friend-avatar-initials">${icon('user', 20)}</span>`;
+
+  const wantTab = tab || 'likes';
+  const labels = {
+    likes: t('friends.tabLikes'), disliked: t('friends.tabDisliked'),
+    favtags: t('friends.tabFavTags'), dislikedtags: t('friends.tabDislikedTags'),
+    collections: t('friends.tabCollections'),
+  };
+  const tabButtons = FRIEND_TABS.map((k) => {
+    const active = k === wantTab;
+    return `<button class="friend-nav-item${active ? ' active' : ''}" type="button" data-tab="${esc(k)}" role="tab" aria-selected="${active ? 'true' : 'false'}">
+      ${icon(FRIEND_TAB_ICONS[k] || 'user', 14)}<span>${esc(labels[k] || k)}</span><span class="tab-badge">…</span></button>`;
+  }).join('');
+
+  const skeletons = Array.from({ length: 12 }, () => '<div class="pf-thumb-skeleton"></div>').join('');
+
+  box.innerHTML = `
+    <div class="friend-layout">
+      <aside class="friend-side">
+        <button id="btn-friend-back" class="btn-icon friend-back" title="${esc(t('friends.back'))}" aria-label="${esc(t('friends.back'))}">${icon('chevronLeft', 16)}</button>
+        <div class="friend-side-avatar">${avatar}</div>
+        <div class="friend-side-name" title="${esc(name)}">${esc(name || '…')}</div>
+        <div class="friend-side-url" title="${esc(url)}">${esc(url)}</div>
+        <nav class="friend-side-tabs" role="tablist">${tabButtons}</nav>
+        <div class="friend-side-foot">
+          <span class="friend-side-when" id="friend-side-when">${esc(t('friends.pending'))}</span>
+          <button id="btn-friend-profile-sync" class="btn btn-sm friend-side-sync" disabled title="${esc(t('friends.syncTitle'))}">${icon('refresh', 13)} <span>${esc(t('friends.sync'))}</span></button>
+        </div>
+      </aside>
+      <div class="friend-content">
+        <div class="friend-grid-bar${wantTab === 'likes' || wantTab === 'disliked' ? '' : ' hidden'}" id="friend-grid-bar">
+          <span class="friend-grid-label">${esc(t('friends.gridSize'))}</span>
+          <select id="friend-grid-size" class="tag-preset-select friend-grid-select" disabled title="${esc(t('friends.gridSize'))}" aria-label="${esc(t('friends.gridSize'))}">${[2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('')}</select>
+        </div>
+        <div id="friend-profile-body" class="friend-profile-body">
+          <div class="profile-thumbs friend-post-grid">${skeletons}</div>
+        </div>
+      </div>
+    </div>`;
+
+  const backBtn = $('btn-friend-back');
+  if (backBtn) backBtn.addEventListener('click', () => this.closeFriendProfile());
+  this._wireFriendGrid(box);
+};
+
 App.renderFriendProfile = async function () {
   const box = $('friend-profile');
   if (!box) return;
   const st = this._friendProfile;
   if (!st || !st.id) return;
+
+  // Unhide immediately so the viewport is never blank
+  box.classList.remove('hidden');
+
   if (!st.data) {
     let res = friendProfileCache.get(st.id);
     if (!res) {
+      this._renderFriendProfileSkeleton(st.id, st.tab);
       try {
         res = await API.get(`/friends/${encodeURIComponent(st.id)}/profile`);
         // Кэшируем только успех: при сетевой ошибке повторим при следующем клике.
@@ -283,6 +342,7 @@ App.renderFriendProfile = async function () {
       } catch {
         res = { friend: { id: st.id, url: '', likes: [], disliked: [], fav_tags: [], disliked_tags: [], collections: [] } };
       }
+      if (!this._friendProfile || this._friendProfile.id !== st.id) return;
     }
     st.data = res;
   }

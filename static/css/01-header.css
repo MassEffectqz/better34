@@ -67,6 +67,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .ptr-indicator.refreshing{animation:ptr-bounce .4s cubic-bezier(.34,1.56,.64,1)}
 @keyframes ptr-bounce{0%{transform:scale(.92)}100%{transform:scale(1)}}
 
+.header-queue{position:relative;display:flex;align-items:center;justify-content:center}
+.header-queue.hidden{display:none}
+.header-queue-count{position:absolute;top:2px;right:2px;min-width:16px;height:16px;padding:0 4px;font-size:.65rem;font-weight:700;line-height:16px;text-align:center;color:#fff;background:var(--accent);border-radius:999px;box-shadow:0 0 6px var(--accent-dim)}
+.header-queue.active svg{animation:dl-pulse 1.8s ease-in-out infinite}
+@keyframes dl-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15);color:var(--accent)}}
+
 .header-menu{position:absolute;top:100%;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:300;min-width:180px;padding:4px;margin-top:4px}
 .header-menu.hidden{display:none}
 .header-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;background:none;border:none;color:var(--text);font-size:.85rem;cursor:pointer;border-radius:var(--radius-sm);text-align:left;transition:background var(--transition)}
@@ -81,6 +87,30 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .grid-control{position:relative;flex-shrink:0}
 .grid-menu{position:absolute;top:calc(100% + 4px);left:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:300;padding:8px;min-width:180px}
 .grid-menu.hidden{display:none}
+
+/* Popover normalization */
+.header-menu[popover],
+.grid-menu[popover]{position:fixed;inset:auto;margin:0;border:1px solid var(--border);background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);color:var(--text);padding:4px}
+.grid-menu[popover]{padding:8px}
+.header-menu[popover]:popover-open,
+.grid-menu[popover]:popover-open{display:block}
+
+/* CSS Anchor Positioning (Chromium 125+, Safari 18.2+) */
+@supports (anchor-name: --a) {
+  #btn-header-menu { anchor-name: --btn-header-menu; }
+  #header-menu[popover] {
+    position-anchor: --btn-header-menu;
+    top: calc(anchor(bottom) + 4px);
+    right: calc(100vw - anchor(right));
+  }
+
+  #provider-badge { anchor-name: --provider-badge; }
+  #provider-menu[popover] {
+    position-anchor: --provider-badge;
+    top: calc(anchor(bottom) + 4px);
+    right: calc(100vw - anchor(right));
+  }
+}
 .grid-menu-title{font-size:.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;padding:0 2px 6px}
 .grid-menu-opts{display:flex;gap:4px;flex-wrap:wrap}
 .grid-opt{flex:1;min-width:44px;padding:6px 4px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.82rem;cursor:pointer;transition:all var(--transition)}

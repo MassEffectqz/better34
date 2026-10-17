@@ -770,11 +770,13 @@ App.renderViewer = function (force) {
       const img = document.createElement('img');
       img.alt = '';
       img.draggable = false;
+      img.fetchPriority = 'high';
       viewerContent.appendChild(img);
       mediaEl = img;
     }
     if (mediaEl.src !== resolvedFileUrl) {
       this._showBlurhashPlaceholder(post, viewerContent);
+      mediaEl.fetchPriority = 'high';
       mediaEl.src = fileUrl;
       mediaEl.classList.remove('fade-in');
       void mediaEl.offsetWidth;
@@ -973,6 +975,7 @@ App._warmImage = function (url) {
   try {
     const img = new Image();
     img.decoding = 'async';
+    img.fetchPriority = 'low';
     img.src = url;
   } catch {  }
 };

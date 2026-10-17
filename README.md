@@ -101,7 +101,7 @@ docker compose up -d
 ```bash
 npm run check        # eslint + tsc + frontend tests
 npm run build        # пересборка static/js/dist/app.js после правок
-go test ./...        # Go-тесты
+go test . ./internal/... # Go-тесты
 go run .             # запуск сервера
 ```
 
@@ -121,7 +121,7 @@ go run .             # запуск сервера
 PR-ы приветствуются! Перед тем как открывать PR — проверьте:
 
 ```bash
-npm run check && go test ./...
+npm run check && go test . ./internal/...
 ```
 
 ---

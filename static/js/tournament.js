@@ -859,6 +859,30 @@ App.renderTournament = function () {
   root.classList.remove('hidden');
 
   if (tm.loading) {
+    if (tm.source === 'online') {
+      root.innerHTML =
+        '<div class="tr-stage">' +
+          '<div class="tr-card tr-loading-card">' +
+            '<div class="tr-spinner">' + icon('loader', 32) + '</div>' +
+            '<div class="tr-title" style="font-size:1.3rem;margin-top:14px">' +
+              esc('Подбор участников онлайн') +
+            '</div>' +
+            '<div class="tr-sub">' +
+              esc('Запрашиваем посты на источнике и формируем турнирную сетку…') +
+            '</div>' +
+            '<div class="tr-actions" style="margin-top:16px;max-width:200px">' +
+              '<button type="button" class="tr-btn ghost" data-tr="cancel-load">' +
+                esc(t('tr.cancel') || 'Отмена') +
+              '</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      root.querySelector('[data-tr="cancel-load"]')?.addEventListener('click', () => {
+        tm.loading = false;
+        this.renderTournamentSetup();
+      });
+      return;
+    }
     root.innerHTML = '<div class="tr-center">' + esc(t('tr.loading')) + '</div>';
     return;
   }
@@ -916,7 +940,10 @@ App.renderTournamentMatch = function (match) {
     requestAnimationFrame(() => { fill.style.width = pct + '%'; });
   }
   for (const b of root.querySelectorAll('.tr-side')) {
-    b.addEventListener('click', () => this._trPick(parseInt(b.dataset.idx, 10)));
+    b.addEventListener('click', (ev) => {
+      if (ev.isPrimary === false) return;
+      this._trPick(parseInt(b.dataset.idx, 10));
+    });
   }
   const close = root.querySelector('[data-tr="close"]');
   if (close) close.addEventListener('click', () => this.closeTournament());
@@ -927,13 +954,15 @@ App.renderTournamentMatch = function (match) {
 // а перерисовка откладывается, чтобы карточки успели проиграть победу и
 // проигрыш. Пока идёт анимация, tm.busy глушит новые клики — иначе второй тап
 // попал бы уже в следующий матч, который игрок ещё не видел.
-App._trPick = function (idx) {
+App._trPick = function (idx, fromKey) {
   const tm = this._tournament;
-  if (tm.busy || !(idx >= 0)) return;
+  const now = Date.now();
+  if (tm.busy || (!fromKey && tm._lastPickTime && now - tm._lastPickTime < 280) || !(idx >= 0)) return;
   const cur = this._currentMatch();
   // Карточка обязана принадлежать текущему матчу: за время анимации состояние
   // могло уйти вперёд, и чужой индекс засчитал бы не тот выбор.
   if (!cur || (idx !== cur.a && idx !== cur.b)) return;
+  tm._lastPickTime = now;
   tm.busy = true;
   this._resolveMatch(cur, idx);
   const root = this.els.tournamentRoot;
@@ -973,7 +1002,7 @@ App.tournamentKey = function (e) {
   }
   const side = e.key === '1' || e.key === 'ArrowLeft' ? match.a
     : e.key === '2' || e.key === 'ArrowRight' ? match.b : -1;
-  if (side >= 0) { e.preventDefault(); this._trPick(side); }
+  if (side >= 0) { e.preventDefault(); this._trPick(side, true); }
 };
 
 // Системная настройка «уменьшить движение» отключает задержку на анимацию

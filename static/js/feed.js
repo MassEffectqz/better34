@@ -802,7 +802,25 @@ App.createPostCard = function (post) {
       : `/api/thumb/${post.id}`)
     : (post.preview_url ? proxyThumb(post.preview_url) : `/api/thumb/${post.id}`);
   const mediaUrl = post.downloaded ? `/api/file/${post.id}` : (post.file_url ? proxyUrl(post.file_url) : '');
-  const isFirstScreen = this.state.posts.length < this.pageSize() * 0.35;
+  const cardIdx = (typeof post._index === 'number')
+    ? post._index
+    : (this.state && Array.isArray(this.state.posts)
+      ? (this.state.posts.findIndex(p => p.id === post.id) >= 0
+        ? this.state.posts.findIndex(p => p.id === post.id)
+        : this.state.posts.length)
+      : 0);
+  const pageSize = (typeof this.pageSize === 'function') ? this.pageSize() : 36;
+  const isFirstScreen = cardIdx < Math.ceil(pageSize * 0.35);
+
+  if (!isFirstScreen) {
+    card.classList.add('cv-auto');
+    const colWidth = (this.masonryCols && this.masonryCols[0] && this.masonryCols[0].offsetWidth)
+      || (typeof window !== 'undefined' && window.innerWidth ? Math.round((window.innerWidth - 32) / ((typeof this.masonryColumnCount === 'function' ? this.masonryColumnCount() : 3) || 3)) : 0)
+      || 300;
+    const arVal = (post.width && post.height) ? Math.min(post.width / post.height, 3) : 1;
+    const estHeight = Math.max(120, Math.min(900, Math.round(colWidth / (arVal || 1))));
+    card.style.containIntrinsicSize = 'auto none auto ' + estHeight + 'px';
+  }
 
   const cb = document.createElement('div');
   cb.className = 'card-checkbox' + (this.state.selected.has(post.id) ? ' checked' : '');

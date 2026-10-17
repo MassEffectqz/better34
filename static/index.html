@@ -58,17 +58,18 @@
           <button type="button" class="vt-btn" data-viewed="1" data-i18n="viewed.seen">Виденное</button>
         </div>
         <div class="grid-control" id="provider-control">
-          <button id="provider-badge" class="provider-badge" title="Источник постов" data-i18n-title="provider.title"><span id="provider-badge-label">rule34</span><i data-lucide="chevronDown" data-size="13"></i></button>
-          <div id="provider-menu" class="grid-menu hidden">
+          <button id="provider-badge" class="provider-badge" title="Источник постов" data-i18n-title="provider.title" popovertarget="provider-menu"><span id="provider-badge-label">rule34</span><i data-lucide="chevronDown" data-size="13"></i></button>
+          <div id="provider-menu" class="grid-menu hidden" popover="auto">
             <div class="grid-menu-title">Источник постов</div>
             <div id="provider-menu-list" class="provider-menu-list"></div>
           </div>
         </div>
       </div>
       </nav>
-      <button id="btn-header-menu" class="btn-icon" title="Меню" data-i18n-title="header.menu" aria-label="Меню" data-i18n-aria="header.menu"><i data-lucide="menu" data-size="17"></i></button>
+      <button id="btn-header-queue" class="btn-icon header-queue hidden" title="Очередь загрузок" data-i18n-title="queue.title" aria-label="Очередь загрузок" data-i18n-aria="queue.title"><i data-lucide="download" data-size="16"></i><span id="header-queue-count" class="header-queue-count">0</span></button>
+      <button id="btn-header-menu" class="btn-icon" title="Меню" data-i18n-title="header.menu" aria-label="Меню" data-i18n-aria="header.menu" popovertarget="header-menu"><i data-lucide="menu" data-size="17"></i></button>
 
-      <div id="header-menu" class="header-menu hidden">
+      <div id="header-menu" class="header-menu hidden" popover="auto">
         <div class="header-menu-group" id="header-menu-filters">
           <div class="header-menu-title" data-i18n="menu.filters">Фильтры</div>
         </div>

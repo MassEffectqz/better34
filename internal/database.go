@@ -51,11 +51,12 @@ type Post struct {
 // Публичный API совпадает со старой JSON-реализацией: Save/BumpSave
 // стали no-op (запись синхронная), Close закрывает соединение.
 type PostDB struct {
-	mu   sync.Mutex // сериализация транзакций: modernc/sqlite — один писатель
-	db   *sql.DB    // запись: одно соединение, убирает SQLITE_BUSY между горутинами
-	read *sql.DB    // чтение: пул поверх WAL — читатели не ждут писателя
-	path string
-	// stop сигналит фоновой горутине обслуживания WAL завершиться (Close()).
+	mu       sync.Mutex // сериализация транзакций: modernc/sqlite — один писатель
+	db       *sql.DB    // запись: одно соединение, убирает SQLITE_BUSY между горутинами
+	read     *sql.DB    // чтение: пул поверх WAL — читатели не ждут писателя
+	path     string
+	stopOnce sync.Once
+	// stop сигналит фоновой горутине обслуживания WAL и backfill завершиться (Close()).
 	stop chan struct{}
 }
 
@@ -77,7 +78,15 @@ func GetDB() *PostDB {
 		// экземпляр локально: глобальная ссылка тесты подменяют.
 		pdb := postDB
 		go func() {
-			time.Sleep(3 * time.Second)
+			if pdb.stop != nil {
+				select {
+				case <-pdb.stop:
+					return
+				case <-time.After(3 * time.Second):
+				}
+			} else {
+				time.Sleep(3 * time.Second)
+			}
 			pdb.BackfillPHashSeeds()
 			pdb.BackfillPHashes()
 		}()
@@ -396,11 +405,14 @@ func (db *PostDB) Ping() error { return db.read.Ping() }
 
 // Close закрывает соединение (WAL-чейкпоинт выполняется автоматически).
 func (db *PostDB) Close() {
-	// Сначала останавливаем фоновое обслуживание WAL, потом закрываем пул:
+	// Сначала останавливаем фоновое обслуживание WAL и backfill, потом закрываем пул:
 	// иначе горутина продолжит Exec по закрытому соединению (P2-9).
-	if db.stop != nil {
-		close(db.stop)
-	}
+	// Защита от паники при повторном Close() через sync.Once.
+	db.stopOnce.Do(func() {
+		if db.stop != nil {
+			close(db.stop)
+		}
+	})
 	_ = db.db.Close()
 	// db.read может указывать на тот же пул, что и db.db — не закрываем дважды.
 	if db.read != nil && db.read != db.db {
@@ -1063,6 +1075,11 @@ func (db *PostDB) BackfillPHashSeeds() {
 	if db == nil || !DBReady() {
 		return
 	}
+	select {
+	case <-db.stop:
+		return
+	default:
+	}
 	rows, err := db.read.Query(`SELECT id, phash FROM posts WHERE downloaded=1 AND phash<>'' AND phash_seed=0`)
 	if err != nil {
 		return
@@ -1073,6 +1090,11 @@ func (db *PostDB) BackfillPHashSeeds() {
 	}
 	var pending []seedRow
 	for rows.Next() {
+		select {
+		case <-db.stop:
+			return
+		default:
+		}
 		var id int
 		var ph string
 		if rows.Scan(&id, &ph) != nil {
@@ -1087,6 +1109,11 @@ func (db *PostDB) BackfillPHashSeeds() {
 		return
 	}
 	for _, r := range pending {
+		select {
+		case <-db.stop:
+			return
+		default:
+		}
 		_, _ = db.db.Exec(`UPDATE posts SET phash_seed=? WHERE id=?`, phashSeed(r.hash), r.id)
 	}
 	if len(pending) > 0 {
@@ -1103,12 +1130,22 @@ func (db *PostDB) BackfillPHashes() {
 			log.Printf("[db] BackfillPHashes panic: %v", r)
 		}
 	}()
-	if !DBReady() {
+	if db == nil || !DBReady() {
 		return
+	}
+	select {
+	case <-db.stop:
+		return
+	default:
 	}
 	posts := db.GetDownloaded()
 	filled := 0
 	for _, p := range posts {
+		select {
+		case <-db.stop:
+			return
+		default:
+		}
 		if p.Phash != "" || p.FilePath == "" {
 			continue
 		}
@@ -1118,6 +1155,11 @@ func (db *PostDB) BackfillPHashes() {
 			continue
 		}
 		if ph := PerceptualHashFile(p.FilePath); ph != "" {
+			select {
+			case <-db.stop:
+				return
+			default:
+			}
 			db.SetPostPHash(p.ID, ph)
 			filled++
 		}
