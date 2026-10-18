@@ -32,7 +32,7 @@ func (h *Handler) GetUserStats(c *gin.Context) {
 	db := GetDB()
 
 	comments := 0
-	if u := c.GetString("briefly_user"); u != "" {
+	if u := UserFromContext(c); u != "" {
 		comments = db.CountCommentsByUser(u)
 	}
 

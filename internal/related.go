@@ -129,13 +129,22 @@ func BuildRelatedQueries(analyzed []CategorizedTag, mode string) (primaryQuery s
 			}
 			return
 		}
-	case "character":
+	case "character", "char":
 		if len(characters) > 0 {
 			primaryQuery = characters[0]
 			pickedTags = []string{characters[0]}
 			if len(generals) > 0 {
 				primaryQuery = characters[0] + " " + generals[0]
 				fallbackQuery = characters[0]
+				pickedTags = append(pickedTags, generals[0])
+			}
+			return
+		} else if len(copyrights) > 0 {
+			primaryQuery = copyrights[0]
+			pickedTags = []string{copyrights[0]}
+			if len(generals) > 0 {
+				primaryQuery = copyrights[0] + " " + generals[0]
+				fallbackQuery = copyrights[0]
 				pickedTags = append(pickedTags, generals[0])
 			}
 			return

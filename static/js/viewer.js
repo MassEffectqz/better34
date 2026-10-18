@@ -2,17 +2,75 @@ import { App } from './state.js';
 import { icon, esc } from './utils.js';
 import { API } from './api.js';
 import { t, tf } from './i18n.js';
-import { decodeBlurHash } from './blurhash.js';
-const VIEWER_X_ICO = icon('x', 9);
+import './viewer_related.js';
+import './viewer_preload.js';
+import './viewer_zoom.js';
 // i18n (#11): подписи слайдшоу зависят от текущего языка — вычисляем их в
 // момент вызова, а не при загрузке модуля (иначе смена языка не применится).
 const SS_PLAY_ICO = () => icon('play', 16, true) + ' ' + t('viewer.slideshow');
 const SS_PAUSE_ICO = () => icon('pause', 16, true) + ' ' + t('viewer.slideshow');
 
+App._clearHeroTransitions = function () {
+  if (this._heroElements) {
+    for (const el of this._heroElements) {
+      try {
+        if (el && el.style) el.style.viewTransitionName = '';
+      } catch { /* noop */ }
+    }
+    this._heroElements.clear();
+  }
+  if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+    try {
+      const els = document.querySelectorAll('.post-card img, .viewer-content img, [style*="view-transition-name"]');
+      if (els && typeof els.forEach === 'function') {
+        els.forEach((el) => {
+          if (el && el.style && el.style.viewTransitionName) {
+            el.style.viewTransitionName = '';
+          }
+        });
+      }
+    } catch { /* noop */ }
+  }
+};
+
+App._setHeroTransition = function (el) {
+  if (!el || !el.style) return;
+  el.style.viewTransitionName = 'hero-post';
+  if (!this._heroElements) this._heroElements = new Set();
+  this._heroElements.add(el);
+};
+
+App._removeHeroTransition = function (el) {
+  if (!el || !el.style) return;
+  el.style.viewTransitionName = '';
+  if (this._heroElements) {
+    this._heroElements.delete(el);
+  }
+};
+
 App.withViewTransition = function (fn) {
   if (typeof document !== 'undefined' && typeof document.startViewTransition === 'function' && !(typeof this._trMotionOff === 'function' && this._trMotionOff())) {
+    if (this._activeViewTransition && typeof this._activeViewTransition.skipTransition === 'function') {
+      try {
+        this._activeViewTransition.skipTransition();
+      } catch { /* noop */ }
+    }
     try {
-      return document.startViewTransition(fn);
+      const vt = document.startViewTransition(fn);
+      this._activeViewTransition = vt;
+      if (vt) {
+        if (typeof vt.ready?.catch === 'function') vt.ready.catch(() => {});
+        if (typeof vt.updateCallbackDone?.catch === 'function') vt.updateCallbackDone.catch(() => {});
+        if (typeof vt.finished?.catch === 'function') vt.finished.catch(() => {});
+        if (typeof vt.finished?.finally === 'function') {
+          vt.finished.finally(() => {
+            if (this._activeViewTransition === vt) {
+              this._activeViewTransition = null;
+            }
+          }).catch(() => {});
+        }
+      }
+      return vt;
     } catch {
       return Promise.resolve(fn());
     }
@@ -42,21 +100,21 @@ App.openViewer = function (index) {
    if (main) this.setAriaHidden(main, true);
    const post = this.state.posts[index];
    const cardImg = post ? document.querySelector(`.post-card[data-id="${post.id}"] img`) : null;
-   if (cardImg) cardImg.style.viewTransitionName = 'hero-post';
+   this._clearHeroTransitions();
+   if (cardImg) this._setHeroTransition(cardImg);
    const vt = this.withViewTransition(() => {
      this.els.viewer.classList.remove('hidden');
      this.renderViewer();
+     if (cardImg) this._removeHeroTransition(cardImg);
      const vImg = this.els.viewerContent.querySelector('img');
-     if (vImg) vImg.style.viewTransitionName = 'hero-post';
+     if (cardImg && vImg) this._setHeroTransition(vImg);
    });
    if (vt && typeof vt.finished?.finally === 'function') {
      vt.finished.finally(() => {
-       if (cardImg) cardImg.style.viewTransitionName = '';
-       const vImg = this.els.viewerContent.querySelector('img');
-       if (vImg) vImg.style.viewTransitionName = '';
-     });
-   } else if (cardImg) {
-     cardImg.style.viewTransitionName = '';
+       this._clearHeroTransitions();
+     }).catch(() => {});
+   } else {
+     this._clearHeroTransitions();
    }
    // focusable контейнер + trap Tab внутри хедера вьювера.
    this.els.viewerContent.setAttribute('tabindex', '-1');
@@ -85,6 +143,7 @@ App.openViewer = function (index) {
 App.closeViewer = function (opts) {
   this.stopSlideshow();
   this._resetFullscreen();
+  this._cancelPreloads();
   // Отменяем в-полёте запросы похожих/счётчиков тегов — вьюер закрыт.
   if (this._relAbort) { this._relAbort.abort(); this._relAbort = null; }
   if (this._countAbort) { this._countAbort.abort(); this._countAbort = null; }
@@ -136,19 +195,21 @@ App.closeViewer = function (opts) {
   const curPost = this.state.posts[this.state.viewerIndex];
   const cardImg = curPost ? document.querySelector(`.post-card[data-id="${curPost.id}"] img`) : null;
   const vImg = this.els.viewerContent.querySelector('img');
-  if (vImg) vImg.style.viewTransitionName = 'hero-post';
-  if (cardImg) cardImg.style.viewTransitionName = 'hero-post';
+  this._clearHeroTransitions();
+  if (vImg && cardImg) {
+    this._setHeroTransition(vImg);
+  }
   const vt = this.withViewTransition(() => {
+    if (vImg) this._removeHeroTransition(vImg);
     this.els.viewer.classList.add('hidden');
+    if (vImg && cardImg) this._setHeroTransition(cardImg);
   });
   if (vt && typeof vt.finished?.finally === 'function') {
     vt.finished.finally(() => {
-      if (cardImg) cardImg.style.viewTransitionName = '';
-      if (vImg) vImg.style.viewTransitionName = '';
-    });
+      this._clearHeroTransitions();
+    }).catch(() => {});
   } else {
-    if (cardImg) cardImg.style.viewTransitionName = '';
-    if (vImg) vImg.style.viewTransitionName = '';
+    this._clearHeroTransitions();
   }
   // a11y (#4): возвращаем фону скринридеры + убираем диалог-атрибуты.
   const main = document.getElementById('main');
@@ -157,6 +218,11 @@ App.closeViewer = function (opts) {
   this.els.viewerRelated.classList.add('hidden');
   document.body.style.overflow = '';
   this.els.viewerContent.classList.remove('video-loading');
+  this.els.viewerContent.classList.remove('image-loading');
+  this._hideBlurhashPlaceholder(this.els.viewerContent);
+  if (typeof this._hidePreviewPlaceholder === 'function') {
+    this._hidePreviewPlaceholder(this.els.viewerContent, true);
+  }
   // Удаляем кнопку "1:1" (U5: накапливалась при каждом открытии вьюера).
   this.els.viewerContent.querySelectorAll('.viewer-orig').forEach(el => el.remove());
   this.els.viewerContent.innerHTML = '';
@@ -185,7 +251,10 @@ App.closeViewer = function (opts) {
   this._zoomMetricsCache = null;
   this._zoomActive = false; this._zoomScale = 1; this._zoomTx = 0; this._zoomTy = 0;
   if (this.els.zoomLabel) this.els.zoomLabel.textContent = '100%';
-  try { localStorage.removeItem('briefly_zoom'); } catch {}
+  try {
+    localStorage.removeItem('better34_zoom');
+    localStorage.removeItem('briefly_zoom');
+  } catch {}
   if (this._touchCleanup) { this._touchCleanup(); }
 };
 
@@ -201,473 +270,7 @@ App._viewerIsFullscreen = function () {
   return !!(this.els.viewerContent && this.els.viewerContent.classList.contains('fullscreen'));
 };
 
-App.scheduleRelated = function (post) {
-  const el = this.els.viewerRelated;
-  if (!el) return;
-  this._relToken = (this._relToken || 0) + 1;
-  this._relPosts = [];
-  this._relLoadedFor = null;
-  this._relCurrentMode = 'all';
-  el.classList.add('hidden');
-  el.innerHTML = '';
-  if (!post || !post.id) return;
-  // В полноэкранном режиме подвал скрыт (viewer-foot не виден) — запрос
-  // похожих не отправляем, подгрузим после выхода из полного экрана.
-  if (this._viewerIsFullscreen()) return;
-  clearTimeout(this._relTimer);
-  this._relTimer = setTimeout(() => this.loadRelated(post, 'all'), 350);
-};
 
-App.loadRelated = async function (post, mode) {
-  const el = this.els.viewerRelated;
-  if (!el || !post || !post.id) return;
-  // Страховка: таймер из scheduleRelated мог сработать уже в полном экране.
-  if (this._viewerIsFullscreen()) return;
-  if (!mode) mode = this._relCurrentMode || 'all';
-  this._relCurrentMode = mode;
-  const token = (this._relToken = (this._relToken || 0) + 1);
-  this._relPosts = [];
-  if (this._relAbort) {
-    this._relAbort.abort();
-    this._relAbort = null;
-  }
-  const ac = new AbortController();
-  this._relAbort = ac;
-  try {
-    const data = await API.get('/related?id=' + encodeURIComponent(post.id) + '&mode=' + encodeURIComponent(mode), { signal: ac.signal });
-    if (token !== this._relToken || !this.state.viewerOpen || ac.signal.aborted) return;
-    const cur = this.state.posts[this.state.viewerIndex];
-    if (!cur || cur.id !== post.id) return;
-    this._relLoadedFor = post.id;
-    const posts = (data && data.posts) || [];
-    this._relPosts = posts;
-    el.classList.remove('hidden');
-
-    const activeMode = (data && data.mode) || mode || 'all';
-    const tagList = (data && data.tags) || [];
-    const tagStr = tagList.map(esc).join(', ');
-    const tagQuery = tagList.join(' ');
-
-    let tabsHtml = '<div class="rel-tabs" role="tablist" aria-label="Similar modes">' +
-      `<button type="button" class="rel-tab ${activeMode === 'all' ? 'active' : ''}" data-mode="all" role="tab" aria-selected="${activeMode === 'all'}">${t('viewer.relatedAll')}</button>`;
-    if (data && (data.has_artist || activeMode === 'artist')) {
-      tabsHtml += `<button type="button" class="rel-tab ${activeMode === 'artist' ? 'active' : ''}" data-mode="artist" role="tab" aria-selected="${activeMode === 'artist'}">${t('viewer.relatedArtist')}</button>`;
-    }
-    if (data && (data.has_character || activeMode === 'char')) {
-      tabsHtml += `<button type="button" class="rel-tab ${activeMode === 'char' ? 'active' : ''}" data-mode="char" role="tab" aria-selected="${activeMode === 'char'}">${t('viewer.relatedChar')}</button>`;
-    }
-    tabsHtml += `<button type="button" class="rel-tab ${activeMode === 'visual' ? 'active' : ''}" data-mode="visual" role="tab" aria-selected="${activeMode === 'visual'}">${t('viewer.relatedVisual')}</button>` +
-      '</div>';
-
-    const searchBtnHtml = tagQuery
-      ? `<button type="button" class="rel-search-btn" data-tags="${esc(tagQuery)}" title="${t('viewer.relatedSearchHint')}">🔍 <span class="rel-tag-highlight">${tagStr}</span></button>`
-      : '';
-
-    const headHtml = '<div class="rel-head">' +
-      '<div class="rel-title-group">' +
-        `<span class="rel-title">${t('viewer.relatedTitle')}</span>` +
-        searchBtnHtml +
-      '</div>' +
-      tabsHtml +
-      '</div>';
-
-    if (!posts.length) {
-      el.innerHTML = headHtml + '<div class="rel-empty">' + t('viewer.relatedEmpty') + '</div>';
-      return;
-    }
-
-    // kind=preview: immutable-заголовок и cache-first в service worker.
-    const prox = (u) => u ? '/api/proxy?url=' + encodeURIComponent(u) + '&kind=preview' : null;
-    el.innerHTML =
-      headHtml +
-      '<div class="rel-row">' +
-      posts.map((p, i) => {
-        const thumb = p.downloaded ? ('/api/thumb/' + p.id) : prox(p.preview_url);
-        const pid = esc(p.id);
-        const sim = (p.similarity != null && p.similarity > 0)
-          ? `<span class="rel-sim">${p.similarity}%</span>`
-          : '';
-        let badge = '';
-        if (p.match_type === 'artist') {
-          badge = `<span class="rel-badge badge-artist" title="${t('viewer.relatedArtist')}">art</span>`;
-        } else if (p.match_type === 'character') {
-          badge = `<span class="rel-badge badge-char" title="${t('viewer.relatedChar')}">char</span>`;
-        } else if (p.match_type === 'visual') {
-          badge = `<span class="rel-badge badge-visual" title="${t('viewer.relatedVisual')}">vis</span>`;
-        }
-        const tipExtra = (p.matched_tags && p.matched_tags.length)
-          ? ' · ' + esc(p.matched_tags.slice(0, 3).join(', '))
-          : '';
-        return `<div class="rel-item" role="button" tabindex="0" data-idx="${i}" aria-label="#${pid}" title="#${pid}${tipExtra}">${thumb ? `<img src="${thumb}" alt="" loading="lazy" decoding="async">` : ''}${sim}${badge}<span class="rel-id">#${pid}</span></div>`;
-      }).join('') +
-      '</div>';
-  } catch (err) {
-    if (token !== this._relToken || !this.state.viewerOpen || ac.signal.aborted) return;
-    const cur = this.state.posts[this.state.viewerIndex];
-    if (!cur || cur.id !== post.id) return;
-    el.classList.remove('hidden');
-    el.innerHTML = '<div class="rel-title">' + t('viewer.relatedError') + '</div>';
-  } finally {
-    if (this._relAbort === ac) this._relAbort = null;
-  }
-};
-
-// Perf (#9): вместо 4 слушателей на каждый тег при каждом посте — 4
-// делегированных слушателя на контейнер, навешиваются один раз.
-App._bindViewerTagDelegation = function () {
-  const host = this.els.viewerTags;
-  if (!host || typeof host.addEventListener !== 'function' || host._tagDelegated) return;
-  host._tagDelegated = true;
-  // Тег хранится экспандо-свойством (надёжнее dataset для тестового DOM).
-  const tagOf = (span) => (span && span._brieflyTag) || '';
-  const hideTag = (span) => {
-    const tag = tagOf(span);
-    API.post('/hidden-tag', { tag }).then((r) => {
-      API.invalidate('/profile');
-      this.invalidateFeedCache();
-      this.loadProfile();
-      this._viewerTagChanged = true;
-      span.classList.toggle('tag-hidden');
-      this.showToast(r.hidden ? tf('viewer.tagHidden', { tag }) : tf('viewer.tagShown', { tag }));
-    }).catch(() => {});
-  };
-  const favTag = (span) => {
-    const tag = tagOf(span);
-    API.post('/fav-tag', { tag }).then(() => {
-      API.invalidate('/profile');
-      this.invalidateFeedCache();
-      this.loadProfile();
-      span.classList.toggle('tag-fav');
-    }).catch(() => {});
-  };
-  const openTag = (span) => {
-    const tag = tagOf(span);
-    const current = this.state.query;
-    const newQ = current ? `${current} +${tag}` : `+${tag}`;
-    this.closeViewer({ keepUrl: true });
-    this.setSearchValue(newQ);
-    this.search(newQ);
-  };
-  const inXBtn = (e) => !!(e.target.closest && e.target.closest('.tag-hide-btn'));
-  const inTag = (e) => e.target.closest && e.target.closest('.viewer-tag');
-  host.addEventListener('click', (e) => {
-    const span = inTag(e);
-    if (!span) return;
-    if (inXBtn(e)) { hideTag(span); return; }
-    openTag(span);
-  });
-  host.addEventListener('dblclick', (e) => {
-    const span = inTag(e);
-    if (!span || inXBtn(e)) return;
-    e.stopPropagation();
-    favTag(span);
-  });
-  host.addEventListener('contextmenu', (e) => {
-    const span = inTag(e);
-    if (!span) return;
-    e.preventDefault();
-    hideTag(span);
-  });
-  // A11y (#15): теги фокусируемы — Enter/Space активируют как клик.
-  host.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const span = inTag(e);
-    if (!span) return;
-    e.preventDefault();
-    if (inXBtn(e)) { hideTag(span); return; }
-    openTag(span);
-  });
-};
-
-App.classifyTag = function (tag) {
-  if (!tag) return 'general';
-  const lower = tag.toLowerCase();
-  if (lower.startsWith('artist:') || lower.endsWith('_(artist)') || lower.endsWith('_(style)')) {
-    return 'artist';
-  }
-  if (lower.startsWith('character:') || lower.endsWith('_(cosplay)')) {
-    return 'character';
-  }
-  if (lower.startsWith('copyright:') || lower.startsWith('series:')) {
-    return 'copyright';
-  }
-  if (lower.startsWith('meta:') || /^(highres|absurdres|translated|commentary|pool:\d+|source:)/i.test(lower)) {
-    return 'meta';
-  }
-  return 'general';
-};
-
-App._renderViewerTags = function () {
-  const post = this.state.posts[this.state.viewerIndex];
-  const viewerTags = this.els.viewerTags;
-  if (!viewerTags) return;
-  viewerTags.innerHTML = '';
-  if (!post || !post.tags) return;
-  this._bindViewerTagDelegation();
-  const allTags = post.tags.split(' ').filter(Boolean);
-  const isFav = t => this.state.profile.fav_tags && this.state.profile.fav_tags.includes(t);
-  const isHid = t => this.state.profile.hidden_tags && this.state.profile.hidden_tags.includes(t);
-  const qTokens = (this.state.query || '').toLowerCase().split(/\s+/).filter(Boolean);
-  const isQ = t => qTokens.some(tok => t.toLowerCase() === tok.replace(/^[+-]/, '').toLowerCase());
-  const countSpans = [];
-  const needCount = [];
-  allTags.forEach(tag => {
-    const span = document.createElement('span');
-    const lvl = this.OddTags && this.OddTags.levelOf ? this.OddTags.levelOf(tag) : null;
-    const cat = this.classifyTag(tag);
-    // Цвет только у yellow/red. Уровень note — это «просто объяснение»:
-    // тег выглядит как обычный, но с подсказкой.
-    span.className = 'viewer-tag' + (isFav(tag) ? ' tag-fav' : '') + (isHid(tag) ? ' tag-hidden' : '') + (isQ(tag) ? ' tag-query' : '') + (lvl === 'yellow' || lvl === 'red' ? ' tag-odd-' + lvl : '') + (cat !== 'general' ? ' tag-cat-' + cat : '');
-    span._brieflyTag = tag;
-    // Всплывашка превью тега (tag_popover.js) цепляется к data-tag.
-    span.dataset.tag = tag;
-    // A11y (#15): тег — интерактивный элемент: роль + фокус с клавиатуры.
-    span.tabIndex = 0;
-    try { span.setAttribute('role', 'button'); } catch { /* тестовый DOM без setAttribute */ }
-    try { span.setAttribute('aria-label', tag); } catch { /* noop */ }
-    // Подсказка при наведении: только текст описания, без префикса
-    // «Странный —» или «Метка —». Пользователь просил именно объяснение.
-    const oddDesc = this.OddTags && this.OddTags.descOf ? this.OddTags.descOf(tag) : null;
-    if (oddDesc) {
-      span.title = oddDesc;
-      try { span.setAttribute('data-odd', lvl); } catch { /* тестовый DOM */ }
-    }
-    const text = document.createElement('span');
-    text.textContent = tag;
-    span.appendChild(text);
-    // Значок «?» в кружочке — признак, что у тега есть объяснение.
-    // Ставится для всех уровней, включая note (без цвета).
-    if (oddDesc) {
-      const hint = document.createElement('span');
-      hint.className = 'tag-hint';
-      hint.textContent = '?';
-      hint.title = oddDesc;
-      // Скринридеру «?» ничего не даёт: объяснение уже висит в подсказке
-      // самого тега, лишний символ только шумит.
-      try { hint.setAttribute('aria-hidden', 'true'); } catch { /* тестовый DOM */ }
-      span.appendChild(hint);
-    }
-    const countSpan = document.createElement('span');
-    countSpan.className = 'tag-count';
-    if (this._tagCounts && this._tagCounts[tag] != null) {
-      countSpan.textContent = this._tagCounts[tag];
-    } else {
-      needCount.push(tag);
-    }
-    span.appendChild(countSpan);
-    countSpans.push({ tag, el: countSpan });
-    const xBtn = document.createElement('button');
-    xBtn.className = 'tag-hide-btn';
-    xBtn.innerHTML = VIEWER_X_ICO;
-    // A11y (#12): SVG-иконка без текста — даём кнопке имя для скринридеров.
-    xBtn.title = t('viewer.tagHide');
-    try { xBtn.setAttribute('aria-label', t('viewer.tagHide')); } catch { /* тестовый DOM */ }
-    span.appendChild(xBtn);
-    viewerTags.appendChild(span);
-  });
-  // В полном экране подвал скрыт — счётчики не запрашиваем; они подтянутся
-  // при выходе из полного экрана (там повторно вызывается _renderViewerTags).
-  if (needCount.length && !this._viewerIsFullscreen()) {
-    this._loadViewerTagCounts(needCount, countSpans);
-  }
-};
-
-// _bindRelChipOpen — обработчики chip «родитель/дети»: Ctrl/Cmd+ЛКМ и средняя
-// кнопка мыши работают как у обычной ссылки — пост открывается в новой вкладке
-// (там его подхватит вьювер по /post/<id>); обычный клик — прежний переход.
-App._bindRelChipOpen = function (chip, id) {
-  const openNewTab = (ev) => {
-    ev.preventDefault();
-    this.openInNewTab(this.postUrl(this.state.query, id));
-  };
-  chip.addEventListener('click', (ev) => {
-    if (this.isOpenInNewTabClick(ev)) { openNewTab(ev); return; }
-    this._openPostById(id);
-  });
-  // auxclick: средняя кнопка мыши (button === 1); ЛКМ (button === 0) игнорируем.
-  chip.addEventListener('auxclick', (ev) => {
-    if (ev.button !== 1) return;
-    openNewTab(ev);
-  });
-};
-
-// _renderViewerRelations — chip-ряд «родитель/дети» для скачанных постов.
-// Клик по chip открывает пост (в ленте, если он там есть, иначе поиском id:N),
-// Ctrl/Cmd+ЛКМ или средняя кнопка — в новой вкладке (_bindRelChipOpen).
-// Кнопка «↑ привязать» задаёт родителя текущему посту (danbooru-style связки).
-App._renderViewerRelations = function (post) {
-  const host = this.els.relations;
-  if (!host) return;
-  if (!post || !post.id) { host.classList.add('hidden'); return; }
-  // Race (#1), дедуп: renderViewer вызывается и повторно для того же поста —
-  // не дёргаем API, если chips уже отрисованы. Принудительное обновление
-  // (после «привязать») сбрасывает _relChipsFor.
-  if (this._relChipsFor === post.id) return;
-  // Race (#1): token + AbortController + проверка актуальности поста после
-  // await — как в loadRelated. Иначе ответ прошлого поста при быстрой
-  // навигации перезапишет chips-ряд «родитель/дети» от чужого поста.
-  const token = (this._relChipsToken = (this._relChipsToken || 0) + 1);
-  if (this._relChipsAbort) { this._relChipsAbort.abort(); }
-  const ac = new AbortController();
-  this._relChipsAbort = ac;
-  this._relChipsFor = post.id;
-  const relevant = () => {
-    if (token !== this._relChipsToken || !this.state.viewerOpen || ac.signal.aborted) return false;
-    const cur = this.state.posts[this.state.viewerIndex];
-    return !!(cur && cur.id === post.id);
-  };
-  API.get(`/posts/${post.id}/relations`, { signal: ac.signal }).then(d => {
-    if (!relevant() || !d) return;
-    host.innerHTML = '';
-    const parent = d.parent;
-    const children = d.children || [];
-    if (parent || children.length) {
-      host.classList.remove('hidden');
-    } else {
-      host.classList.add('hidden');
-    }
-    if (parent) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'rel-chip rel-parent';
-      chip.title = t('viewer.relParent');
-      chip.textContent = `↑ #${parent.id}${parent.file_type ? ' · ' + parent.file_type : ''}`;
-      this._bindRelChipOpen(chip, parent.id);
-      host.appendChild(chip);
-    }
-    children.forEach(ch => {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'rel-chip rel-child';
-      chip.title = t('viewer.relChild');
-      chip.textContent = `↓ #${ch.id}${ch.file_type ? ' · ' + ch.file_type : ''}`;
-      this._bindRelChipOpen(chip, ch.id);
-      host.appendChild(chip);
-    });
-    if (!parent && !children.length) {
-      // Маленькая кнопка «привязать» — пост без семьи можно сделать ребёнком.
-      const setBtn = document.createElement('button');
-      setBtn.type = 'button';
-      setBtn.className = 'rel-chip rel-set';
-      setBtn.title = t('viewer.relSetHint');
-      setBtn.textContent = t('viewer.relSetBtn');
-      setBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        // A11y (#14): window.prompt блокирует страницу, не стилизуется и
-        // выпадает из focus-trap — используем модальный promptDialog
-        // (нативный prompt оставлен как fallback для тестового окружения).
-        const ask = (typeof this.promptDialog === 'function')
-          ? this.promptDialog({ title: t('viewer.parentPrompt'), okText: t('viewer.relSetHint') })
-          : Promise.resolve(window.prompt(t('viewer.parentPrompt')));
-        ask.then((input) => {
-          if (!input) return;
-          const pid = parseInt(input, 10);
-          if (!Number.isFinite(pid) || pid <= 0) { this.showToast(t('viewer.badId'), 'error'); return; }
-          API.post(`/posts/${post.id}/parent`, { parent_id: pid }).then(() => {
-            this.showToast(tf('viewer.linked', { id: post.id, pid }));
-            this._relChipsFor = null; // форс-обновление chips
-            this._renderViewerRelations(post);
-          }).catch(err => this.showToast(`${t('viewer.error')}: ${err.message}`, 'error'));
-        });
-      });
-      host.appendChild(setBtn);
-    }
-  }).catch(() => {
-    // Ошибка прошлого запроса не должна прятать chips текущего поста.
-    if (!relevant()) return;
-    host.classList.add('hidden');
-  }).finally(() => {
-    if (this._relChipsAbort === ac) this._relChipsAbort = null;
-  });
-};
-
-App._openPostById = function (id) {
-  if (!id) return;
-  const idx = this.state.posts.findIndex(p => p.id === id);
-  if (idx >= 0) { this._gotoViewerIndex(idx, 0); return; }
-  const q = `id:${id}`;
-  this.closeViewer({ keepUrl: true });
-  this.setSearchValue(q);
-  this.search(q);
-};
-
-App._loadViewerTagCounts = function (tags, spans) {
-  if (!tags || !tags.length || !spans || !spans.length) return;
-  // Режим «Все сайты»: выдача смешанная, а счётчики считает только
-  // дефолтный источник — не показываем вводящие в заблуждение числа.
-  if (this.state.activeProvider === 'all') return;
-  if (!this._tagCounts) this._tagCounts = {};
-  if (this._countAbort) { this._countAbort.abort(); this._countAbort = null; }
-  const ac = new AbortController();
-  this._countAbort = ac;
-  const q = tags.join(',');
-  API.get(`/tag-counts?tags=${encodeURIComponent(q)}`, { signal: ac.signal }).then(d => {
-    if (ac.signal.aborted || !d || !d.counts) return;
-    // Копируем по ключам с фильтром: Object.assign на json-объекте может
-    // протащить ключ "__proto__" из ответа (prototype pollution).
-    for (const k of Object.keys(d.counts)) {
-      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
-      this._tagCounts[k] = d.counts[k];
-    }
-    this._saveTagCounts();
-    spans.forEach(({ tag, el }) => {
-      const c = this._tagCounts[tag];
-      if (c != null) el.textContent = c;
-    });
-  }).catch(() => {}).finally(() => {
-    if (this._countAbort === ac) this._countAbort = null;
-  });
-};
-App._tagCountsCacheKey = 'briefly_tag_counts_v2'; // v2: сброс старого кэша с фальшивыми нулями (баг prefix-only GetTagCount)
-
-App._loadTagCounts = function () {
-  try {
-    const c = JSON.parse(localStorage.getItem(this._tagCountsCacheKey) || 'null');
-    if (c && c.counts && Date.now() - c.ts < 12 * 60 * 60 * 1000) {
-      this._tagCounts = Object.assign({}, c.counts);
-      return;
-    }
-  } catch {}
-  this._tagCounts = {};
-};
-
-App._saveTagCounts = function () {
-  // Memory (#5): кэш счётчиков не должен расти неограниченно — при переполнении
-  // выбрасываем ключи с наименьшими счётчиками (иначе при долгом использовании
-  // копятся десятки тысяч ключей и синхронная сериализация на каждый запрос).
-  const tc = this._tagCounts;
-  if (tc) {
-    const keys = Object.keys(tc);
-    const max = 4000;
-    if (keys.length > max) {
-      keys.sort((a, b) => (tc[a] || 0) - (tc[b] || 0));
-      for (let i = 0; i < keys.length - max; i++) delete tc[keys[i]];
-    }
-  }
-  try {
-    localStorage.setItem(this._tagCountsCacheKey, JSON.stringify({ ts: Date.now(), counts: this._tagCounts }));
-  } catch {}
-};
-
-/**
- * Кнопка «Открыть на источнике»: URL кладём в data-url, при отсутствии
- * источника кнопку прячем (формат Post.Source может быть неизвестен).
- * Возвращает URL или null.
- * @this {AppType}
- */
-App._syncSourceButton = function (post) {
-  const btn = this.els.viewerSource;
-  if (!btn) return null;
-  const url = this.sourcePostUrl(post);
-  if (url) {
-    btn.classList.remove('hidden');
-    btn.dataset.url = url;
-  } else {
-    btn.classList.add('hidden');
-    delete btn.dataset.url;
-  }
-  return url;
-};
 
 /**
  * Абсолютный URL текущего поста — то, что уходит в «Поделиться».
@@ -838,9 +441,9 @@ App.renderViewer = function (force) {
   const originalUrl = (!post.downloaded && post.file_url && heavyImage) ? proxyMedia(post.file_url) : null;
   // Превью для постера видео: пока файл буферизуется, вместо чёрного
   // экрана показываем ту же картинку, что и в карточке ленты.
-  const videoPosterUrl = post.preview_url
-    ? `/api/proxy?url=${encodeURIComponent(post.preview_url)}`
-    : `/api/thumb/${post.id}`;
+  const videoPosterUrl = (typeof this._postThumbUrl === 'function')
+    ? this._postThumbUrl(post)
+    : (post.preview_url ? `/api/proxy?url=${encodeURIComponent(post.preview_url)}` : `/api/thumb/${post.id}`);
   let resolvedFileUrl = fileUrl;
   try {
     const base = (typeof window !== 'undefined' && window.location) ? window.location.href : '';
@@ -930,20 +533,54 @@ App.renderViewer = function (force) {
     }
     if (mediaEl.src !== resolvedFileUrl) {
       this._showBlurhashPlaceholder(post, viewerContent);
+      if (typeof this._showPreviewPlaceholder === 'function') {
+        this._showPreviewPlaceholder(post, viewerContent);
+      }
+      viewerContent.classList.add('image-loading');
+      if (mediaEl.classList) mediaEl.classList.add('loading');
       mediaEl.fetchPriority = 'high';
       mediaEl.src = fileUrl;
-      mediaEl.classList.remove('fade-in');
-      void mediaEl.offsetWidth;
-      mediaEl.classList.add('fade-in');
-      mediaEl.addEventListener('load', () => {
+      const loadPostId = post.id;
+      const onImageDone = () => {
+        const curPost = this.state.posts[this.state.viewerIndex];
+        if (curPost && curPost.id !== loadPostId) return;
+        viewerContent.classList.remove('image-loading');
         this._hideBlurhashPlaceholder(viewerContent);
+        if (typeof this._hidePreviewPlaceholder === 'function') {
+          this._hidePreviewPlaceholder(viewerContent);
+        }
         viewerLoader.classList.remove('active');
+        if (mediaEl.classList) {
+          mediaEl.classList.remove('loading');
+          mediaEl.classList.remove('fade-in');
+          void mediaEl.offsetWidth;
+          mediaEl.classList.add('fade-in');
+        }
         this.applyZoomTransform();
+      };
+      mediaEl.addEventListener('load', onImageDone, { once: true });
+      mediaEl.addEventListener('error', () => {
+        const curPost = this.state.posts[this.state.viewerIndex];
+        if (curPost && curPost.id !== loadPostId) return;
+        viewerContent.classList.remove('image-loading');
+        this._hideBlurhashPlaceholder(viewerContent);
+        if (typeof this._hidePreviewPlaceholder === 'function') {
+          this._hidePreviewPlaceholder(viewerContent);
+        }
+        viewerLoader.classList.remove('active');
+        if (mediaEl.classList) mediaEl.classList.remove('loading');
+        if (typeof this._showViewerMediaError === 'function') {
+          this._showViewerMediaError(post);
+        }
       }, { once: true });
-      mediaEl.addEventListener('error', () => this._hideBlurhashPlaceholder(viewerContent), { once: true });
     } else {
+      viewerContent.classList.remove('image-loading');
       this._hideBlurhashPlaceholder(viewerContent);
+      if (typeof this._hidePreviewPlaceholder === 'function') {
+        this._hidePreviewPlaceholder(viewerContent, true);
+      }
       viewerLoader.classList.remove('active');
+      if (mediaEl.classList) mediaEl.classList.remove('loading');
     }
     if (heavyImage && originalUrl && !viewerContent.querySelector('.viewer-orig')) {
       const btn = document.createElement('button');
@@ -951,7 +588,6 @@ App.renderViewer = function (force) {
       btn.className = 'viewer-orig';
       btn.textContent = '1:1';
       btn.title = t('viewer.loadOriginal');
-      btn.style.cssText = 'position:absolute;top:10px;right:10px;z-index:6;padding:4px 10px;cursor:pointer;';
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         btn.disabled = true;
@@ -992,7 +628,7 @@ App.renderViewer = function (force) {
       `<button type="button" class="btn-ss" id="slideshow-btn">${SS_PLAY_ICO()}</button>`;
     barHost.appendChild(ssBar);
     this.els.slideshowBtn = ssBar.querySelector('#slideshow-btn');
-    this.els.slideshowBtn.addEventListener('click', () => this.toggleSlideshow());
+    if (this.els.slideshowBtn) this.els.slideshowBtn.addEventListener('click', () => this.toggleSlideshow());
     this.els.pipBtn = ssBar.querySelector('.btn-pip');
     if (this.els.pipBtn) this.els.pipBtn.addEventListener('click', () => this.togglePictureInPicture());
     this.els.ssRateSelect = ssBar.querySelector('.ss-rate');
@@ -1016,7 +652,15 @@ App.renderViewer = function (force) {
   this.els.viewerLike.innerHTML = isLiked
     ? icon('heart', 20, true)
     : icon('heart', 20);
-  if (this.els.viewerLikeM) this.els.viewerLikeM.innerHTML = this.els.viewerLike.innerHTML;
+  if (this.els.viewerLike && this.els.viewerLike.classList) {
+    this.els.viewerLike.classList.toggle('liked', !!isLiked);
+  }
+  if (this.els.viewerLikeM) {
+    this.els.viewerLikeM.innerHTML = this.els.viewerLike.innerHTML;
+    if (this.els.viewerLikeM.classList) {
+      this.els.viewerLikeM.classList.toggle('liked', !!isLiked);
+    }
+  }
 
   viewerProgress.textContent = post.downloaded ? t('viewer.downloaded') : t('viewer.pressX');
   this.updateNavButtons();
@@ -1058,7 +702,12 @@ App.navigateViewer = function (dir) {
 };
 
 App._gotoViewerIndex = function (ni, dir) {
+  this._cancelPreloads();
   this._stashCurrentVideoTime();
+  if (this._activeViewTransition && typeof this._activeViewTransition.skipTransition === 'function') {
+    try { this._activeViewTransition.skipTransition(); } catch { /* noop */ }
+  }
+  this._clearHeroTransitions();
   this.state.viewerIndex = ni;
   const post = this.state.posts[ni] || null;
   this._markViewed(post ? post.id : null);
@@ -1125,162 +774,6 @@ App._exitContext = function (dir) {
   return true;
 };
 
-App._warmImage = function (url) {
-  if (!url) return;
-  try {
-    const img = new Image();
-    img.decoding = 'async';
-    img.fetchPriority = 'low';
-    img.src = url;
-  } catch {  }
-};
-
-// ── Blurhash-плейсхолдер (задача 4) ──────────────────────────────────────
-// Пока полное изображение грузится, под ним рисуется размытая 32×32
-// «подложка» из blurhash — пост «виден» сразу, без белого экрана.
-App._showBlurhashPlaceholder = function (post, container) {
-  this._hideBlurhashPlaceholder(container);
-  if (!post || !post.blurhash) return;
-  try {
-    const data = decodeBlurHash(post.blurhash, 32, 32);
-    if (!data) return;
-    const canvas = document.createElement('canvas');
-    canvas.id = 'viewer-blurhash';
-    canvas.width = 32;
-    canvas.height = 32;
-    canvas.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;z-index:0;pointer-events:none;';
-    canvas.getContext('2d').putImageData(data, 0, 0);
-    container.insertBefore(canvas, container.firstChild);
-  } catch { /* blurhash битый — просто остаётся спиннер */ }
-};
-
-App._hideBlurhashPlaceholder = function (container) {
-  if (!container || typeof container.querySelector !== 'function') return;
-  const c = container.querySelector('#viewer-blurhash');
-  if (c && typeof c.remove === 'function') c.remove();
-};
-
-// Дедуп (#17): единая точка расчёта URL медиа (раньше логика «downloaded /
-// heavy-sample / оригинал» была продублирована в preloadImage и prefetchFull).
-App._viewerMediaPlan = function (post) {
-  if (!post) return { heavy: false, url: '' };
-  const heavy = !post.downloaded && (post.file_size || 0) > 3 * 1024 * 1024 && post.sample_url;
-  const url = post.downloaded
-    ? `/api/file/${post.id}`
-    : `/api/proxy?url=${encodeURIComponent(heavy ? post.sample_url : (post.file_url || ''))}`;
-  return { heavy, url };
-};
-
-App.preloadImage = function (post) {
-  if (!post || post.file_type === 'video') return;
-  // Тяжёлая картинка открывается вьювером как sample (см. renderViewer) —
-  // предзагружаем именно его, иначе прогреваем оригинал.
-
-  const heavy = !post.downloaded && (post.file_size || 0) > 3 * 1024 * 1024 && post.sample_url;
-  const url = post.downloaded
-    ? `/api/file/${post.id}`
-    : `/api/proxy?url=${encodeURIComponent(heavy ? post.sample_url : (post.file_url || ''))}`;
-  this._warmImage(url);
-};
-
-App.prefetchFull = function (post) {
-  if (!post || post.file_type === 'video') return;
-  if (this._prefetchUrl === post.id) return;
-  this._prefetchUrl = post.id;
-  // Тяжёлая картинка открывается вьювером как sample (см. renderViewer) —
-  // предзагружаем именно его, иначе прогреваем оригинал.
-
-  const heavy = !post.downloaded && (post.file_size || 0) > 3 * 1024 * 1024 && post.sample_url;
-  const url = post.downloaded
-    ? `/api/file/${post.id}`
-    : `/api/proxy?url=${encodeURIComponent(heavy ? post.sample_url : (post.file_url || ''))}`;
-  this._warmImage(url);
-};
-
-App.preloadVideo = function (post) {
-  if (!post || post.file_type !== 'video') return;
-  // Экономия трафика: при включённой в системе экономии данных не предзагружаем.
-  const conn = typeof navigator !== 'undefined' ? navigator.connection : null;
-  if (conn && conn.saveData) return;
-  const url = post.downloaded ? `/api/file/${post.id}` : `/api/proxy?url=${encodeURIComponent(post.file_url || '')}`;
-  if (this._preloadVideoUrl === url) return;
-  this._preloadVideoUrl = url;
-  clearTimeout(this._preloadDwellTimer);
-  let v = this._preloadVideoEl;
-  if (!v) {
-    v = document.createElement('video');
-    v.id = 'viewer-video-preload';
-    v.muted = true;
-    v.playsInline = true;
-    v.preload = 'metadata';
-    v.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;';
-    this._preloadVideoEl = v;
-    try { document.body.appendChild(v); } catch { /* noop */ }
-  }
-  // Сразу — только метаданные (длительность/размер); полная буферизация
-  // включается ниже, если пользователь задержался на соседнем посте.
-  v.src = url;
-  this._preloadDwellTimer = setTimeout(() => {
-    this._preloadDwellTimer = null;
-    if (this._preloadVideoUrl !== url || !this._preloadVideoEl) return;
-    // Не конкурируем за канал: пока текущее видео вьюера буферизуется,
-    // полную загрузку соседа откладываем (см. _schedulePreloadFull).
-    const cur = this.currentVideo();
-    if (cur && cur.readyState < 3) { this._schedulePreloadFull(url); return; }
-    try {
-      this._preloadVideoEl.preload = 'auto';
-      this._preloadVideoEl.load();
-    } catch { /* noop */ }
-  }, App._preloadDwellMs || 1200);
-};
-
-// Отложенная полная буферизация соседа: ждём, пока текущее видео не
-// догрузится (readyState >= HAVE_FUTURE_DATA), иначе два параллельных
-// скачивания замедляют друг друга.
-App._schedulePreloadFull = function (url) {
-  clearTimeout(this._preloadDwellTimer);
-  this._preloadDwellTimer = setTimeout(() => {
-    this._preloadDwellTimer = null;
-    if (this._preloadVideoUrl !== url || !this._preloadVideoEl) return;
-    const cur = this.currentVideo();
-    if (cur && cur.readyState < 3) { this._schedulePreloadFull(url); return; }
-    try {
-      this._preloadVideoEl.preload = 'auto';
-      this._preloadVideoEl.load();
-    } catch { /* noop */ }
-  }, 1000);
-};
-
-// Забираем скрытый предзагружаемый <video>, если он как раз для этого поста:
-// переиспользуем элемент вместе с уже скачанными байтами, поэтому переход
-// на соседний пост стартует мгновенно (как ховер в ленте), без новой загрузки.
-App._adoptPreloadedVideo = function (absUrl) {
-  const pv = this._preloadVideoEl;
-  clearTimeout(this._preloadDwellTimer);
-  this._preloadDwellTimer = null;
-  this._preloadVideoEl = null;
-  this._preloadVideoUrl = null;
-  if (!pv || !absUrl || pv.src !== absUrl) return null;
-  try {
-    pv.removeAttribute('style');
-    pv.removeAttribute('id');
-    pv.controls = true;
-    pv.autoplay = true;
-    pv.loop = true;
-    pv.playsInline = true;
-    try { pv.setAttribute('playsinline', ''); } catch { /* noop */ }
-  } catch { return null; }
-  return pv;
-};
-
-// Предзагрузка соседнего поста: видео — скрытым <video> (метаданные сразу,
-// полная буферизация после задержки «на осмотр»), картинки — как раньше
-// через new Image().
-App.preloadNeighbor = function (post) {
-  if (!post) return;
-  if (post.file_type === 'video') this.preloadVideo(post);
-  else this.preloadImage(post);
-};
 
 
 App._isTouch = function () {
@@ -1607,7 +1100,15 @@ App._syncLikeIcons = function (liked) {
     ? icon('heart', 20, true)
     : icon('heart', 20);
   this.els.viewerLike.innerHTML = html;
-  if (this.els.viewerLikeM) this.els.viewerLikeM.innerHTML = html;
+  if (this.els.viewerLike && this.els.viewerLike.classList) {
+    this.els.viewerLike.classList.toggle('liked', !!liked);
+  }
+  if (this.els.viewerLikeM) {
+    this.els.viewerLikeM.innerHTML = html;
+    if (this.els.viewerLikeM.classList) {
+      this.els.viewerLikeM.classList.toggle('liked', !!liked);
+    }
+  }
 };
 
 // Скрытие/показ поста с серверной синхронизацией и кнопкой «Отмена».
@@ -1763,281 +1264,3 @@ App.toggleInvert = function () {
   this.showToast(inv ? t('viewer.inverted') : t('viewer.uninverted'));
 };
 
-App._ensureZoomState = function () {
-  if (this._zoomScale == null) {
-    let sc = 1, active = false;
-    try { const s = JSON.parse(localStorage.getItem('briefly_zoom') || 'null'); if (s && typeof s.scale === 'number') { sc = s.scale; active = !!s.active; } } catch {}
-    this._zoomScale = sc; this._zoomTx = 0; this._zoomTy = 0; this._zoomActive = active;
-  }
-};
-
-App._maxZoom = function () { return 10; }; 
-
-App._persistZoom = function () {
-  try { localStorage.setItem('briefly_zoom', JSON.stringify({ active: this._zoomActive, scale: this._zoomScale || 1 })); } catch {}
-};
-
-App._cancelInertia = function () {
-  if (this._inertiaRaf) { cancelAnimationFrame(this._inertiaRaf); this._inertiaRaf = null; }
-};
-
-App._smoothZoom = function () {
-  this._zoomTransition = true;
-  clearTimeout(this._zoomSmoothTimer);
-  this._zoomSmoothTimer = setTimeout(() => { this._zoomTransition = false; }, 160);
-};
-
-App._zoomMetrics = function () {
-  const vc = this.els.viewerContent;
-  const W = vc.clientWidth || vc.parentElement.clientWidth || 1;
-  const H = vc.clientHeight || vc.parentElement.clientHeight || 1;
-  const img = this.els.viewerContent.querySelector('img');
-  let nw = img ? (img.naturalWidth || 0) : 0;
-  let nh = img ? (img.naturalHeight || 0) : 0;
-  if (nw <= 0 || nh <= 0) { nw = W; nh = H; }
-  const ar = nw / nh;
-  let fw, fh;
-  if (ar >= W / H) { fw = W; fh = W / ar; } else { fh = H; fw = H * ar; }
-  return { W, H, fw, fh };
-};
-
-App._zoomMaxPan = function (s) {
-  const { W, H, fw, fh } = this._zoomMetrics();
-  return {
-    maxTX: Math.max(0, (s * fw - W) / 2),
-    maxTY: Math.max(0, (s * fh - H) / 2),
-  };
-};
-
-App.applyZoomTransform = function () {
-  this._ensureZoomState();
-  const img = this.els.viewerContent.querySelector('img');
-  if (!img) return;
-  const { fw, fh } = this._zoomMetrics();
-  const s = this._zoomActive ? (this._zoomScale || 1) : 1;
-  const active = this._zoomActive && s > 1;
-  const { maxTX, maxTY } = this._zoomMaxPan(s);
-  if (!active) { this._zoomTx = 0; this._zoomTy = 0; }
-  this._zoomTx = Math.min(maxTX, Math.max(-maxTX, this._zoomTx || 0));
-  this._zoomTy = Math.min(maxTY, Math.max(-maxTY, this._zoomTy || 0));
-  img.style.objectFit = 'contain';
-  img.style.objectPosition = 'center';
-  img.style.transformOrigin = 'center center';
-  img.style.width = fw + 'px';
-  img.style.height = fh + 'px';
-  img.style.transition = this._zoomTransition ? 'transform 0.15s ease-out' : 'none';
-  img.style.transform = active ? `translate(${this._zoomTx}px, ${this._zoomTy}px) scale(${s})` : 'none';
-  img.style.cursor = active ? 'grab' : 'zoom-in';
-  this._updateZoomHud(s, active);
-  this._updateZoomLabel(s);
-};
-
-App._updateZoomHud = function (s, active) {
-  if (!this.els.zThumbX || !this.els.zThumbY || !this.els.zoomHud) return;
-  s = s || (this._zoomScale || 1);
-  const { W, H, fw, fh } = this._zoomMetrics();
-  const { maxTX, maxTY } = this._zoomMaxPan(s);
-  let hx = 0.5, hy = 0.5;
-  if (maxTX > 0) hx = 0.5 - (this._zoomTx || 0) / (2 * maxTX);
-  if (maxTY > 0) hy = 0.5 - (this._zoomTy || 0) / (2 * maxTY);
-  const pxW = Math.min(100, (W / (s * fw)) * 100);
-  const pxH = Math.min(100, (H / (s * fh)) * 100);
-  this.els.zThumbX.style.width = pxW + '%';
-  this.els.zThumbX.style.left = Math.max(0, Math.min(100 - pxW, hx * 100 - pxW / 2)) + '%';
-  this.els.zThumbY.style.height = pxH + '%';
-  this.els.zThumbY.style.top = Math.max(0, Math.min(100 - pxH, hy * 100 - pxH / 2)) + '%';
-  this.els.zoomHud.classList.toggle('on', !!active);
-};
-
-App._updateZoomLabel = function (s) {
-  if (this.els.zoomLabel) this.els.zoomLabel.textContent = Math.round((s || this._zoomScale || 1) * 100) + '%';
-};
-
-App.panBy = function (dxPx, dyPx) {
-  if (!this._zoomActive) return;
-  this._ensureZoomState();
-  const s = this._zoomScale || 1;
-  const { maxTX, maxTY } = this._zoomMaxPan(s);
-  this._zoomTx = Math.min(maxTX, Math.max(-maxTX, (this._zoomTx || 0) + dxPx));
-  this._zoomTy = Math.min(maxTY, Math.max(-maxTY, (this._zoomTy || 0) + dyPx));
-  this.applyZoomTransform();
-};
-
-App.zoomBy = function (factor, cx, cy) {
-  this._ensureZoomState();
-  if (!this._zoomActive) return;
-  const { W, H } = this._zoomMetrics();
-  const s = this._zoomScale;
-  const ns = Math.min(this._maxZoom(), Math.max(1, s * factor));
-  if (ns === s) return;
-  const cxRel = (cx != null && isFinite(cx) ? cx : W / 2) - W / 2;
-  const cyRel = (cy != null && isFinite(cy) ? cy : H / 2) - H / 2;
-  this._zoomTx = (this._zoomTx || 0) * (ns / s) + cxRel * (1 - ns / s);
-  this._zoomTy = (this._zoomTy || 0) * (ns / s) + cyRel * (1 - ns / s);
-  this._zoomScale = ns;
-  this._smoothZoom();
-  this.applyZoomTransform();
-  this._persistZoom();
-};
-
-App.zoomToEdge = function (axis, pos) {
-  this._ensureZoomState();
-  if (!this._zoomActive) return;
-  const { maxTX, maxTY } = this._zoomMaxPan(this._zoomScale || 1);
-  const val = pos ? (axis ? maxTY : maxTX) : (axis ? -maxTY : -maxTX);
-  if (axis) this._zoomTy = val; else this._zoomTx = val;
-  this.applyZoomTransform();
-};
-
-App.panPage = function (dir) {
-  this._ensureZoomState();
-  if (!this._zoomActive) return;
-  const { H } = this._zoomMetrics();
-  this.panBy(0, -dir * H * 0.6);
-};
-
-App._startPanInertia = function (vx, vy) {
-  this._cancelInertia();
-  const dec = 0.9;
-  const tick = () => {
-    if (Math.abs(vx) < 0.4 && Math.abs(vy) < 0.4) { this._inertiaRaf = null; return; }
-    if (!this._zoomActive) { this._inertiaRaf = null; return; }
-    this.panBy(vx, vy);
-    vx *= dec; vy *= dec;
-    this._inertiaRaf = requestAnimationFrame(tick);
-  };
-  this._inertiaRaf = requestAnimationFrame(tick);
-};
-
-App._panKeys = null;
-
-App.DIR = { UP: 'up', DOWN: 'down', LEFT: 'left', RIGHT: 'right' };
-
-App._setPanDirection = function (dir, pressed) {
-  if (!this._panKeys) this._panKeys = new Set();
-  if (pressed) this._panKeys.add(dir); else this._panKeys.delete(dir);
-  this._updatePanVelocity();
-};
-
-App._updatePanVelocity = function () {
-  const k = this._panKeys || new Set();
-  if (!this._panVel) this._panVel = { x: 0, y: 0 };
-  this._panVel.x = (k.has(App.DIR.RIGHT) ? 1 : 0) - (k.has(App.DIR.LEFT) ? 1 : 0);
-  this._panVel.y = (k.has(App.DIR.DOWN) ? 1 : 0) - (k.has(App.DIR.UP) ? 1 : 0);
-  if (this._panVel.x || this._panVel.y) {
-    if (!this._panRaf) this._runPanLoop();
-  } else if (this._panRaf) {
-    cancelAnimationFrame(this._panRaf);
-    this._panRaf = null;
-  }
-};
-
-App._runPanLoop = function () {
-  const tick = () => {
-    if (!this._zoomActive || !this.state.viewerOpen) { this._panRaf = null; return; }
-    const vx = this._panVel ? this._panVel.x : 0;
-    const vy = this._panVel ? this._panVel.y : 0;
-    if (!vx && !vy) { this._panRaf = null; return; }
-    const { W, H } = this._zoomMetrics();
-    const px = -vx * W * 0.01; 
-    const py = -vy * H * 0.01;
-    if (px || py) this.panBy(px, py);
-    this._panRaf = requestAnimationFrame(tick);
-  };
-  this._panRaf = requestAnimationFrame(tick);
-};
-
-App.startPan = function (dx, dy) {
-  if (!this._zoomActive) return;
-  this._cancelInertia();
-  if (dx) this._setPanDirection(dx > 0 ? App.DIR.RIGHT : App.DIR.LEFT, true);
-  if (dy) this._setPanDirection(dy > 0 ? App.DIR.DOWN : App.DIR.UP, true);
-};
-
-App.stopPan = function (dir) {
-  this._setPanDirection(dir, false);
-};
-
-App._cancelPan = function () {
-  if (this._panRaf) { cancelAnimationFrame(this._panRaf); this._panRaf = null; }
-  if (this._panKeys) this._panKeys.clear();
-  if (this._panVel) { this._panVel.x = 0; this._panVel.y = 0; }
-};
-
-App._resetFullscreen = function () {
-  this.els.viewerContent.classList.remove('fullscreen');
-  this.els.viewerHead.style.display = '';
-  this.els.viewerFoot.style.display = '';
-  this.els.prevBtn.style.display = '';
-  this.els.nextBtn.style.display = '';
-};
-
-App.toggleFullscreen = function () {
-  const vc = this.els.viewerContent;
-  if (!vc.classList.contains('fullscreen')) {
-    vc.classList.add('fullscreen');
-    this.els.viewerHead.style.display = 'none';
-    this.els.viewerFoot.style.display = 'none';
-    this.els.prevBtn.style.display = 'none';
-    this.els.nextBtn.style.display = 'none';
-    // Шапка и подвал (теги, «Похожие») скрыты — отменяем в-полёте запросы
-    // похожих и счётчиков тегов, чтобы не расходовать лимиты API впустую.
-    this._relToken = (this._relToken || 0) + 1;
-    if (this._relAbort) { this._relAbort.abort(); this._relAbort = null; }
-    if (this._countAbort) { this._countAbort.abort(); this._countAbort = null; }
-  } else {
-    vc.classList.remove('fullscreen');
-    this.els.viewerHead.style.display = '';
-    this.els.viewerFoot.style.display = '';
-    this.updateNavButtons();
-    // Восстанавливаем скрытое в полном экране: теги (при необходимости
-    // догрузят счётчики) и похожие для текущего поста, если ещё не загружены.
-    this._renderViewerTags();
-    const post = this.state.posts[this.state.viewerIndex];
-    if (post && post.id && this._relLoadedFor !== post.id) this.scheduleRelated(post);
-  }
-  this.applyZoomTransform();
-};
-
-App.toggleViewerZoom = function () {
-  this._ensureZoomState();
-  this._cancelInertia();
-  if (this._zoomActive) {
-    this._zoomActive = false;
-  } else {
-    this._zoomActive = true;
-    this._zoomScale = Math.max(this._zoomScale || 1, 2);
-    this._zoomTx = 0; this._zoomTy = 0; 
-  }
-  this._smoothZoom();
-  this.applyZoomTransform();
-  this._persistZoom();
-};
-
-App._bindZoomControls = function () {
-  const bind = (id, fn) => { const el = this.els[id]; if (el) el.addEventListener('click', fn); };
-  bind('zoomIn', () => { this._ensureZoomState(); if (!this._zoomActive) { this._zoomActive = true; } this.zoomBy(1.25); });
-  bind('zoomOut', () => { if (this._zoomActive) this.zoomBy(1 / 1.25); });
-  bind('zoomFit', () => { if (this._zoomActive) this.toggleViewerZoom(); else this.applyZoomTransform(); });
-};
-
-// Ctrl/Cmd+ЛКМ (и средняя кнопка) по медиа во вьювере — открыть файл в новой
-// вкладке, как обычную ссылку. Обычный клик не перехватываем: он управляет
-// HUD/зумом, а Ctrl+ЛКМ в браузере всегда означает «открыть в новой вкладке».
-App._bindViewerNewTab = function () {
-  const mediaOf = (e) => (e.target && e.target.closest ? e.target.closest('img, video') : null);
-  const openFile = (e) => {
-    const post = this.state.posts[this.state.viewerIndex];
-    if (!post) return;
-    e.preventDefault();
-    this.openInNewTab(this._viewerMediaPlan(post).url);
-  };
-  this.els.viewerContent.addEventListener('click', (e) => {
-    if (!this.isOpenInNewTabClick(e) || !mediaOf(e)) return;
-    openFile(e);
-  });
-  this.els.viewerContent.addEventListener('auxclick', (e) => {
-    if (e.button !== 1 || !mediaOf(e)) return;
-    openFile(e);
-  });
-};

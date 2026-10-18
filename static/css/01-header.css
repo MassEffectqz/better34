@@ -27,17 +27,19 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .search-box{flex:1;position:relative;display:flex;align-items:center}
 .search-box.loading #search-input{color:transparent}
 .search-box.loading #search-input::placeholder{color:transparent}
-.search-box.loading::after{content:'';position:absolute;right:36px;top:50%;width:16px;height:16px;margin-top:-8px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+.search-box.loading::after{content:'';position:absolute;right:86px;top:50%;width:16px;height:16px;margin-top:-8px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
 .search-icon{position:absolute;left:12px;color:var(--text-dim);pointer-events:none;flex-shrink:0}
-#search-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 84px 8px 34px;color:var(--text);font-size:.9rem;outline:none;transition:border-color var(--transition)}
+#search-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 88px 8px 34px;color:var(--text);font-size:.9rem;outline:none;transition:border-color var(--transition)}
+.search-box.has-meta #search-input,
+.search-box:has(.query-meta.visible) #search-input{padding-right:145px}
 #search-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
 #search-input::placeholder{color:var(--text-dim)}
-.search-clear{position:absolute;right:58px;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;border-radius:4px;display:flex;opacity:0;transition:opacity var(--transition);z-index:2}
-.search-clear.visible{opacity:1}
+.search-clear{position:absolute;right:58px;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;border-radius:4px;display:flex;opacity:0;pointer-events:none;transition:opacity var(--transition);z-index:2}
+.search-clear.visible{opacity:1;pointer-events:auto}
 /* Страховка на случай забытого syncSearchClear(): :has() не даёт кнопке
    остаться невидимой, когда в поле есть текст (Chrome 105+, Safari 15.4+,
    Firefox 121+). Старые браузеры полагаются на JS-класс .visible. */
-.search-box:has(#search-input:not(:placeholder-shown)) .search-clear{opacity:1}
+.search-box:has(#search-input:not(:placeholder-shown)) .search-clear{opacity:1;pointer-events:auto}
 .search-clear:hover{color:var(--text);background:var(--hover)}
 .search-action-btn{position:absolute;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:4px;border-radius:4px;display:flex;align-items:center;justify-content:center;transition:color var(--transition),background var(--transition);z-index:2}
 .search-action-btn:hover{color:var(--text);background:var(--hover)}
@@ -158,29 +160,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .folder-chip-del{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:3px;color:var(--text-dim);opacity:.6;transition:all var(--transition);margin-left:2px}
 .folder-chip-del:hover{opacity:1;color:var(--error);background:color-mix(in srgb,var(--error) 15%,transparent)}
 
-/* CSS Anchor Positioning (Chromium 125+, Safari 18.2+) */
-@supports (anchor-name: --a) {
-  #btn-header-menu { anchor-name: --btn-header-menu; }
-  #header-menu[popover] {
-    position-anchor: --btn-header-menu;
-    top: calc(anchor(bottom) + 4px);
-    right: calc(100vw - anchor(right));
-  }
-
-  #provider-badge { anchor-name: --provider-badge; }
-  #provider-menu[popover] {
-    position-anchor: --provider-badge;
-    top: calc(anchor(bottom) + 4px);
-    right: calc(100vw - anchor(right));
-  }
-
-  #btn-color-filter { anchor-name: --btn-color-filter; }
-  #color-popover[popover] {
-    position-anchor: --btn-color-filter;
-    top: calc(anchor(bottom) + 6px);
-    right: calc(100vw - anchor(right));
-  }
-}
 .grid-menu-title{font-size:.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;padding:0 2px 6px}
 .grid-menu-opts{display:flex;gap:4px;flex-wrap:wrap}
 .grid-opt{flex:1;min-width:44px;padding:6px 4px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.82rem;cursor:pointer;transition:all var(--transition)}

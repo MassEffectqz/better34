@@ -65,6 +65,9 @@ func SetCSRFToken(c *gin.Context) {
 
 // IsTokenAuth проверяет, что запрос использует Bearer token (не cookie-сессию).
 func IsTokenAuth(c *gin.Context) bool {
+	if t := c.GetHeader("X-Better34-Token"); t != "" {
+		return true
+	}
 	if t := c.GetHeader("X-Briefly-Token"); t != "" {
 		return true
 	}

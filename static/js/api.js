@@ -36,10 +36,13 @@ export const API = {
   _headers() {
     const h = /** @type {Record<string, string>} */ ({});
     if (this._token === null) {
-      const m = document.querySelector('meta[name="briefly-token"]');
+      const m = document.querySelector('meta[name="better34-token"]') || document.querySelector('meta[name="briefly-token"]');
       this._token = m ? m.getAttribute('content') || '' : '';
     }
-    if (this._token) h['X-Briefly-Token'] = this._token;
+    if (this._token) {
+      h['X-Better34-Token'] = this._token;
+      h['X-Briefly-Token'] = this._token;
+    }
     return h;
   },
   // Дедлайн запроса: по истечении прерываем fetch. Флаг timedOut отличает
@@ -184,7 +187,7 @@ export const API = {
   },
   post(e, b, extraHeaders) {
     return this._mutate('POST', e, {
-      headers: { 'Content-Type': 'application/json', ...this._headers(), ...(extraHeaders || {}) },
+      headers: { 'Content-Type': 'application/json', ...this._headers(), ...extraHeaders },
       body: JSON.stringify(b),
     }, b);
   },

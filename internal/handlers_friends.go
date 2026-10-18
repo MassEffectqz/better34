@@ -93,7 +93,7 @@ func (f Friend) view() friendView {
 
 // GET /api/friends — список друзей.
 func (h *Handler) ListFriends(c *gin.Context) {
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 	store := GetFriendStore(user)
 	list := store.List()
 	out := make([]friendView, 0, len(list))
@@ -105,7 +105,7 @@ func (h *Handler) ListFriends(c *gin.Context) {
 
 // GET /api/friends/code — мой код для передачи другу («визитка»).
 func (h *Handler) MyFriendCode(c *gin.Context) {
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 	nickname, _ := friendIdentity(user)
 	code, err := GetFriendStore(user).EncodeFriendCode(user, nickname, friendPublicURL(c))
 	if err != nil {
@@ -124,7 +124,7 @@ func (h *Handler) AddFriend(c *gin.Context) {
 		AbortWithError(c, ErrInvalidRequest)
 		return
 	}
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 	nickname, _ := friendIdentity(user)
 	f, err := GetFriendStore(user).AddFriend(req.Code, friendSelfURL(c), user, nickname)
 	if err != nil {
@@ -199,7 +199,7 @@ func friendProfileViewOf(f Friend) friendProfileView {
 var activeFriendSyncs sync.Map
 
 func (h *Handler) FriendProfile(c *gin.Context) {
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 	store := GetFriendStore(user)
 	id := c.Param("id")
 	f, ok := store.Get(id)
@@ -244,7 +244,7 @@ func (h *Handler) FriendProfile(c *gin.Context) {
 // профиле). Отвечает свежим профилем, чтобы клиент не делал второй запрос:
 // повторный GET /profile синхронизировал бы друга второй раз.
 func (h *Handler) SyncOneFriend(c *gin.Context) {
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 	store := GetFriendStore(user)
 	id := c.Param("id")
 	if _, ok := store.Get(id); !ok {
@@ -282,7 +282,7 @@ func nonNilStrings(s []string) []string {
 
 // DELETE /api/friends/:id — удалить друга.
 func (h *Handler) DeleteFriend(c *gin.Context) {
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 	if err := GetFriendStore(user).Remove(c.Param("id")); err != nil {
 		friendErr(c, err)
 		return
@@ -293,7 +293,7 @@ func (h *Handler) DeleteFriend(c *gin.Context) {
 // POST /api/friends/sync — обмен прямо сейчас (кнопка в UI). Фоновый цикл
 // делает то же само, но ждать пять минут ради разовой проверки не нужно.
 func (h *Handler) SyncFriends(c *gin.Context) {
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 	stats := SyncAllFriends(user, friendSelfURL(c))
 	c.JSON(http.StatusOK, gin.H{"synced": stats})
 }

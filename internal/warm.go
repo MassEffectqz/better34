@@ -121,7 +121,7 @@ func warmOne(h *Handler, key string, u *url.URL) bool {
 	if err != nil {
 		return false
 	}
-	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Referer", h.refererForHost(u.Hostname()))
 
 	resp, err := MediaHTTPClient().Do(req)
@@ -191,7 +191,7 @@ func warmMediaCacheFile(h *Handler, u *url.URL) {
 	if err != nil {
 		return
 	}
-	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Referer", h.refererForHost(u.Hostname()))
 
 	resp, err := MediaHTTPClient().Do(req)

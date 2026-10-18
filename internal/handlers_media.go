@@ -108,7 +108,7 @@ func (h *Handler) SaveFile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file url"})
 		return
 	}
-	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("User-Agent", UserAgent)
 	if fu, err := url.Parse(post.FileURL); err == nil {
 		req.Header.Set("Referer", h.refererForHost(fu.Hostname()))
 	}
@@ -186,7 +186,7 @@ func (h *Handler) proxyUpstream(c *gin.Context, u *url.URL, rangeHdr string) (*h
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Referer", h.refererForHost(u.Hostname()))
 	if rangeHdr != "" {
 		req.Header.Set("Range", rangeHdr)
@@ -440,7 +440,9 @@ func (h *Handler) streamUpstream(c *gin.Context, u *url.URL,
 
 	c.Writer.WriteHeader(resp.StatusCode)
 	copyErr := func() error {
-		buf := make([]byte, 64<<10)
+		bufPtr := GetBuffer64k()
+		defer PutBuffer64k(bufPtr)
+		buf := *bufPtr
 		const flushEvery = 256 << 10
 		flusher, _ := c.Writer.(http.Flusher)
 		pending := 0
@@ -986,7 +988,7 @@ func fetchSegment(ctx context.Context, u *url.URL, referer string, start, end in
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Referer", referer)
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 	resp, err := MediaHTTPClient().Do(req)
@@ -998,7 +1000,9 @@ func fetchSegment(ctx context.Context, u *url.URL, referer string, start, end in
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 		return fmt.Errorf("segment %d-%d: upstream status %d", start, end, resp.StatusCode)
 	}
-	buf := make([]byte, 128<<10)
+	bufPtr := GetBuffer128k()
+	defer PutBuffer128k(bufPtr)
+	buf := *bufPtr
 	off := start
 	for {
 		n, rerr := resp.Body.Read(buf)
@@ -1023,7 +1027,9 @@ func fetchSegment(ctx context.Context, u *url.URL, referer string, start, end in
 // copySegmentRegion отдаёт клиенту готовый отрезок temp-файла.
 func copySegmentRegion(w io.Writer, f *os.File, start, end int64, flusher http.Flusher) error {
 	rd := io.NewSectionReader(f, start, end-start+1)
-	buf := make([]byte, 64<<10)
+	bufPtr := GetBuffer64k()
+	defer PutBuffer64k(bufPtr)
+	buf := *bufPtr
 	pending := 0
 	for {
 		n, rerr := rd.Read(buf)

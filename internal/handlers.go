@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -144,11 +145,51 @@ func (h *Handler) refererForFileURL(fileURL string) string {
 	return h.provider().RefererURL()
 }
 
+func extractColorTerm(query string) (string, string) {
+	terms := strings.Fields(query)
+	var kept []string
+	var colorHue string
+	for _, term := range terms {
+		lower := strings.ToLower(term)
+		if strings.HasPrefix(lower, "color:") {
+			colorHue = strings.TrimPrefix(lower, "color:")
+		} else {
+			kept = append(kept, term)
+		}
+	}
+	return strings.Join(kept, " "), colorHue
+}
+
+func colorHueTag(hue string) string {
+	switch strings.ToLower(strings.TrimSpace(hue)) {
+	case "monochrome":
+		return "monochrome"
+	case "red", "blue", "green", "pink", "yellow", "purple", "orange":
+		return hue + "_theme"
+	case "dark":
+		return "dark"
+	case "light":
+		return "white_background"
+	case "teal":
+		return "teal"
+	default:
+		return ""
+	}
+}
+
 func (h *Handler) SearchPosts(c *gin.Context) {
 	tags := c.Query("tags")
 	// Алиасы тегов: синонимы (catgirl → neko) переводятся в канонические
 	// теги до построения запроса к провайдеру и локальных фильтров.
 	tags = ResolveAliasesInQuery(tags)
+
+	// Извлекаем color:<hue>: буры не имеют такого тега, поэтому вырезаем его
+	// из поискового запроса к сайту и при необходимости подставляем тематический тег.
+	var colorHue string
+	tags, colorHue = extractColorTerm(tags)
+	if colorHue != "" && tags == "" {
+		tags = colorHueTag(colorHue)
+	}
 
 	// Фильтр рейтинга (All/SFW/18+): метатеги уходят в начало запроса
 	// (внутри бюджета MaxQueryLen), плюс посты фильтруются локально.
@@ -410,7 +451,13 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 			var err error
 			posts, err = h.provider().SearchPosts(rq.query, fetchPage, fetchLimit, minID)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				status := http.StatusInternalServerError
+				if errors.Is(err, ErrNoCredentials) {
+					status = http.StatusUnauthorized
+				} else if strings.Contains(err.Error(), "временно недоступен") || strings.Contains(err.Error(), "брейкер") {
+					status = http.StatusServiceUnavailable
+				}
+				c.JSON(status, gin.H{"error": err.Error()})
 				return
 			}
 		}

@@ -553,7 +553,7 @@ func (h *Handler) Recommend(c *gin.Context) {
 	}
 
 	profile := ProfileFor(c)
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 
 	// кэш весов
 	sig := recSig(profile)
@@ -731,7 +731,8 @@ func (h *Handler) RecommendDislike(c *gin.Context) {
 	profile := ProfileFor(c)
 	profile.AddRecDisliked(clean)
 	_ = profile.Save()
-	invalidateRecWeights(c.GetString("briefly_user"))
-	log.Printf("recommend dislike: %d tags for user %q", len(clean), c.GetString("briefly_user"))
+	u := UserFromContext(c)
+	invalidateRecWeights(u)
+	log.Printf("recommend dislike: %d tags for user %q", len(clean), u)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

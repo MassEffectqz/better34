@@ -1,7 +1,7 @@
 package main
 
 import (
-	"briefly/internal"
+	"better34/internal"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -20,6 +20,7 @@ import (
 
 func main() {
 	loadDotEnv()
+	initAllowedHosts()
 	slog.SetDefault(newSlogLogger())
 	internal.SetBriefToken(authToken)
 	log.SetOutput(logOutput)
@@ -221,8 +222,9 @@ func main() {
 		// намеренно не ставим: SSE (/api/events) и прокси-стриминг долгоживущие.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		ErrorLog:          newTLSErrorFilterLogger(logOutput),
 	}
-	scheme, tlsLn, plainSrv, h3Server, rawLn, done, cert := setupTLS(addr)
+	scheme, tlsLn, plainSrv, h3Server, rawLn, done, cert := setupTLS(addr, r)
 	if scheme == "https" {
 		// cert генерируется единожды внутри setupTLS (H3 уже использует его
 		// из памяти). Раньше здесь был второй loadOrGenerateCert(): при

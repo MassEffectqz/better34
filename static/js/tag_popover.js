@@ -104,7 +104,7 @@ App.ensureTagPopover = function () {
   // часто успевает уйти с тега раньше, чем всплывашка появится, и без этого
   // подсказка мигала. Вернулся на тег — гасим отложенное скрытие.
   el.addEventListener('mouseenter', () => {
-    this._tagPopHideTimer && clearTimeout(this._tagPopHideTimer);
+    if (this._tagPopHideTimer) clearTimeout(this._tagPopHideTimer);
     this._tagPopHideTimer = null;
   });
   el.addEventListener('mouseleave', () => this.scheduleHideTagPopover());
@@ -128,12 +128,12 @@ App.onTagPopoverClick = function (ev) {
 };
 
 App.hideTagPopover = function () {
-  this._tagPopHideTimer && clearTimeout(this._tagPopHideTimer);
+  if (this._tagPopHideTimer) clearTimeout(this._tagPopHideTimer);
   this._tagPopHideTimer = null;
   // Гасим и отложенное ПОКАЗЫВАНИЕ. Иначе сценарий «навести → Esc/клик»
   // оставлял таймер в полёте, и через 220 мс подсказка выскакивала сама —
   // уже после того, как её закрыли.
-  this._tagPopTimer && clearTimeout(this._tagPopTimer);
+  if (this._tagPopTimer) clearTimeout(this._tagPopTimer);
   this._tagPopTimer = null;
   // Сбрасываем и активный тег. Пока он записан, повторное наведение на тот же
   // тег считалось «уже показанным» (см. show) — после Esc или клика по обложке
@@ -158,7 +158,7 @@ App._tagPointerOverTagUI = function () {
 };
 
 App.scheduleHideTagPopover = function () {
-  this._tagPopHideTimer && clearTimeout(this._tagPopHideTimer);
+  if (this._tagPopHideTimer) clearTimeout(this._tagPopHideTimer);
   this._tagPopHideTimer = setTimeout(() => {
     this._tagPopHideTimer = null;
     // Курсор мог вернуться в нашу зону за время ожидания — тогда не прячем.
@@ -339,7 +339,7 @@ App.bindTagPopover = function () {
     if (!tag || tag === this._tagPopTag) return;
     if (!el.isConnected) return;
     this._tagPopTag = tag;
-    this._tagPopTimer && clearTimeout(this._tagPopTimer);
+    if (this._tagPopTimer) clearTimeout(this._tagPopTimer);
     this._tagPopTimer = setTimeout(() => this.showTagPopover(tag, el), HOVER_DELAY);
   };
   const leave = (ev) => {
@@ -354,7 +354,7 @@ App.bindTagPopover = function () {
     if (!el) return;
     const to = ev.relatedTarget;
     if (to && el.contains && el.contains(to)) return;
-    this._tagPopTimer && clearTimeout(this._tagPopTimer);
+    if (this._tagPopTimer) clearTimeout(this._tagPopTimer);
     this._tagPopTag = null;
     this.scheduleHideTagPopover();
   };

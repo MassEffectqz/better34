@@ -48,16 +48,17 @@ func (h *Handler) ExportProfile(c *gin.Context) {
 	p.mu.RUnlock()
 
 	var comments []*Comment
-	if u := c.GetString("briefly_user"); u != "" {
+	u := UserFromContext(c)
+	if u != "" {
 		comments = GetDB().CommentsByUser(u)
 	}
 
-	c.Header("Content-Disposition", `attachment; filename="briefly-profile.json"`)
+	c.Header("Content-Disposition", `attachment; filename="better34-profile.json"`)
 	c.JSON(http.StatusOK, backupFile{
 		Version:    1,
-		App:        "briefly",
+		App:        "better34",
 		ExportedAt: time.Now().UTC().Format(time.RFC3339),
-		User:       c.GetString("briefly_user"),
+		User:       u,
 		Profile:    b,
 		Comments:   comments,
 	})
@@ -141,7 +142,7 @@ func (h *Handler) ImportProfile(c *gin.Context) {
 	p.mu.Unlock()
 
 	addedComments := 0
-	if u := c.GetString("briefly_user"); u != "" && len(req.Comments) > 0 {
+	if u := UserFromContext(c); u != "" && len(req.Comments) > 0 {
 		addedComments = GetDB().ImportComments(u, req.Comments)
 	}
 

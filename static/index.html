@@ -152,10 +152,10 @@
       <div id="viewer-relations" class="viewer-relations hidden"></div>
       <div class="viewer-actions">
         <div class="zoom-controls" id="viewer-zoom-controls">
-          <button class="btn-icon btn-icon-sm" id="zoom-out" title="Отдалить (−)" data-i18n-title="zoom.out" aria-label="Отдалить (−)" data-i18n-aria="zoom.outAria"><i data-lucide="minus" data-size="13"></i></button>
+          <button class="btn-icon btn-icon-sm" id="zoom-out" title="Отдалить (−)" data-i18n-title="zoom.out" aria-label="Отдалить (−)" data-i18n-aria="zoom.outAria"><i data-lucide="minus" data-size="14"></i></button>
           <span id="zoom-label" class="zoom-label">100%</span>
-          <button class="btn-icon btn-icon-sm" id="zoom-in" title="Приблизить (+)" data-i18n-title="zoom.in" aria-label="Приблизить (+)" data-i18n-aria="zoom.inAria"><i data-lucide="plus" data-size="13"></i></button>
-          <button class="btn-icon btn-icon-sm" id="zoom-fit" title="Сброс / по размеру (Z)" data-i18n-title="zoom.fit" aria-label="Сброс (Z)" data-i18n-aria="zoom.fitAria"><i data-lucide="maximize" data-size="13"></i></button>
+          <button class="btn-icon btn-icon-sm" id="zoom-in" title="Приблизить (+)" data-i18n-title="zoom.in" aria-label="Приблизить (+)" data-i18n-aria="zoom.inAria"><i data-lucide="plus" data-size="14"></i></button>
+          <button class="btn-icon btn-icon-sm" id="zoom-fit" title="Сброс / по размеру (Z)" data-i18n-title="zoom.fit" aria-label="Сброс (Z)" data-i18n-aria="zoom.fitAria"><i data-lucide="maximize" data-size="14"></i></button>
         </div>
         <div class="ss-speed">
           <i data-lucide="clock" data-size="14"></i>
@@ -197,11 +197,11 @@
       <div id="viewer-comments" class="viewer-comments"></div>
     </div>
     <div class="viewer-mobile-actions" id="viewer-mobile-actions">
-      <button class="viewer-mobile-toggle" id="viewer-mobile-toggle" title="Свернуть панель" data-i18n-title="viewer.mobileToggle" aria-label="Свернуть/развернуть панель" data-i18n-aria="viewer.mobileToggleAria"><i data-lucide="chevronDown" data-size="12"></i></button>
+      <button class="viewer-mobile-toggle" id="viewer-mobile-toggle" title="Свернуть панель" data-i18n-title="viewer.mobileToggle" aria-label="Свернуть/развернуть панель" data-i18n-aria="viewer.mobileToggleAria"><i data-lucide="chevronDown" data-size="14"></i></button>
       <button class="btn-icon" id="viewer-like-mobile" title="Лайк" data-i18n-title="viewer.like" aria-label="Лайк (Q)" data-i18n-aria="viewer.likeAria"><i data-lucide="heart" data-size="20"></i></button>
       <button class="btn-icon" id="viewer-hide-mobile" title="Дизлайк" data-i18n-title="viewer.dislike" aria-label="Скрыть (E)" data-i18n-aria="viewer.dislikeAria"><i data-lucide="heartOff" data-size="20"></i></button>
       <button class="btn-icon" id="viewer-share-mobile" title="Поделиться" data-i18n-title="viewer.shareBtn" aria-label="Поделиться постом" data-i18n-aria="viewer.shareAria"><i data-lucide="share2" data-size="20"></i></button>
-      <button class="btn-icon" id="viewer-fullscreen-mobile" title="Свернуть полный просмотр" data-i18n-title="viewer.fsMin" aria-label="Свернуть полный просмотр (F)" data-i18n-aria="viewer.fsMinAria"><i data-lucide="minimize" data-size="24"></i></button>
+      <button class="btn-icon" id="viewer-fullscreen-mobile" title="Свернуть полный просмотр" data-i18n-title="viewer.fsMin" aria-label="Свернуть полный просмотр (F)" data-i18n-aria="viewer.fsMinAria"><i data-lucide="minimize" data-size="20"></i></button>
     </div>
     </div>
   </div>
@@ -483,7 +483,7 @@
         </label>
         <div class="setting-group">
           <span class="setting-label"><span data-i18n="set.apikeys">API ключи</span> <span class="hint" data-i18n="set.apikeysHint">каждый ключ со своим user_id, чередуются</span></span>
-          <!-- Не <form>: контейнер строк, каждая из которых отдельная сущность
+          <!-- Не тег form: контейнер строк, каждая из которых отдельная сущность
                (имя + ключ + user_id), а сохранение идёт одним запросом из
                App.saveSettings по состоянию. Настоящая форма с несколькими
                несвязанными группами полей заставляла Chrome ругаться в консоль
@@ -515,13 +515,13 @@
         </label>
         <div class="setting-group">
           <span class="setting-label" data-i18n="sec.password">Смена пароля</span>
-          <form onsubmit="return false;" style="display:contents">
+          <form id="form-change-password" class="setting-pwd-form" onsubmit="return false;">
             <!-- Скрытое username-поле: Chrome требует его в password-формах (доступность/менеджер паролей) -->
             <input type="text" id="input-current-username" name="username" autocomplete="username" tabindex="-1" aria-hidden="true" style="display:none">
             <input type="password" id="input-current-password" placeholder="текущий пароль" data-i18n-ph="pwd.currentPh" autocomplete="current-password">
             <input type="password" id="input-new-password" placeholder="новый пароль (мин. 6)" data-i18n-ph="pwd.newPh" autocomplete="new-password">
+            <button id="btn-change-password" type="submit" class="btn-primary btn-sm"><span data-i18n="btn.changePassword">Сменить пароль</span></button>
           </form>
-          <button id="btn-change-password" class="btn-primary btn-sm"><span data-i18n="btn.changePassword">Сменить пароль</span></button>
           <button id="btn-logout-others" class="btn-primary btn-sm"><span data-i18n="btn.logoutOthers">Выйти на остальных устройствах</span></button>
         </div>
         <div class="setting-group">

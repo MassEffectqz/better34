@@ -1,4 +1,4 @@
-module briefly
+module better34
 
 go 1.25.0
 

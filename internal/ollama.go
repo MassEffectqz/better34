@@ -261,6 +261,21 @@ func ollamaGenerateOnce(descr string, provider Provider) (string, error) {
 	return query, nil
 }
 
+var directTagRe = regexp.MustCompile(`^[a-zA-Z0-9_\-():~*^]+$`)
+
+func isDirectBooruTagQuery(raw string) bool {
+	fields := strings.Fields(strings.TrimSpace(raw))
+	if len(fields) == 0 || len(fields) > 8 {
+		return false
+	}
+	for _, f := range fields {
+		if len(f) < 2 || !directTagRe.MatchString(f) {
+			return false
+		}
+	}
+	return true
+}
+
 // NlSearch — GET /api/nl-search?q=<фраза>. Возвращает готовый теговый
 // запрос; клиент подставляет его в поиск.
 func (h *Handler) NlSearch(c *gin.Context) {
@@ -278,6 +293,13 @@ func (h *Handler) NlSearch(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"query": local, "model": "local-semantic"})
 			return
 		}
+		// Если запрос уже состоит из валидных booru-тегов (например, umamusume или 1girl)
+		if isDirectBooruTagQuery(q) {
+			if clean := sanitizeTagQuery(q); clean != "" {
+				c.JSON(http.StatusOK, gin.H{"query": clean, "model": "direct-tags"})
+				return
+			}
+		}
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ollama недоступна на " + ollamaBase() + ", а локальный словарь не смог разобрать фразу"})
 		return
 	}
@@ -286,6 +308,12 @@ func (h *Handler) NlSearch(c *gin.Context) {
 		if local := LocalSemanticTranslate(q); local != "" {
 			c.JSON(http.StatusOK, gin.H{"query": local, "model": "local-semantic"})
 			return
+		}
+		if isDirectBooruTagQuery(q) {
+			if clean := sanitizeTagQuery(q); clean != "" {
+				c.JSON(http.StatusOK, gin.H{"query": clean, "model": "direct-tags"})
+				return
+			}
 		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": "модель не ответила: " + err.Error()})
 		return

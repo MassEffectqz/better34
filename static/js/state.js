@@ -4,6 +4,12 @@ import { _, esc, go, icon } from './utils.js';
 import { API } from './api.js';
 import { t, tf, getLang, setLang } from './i18n.js';
 import { flushOfflineQueue } from './offline.js';
+import './state_storage.js';
+import './state_queue.js';
+import './state_shortcuts.js';
+import { extendStorage, getStorage, setStorage } from './state_storage.js';
+import { extendQueue } from './state_queue.js';
+import { extendShortcuts } from './state_shortcuts.js';
 
 // Пауза перед отправкой пачки отметок «просмотрено». Нужна, чтобы быстрое
 // листание не превращалось в запрос на каждый пост; сама очередь при этом не
@@ -37,6 +43,53 @@ export const App = {
     viewedFilter: '',
   },
   els: {},
+  /** @type {Worker | null} */
+  _worker: null,
+  _workerId: 0,
+  _workerCallbacks: new Map(),
+
+  /**
+   * Вызов фоновой задачи в Web Worker с промисом и fallback на ошибку.
+   * @param {string} action
+   * @param {any} payload
+   * @param {Transferable[]} [transferables]
+   * @returns {Promise<any>}
+   */
+  workerCall(action, payload, transferables = []) {
+    if (typeof window === 'undefined' || !window.Worker) {
+      return Promise.reject(new Error('Web Workers not supported'));
+    }
+    if (!this._worker) {
+      try {
+        const w = new Worker('/static/js/worker.js');
+        w.onmessage = (e) => {
+          const { id, ok, result, error } = e.data || {};
+          const cb = this._workerCallbacks.get(id);
+          if (!cb) return;
+          this._workerCallbacks.delete(id);
+          if (ok) cb.resolve(result);
+          else cb.reject(new Error(error || 'Worker task failed'));
+        };
+        w.onerror = (err) => {
+          console.warn('[Worker error]', err);
+        };
+        this._worker = w;
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    }
+    const id = ++this._workerId;
+    return new Promise((resolve, reject) => {
+      this._workerCallbacks.set(id, { resolve, reject });
+      try {
+        if (!this._worker) throw new Error('Worker unavailable');
+        this._worker.postMessage({ id, action, payload }, transferables);
+      } catch (err) {
+        this._workerCallbacks.delete(id);
+        reject(err);
+      }
+    });
+  },
 
   async init() {
     // Ловим отказы Promise раньше любых await-шагов. Раньше обработчик стоял
@@ -133,10 +186,10 @@ export const App = {
       viewerShareM: _('viewer-share-mobile'), backToTop: _('back-to-top'),
     };
     this.loadTheme();
-          this.loadGridSetting();
-      this.loadAutoRefreshSetting();
+    this.loadGridSetting();
+    this.loadAutoRefreshSetting();
     try {
-      const savedScroll = parseInt(sessionStorage.getItem('briefly_scroll_top') || '', 10);
+      const savedScroll = parseInt(getStorage('better34_scroll_top', 'briefly_scroll_top') || '', 10);
       if (Number.isFinite(savedScroll) && savedScroll > 0) this._pendingScrollTop = savedScroll;
     } catch {}
     this.bindAuthEvents();
@@ -148,11 +201,14 @@ export const App = {
     // Стартовая лента — обычная (не сетка): показываем «Все/Новое/Виденное».
     this.updateViewedToggle();
     this.startDlPoll();
-    try { if (localStorage.getItem('briefly_viewer_panel') === '1') this.els.viewerMobileActions.classList.add('collapsed'); } catch (_) {}
+    try {
+      const vp = getStorage('better34_viewer_panel', 'briefly_viewer_panel');
+      if (vp === '1' && this.els.viewerMobileActions) this.els.viewerMobileActions.classList.add('collapsed');
+    } catch {}
     this.loadAccent();
     this.loadSettings();
     try {
-      const arf = localStorage.getItem('briefly_auto_refresh_feed');
+      const arf = getStorage('better34_auto_refresh_feed', 'briefly_auto_refresh_feed');
       if (arf !== null) this.state.autoRefreshFeed = arf === '1';
     } catch {}
     await this.loadProfile();
@@ -369,6 +425,7 @@ export const App = {
 
     nav.setAttribute('role', 'tablist');
     const storageKey = `briefly_${panelKey.replace(/Panel$/, '').toLowerCase()}_tab`;
+    const primaryKey = `better34_${panelKey.replace(/Panel$/, '').toLowerCase()}_tab`;
     for (const { tab, content, key } of items) {
       /** @type {HTMLButtonElement} */ (tab).type = 'button';
       tab.setAttribute('role', 'tab');
@@ -389,7 +446,7 @@ export const App = {
       target.tab.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
       if (focus) target.tab.focus();
       if (persist) {
-        try { localStorage.setItem(storageKey, target.key); } catch { /* private mode */ }
+        setStorage(primaryKey, target.key, storageKey);
       }
       onChange?.(target.key, { initial });
     };
@@ -414,7 +471,7 @@ export const App = {
     }
 
     let saved = '';
-    try { saved = localStorage.getItem(storageKey) || ''; } catch { /* private mode */ }
+    saved = getStorage(primaryKey, storageKey) || '';
     const initial = items.find(item => item.key === saved) || items[0];
     select(initial, { initial: true });
     return {
@@ -469,7 +526,7 @@ export const App = {
     const hideMenu = (menu) => {
       if (!menu) return;
       if (typeof (/** @type {any} */ (menu)).hidePopover === 'function') {
-        try { (/** @type {any} */ (menu)).hidePopover(); } catch (_) {}
+        try { (/** @type {any} */ (menu)).hidePopover(); } catch {}
       }
       menu.classList.add('hidden');
     };
@@ -478,7 +535,7 @@ export const App = {
     const isMenuOpen = (el) => {
       if (!el) return false;
       if (typeof el.matches === 'function') {
-        try { if (el.matches(':popover-open')) return true; } catch (_) {}
+        try { if (el.matches(':popover-open')) return true; } catch {}
       }
       return !el.classList.contains('hidden');
     };
@@ -490,7 +547,6 @@ export const App = {
 
     const positionPopover = (menu, anchor) => {
       if (!menu || !anchor) return;
-      if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.supports === 'function' && window.CSS.supports('anchor-name', '--a')) return;
       const r = anchor.getBoundingClientRect();
       menu.style.top = `${r.bottom + 4}px`;
       menu.style.left = 'auto';
@@ -515,6 +571,16 @@ export const App = {
             positionPopover(e.providerMenu, e.providerBadge);
           } else {
             e.providerMenu.classList.add('hidden');
+          }
+        });
+      }
+      if (e.colorPopover) {
+        e.colorPopover.addEventListener('beforetoggle', (ev) => {
+          if ((/** @type {any} */ (ev)).newState === 'open') {
+            e.colorPopover.classList.remove('hidden');
+            positionPopover(e.colorPopover, e.btnColorFilter);
+          } else {
+            e.colorPopover.classList.add('hidden');
           }
         });
       }
@@ -596,14 +662,14 @@ export const App = {
       });
     }
     if (e.ratingToggle) {
-      const saved = (() => { try { return localStorage.getItem('briefly-rating') || ''; } catch { return ''; } })();
+      const saved = getStorage('better34_rating', 'briefly-rating') || '';
       this.state.ratingFilter = saved;
       e.ratingToggle.querySelectorAll('.rt-btn').forEach(b => b.classList.toggle('active', b.dataset.rating === saved));
       e.ratingToggle.addEventListener('click', (ev) => {
         const b = ev.target.closest('.rt-btn');
         if (!b || b.dataset.rating === this.state.ratingFilter) return;
         this.state.ratingFilter = b.dataset.rating;
-        try { localStorage.setItem('briefly-rating', b.dataset.rating); } catch {}
+        setStorage('better34_rating', b.dataset.rating, 'briefly-rating');
         e.ratingToggle.querySelectorAll('.rt-btn').forEach(x => x.classList.toggle('active', x === b));
         API.invalidate('/');
         this.updateQueryMeta(this.els.searchInput ? this.els.searchInput.value : '');
@@ -631,7 +697,7 @@ export const App = {
       e.btnAddAlias.addEventListener('click', () => this.addAlias());
       const aliasInput = _('alias-input');
       const targetInput = _('alias-target');
-      if (aliasInput) aliasInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); targetInput && targetInput.focus(); } });
+      if (aliasInput) aliasInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); if (targetInput) targetInput.focus(); } });
       if (targetInput) targetInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); go(this.addAlias()); } });
     }
     // Автоскрытие хедера + полоса глубины скролла ленты.
@@ -645,10 +711,10 @@ export const App = {
       e.settingLang.addEventListener('change', () => setLang(e.settingLang.value));
     }
     e.settingTheme.addEventListener('change', () => { this.setTheme(e.settingTheme.value); this.showToast(t('set.savedShort'), 'success'); });
-        e.settingGrid.addEventListener('change', () => { this.setGridSetting(e.settingGrid.value); this.showToast(t('set.savedShort'), 'success'); });
+    e.settingGrid.addEventListener('change', () => { this.setGridSetting(e.settingGrid.value); this.showToast(t('set.savedShort'), 'success'); });
     if (e.settingAutoRefresh) e.settingAutoRefresh.addEventListener('change', () => {
       this.state.autoRefreshFeed = e.settingAutoRefresh.checked;
-      try { localStorage.setItem('briefly_auto_refresh_feed', e.settingAutoRefresh.checked ? '1' : '0'); } catch {}
+      setStorage('better34_auto_refresh_feed', e.settingAutoRefresh.checked ? '1' : '0', 'briefly_auto_refresh_feed');
       this.showToast(t('set.savedShort'), 'success');
     });
     e.settingAccent.addEventListener('click', (ev) => {
@@ -765,9 +831,9 @@ export const App = {
     if (e.backToTop) e.backToTop.addEventListener('click', () => this.scrollToTop());
     const remoteFollow = /** @type {HTMLInputElement|null} */ (document.getElementById('setting-remote-follow'));
     if (remoteFollow) {
-      remoteFollow.checked = localStorage.getItem('briefly_remote_follow') === '1';
+      remoteFollow.checked = getStorage('better34_remote_follow', 'briefly_remote_follow') === '1';
       remoteFollow.addEventListener('change', () => {
-        localStorage.setItem('briefly_remote_follow', remoteFollow.checked ? '1' : '0');
+        setStorage('better34_remote_follow', remoteFollow.checked ? '1' : '0', 'briefly_remote_follow');
         this.showToast(remoteFollow.checked ? 'Пульт включён' : 'Пульт выключен');
       });
     }
@@ -880,8 +946,8 @@ export const App = {
         if (n > 0) this.showToast(`Доставлено оффлайн-изменений: ${n}`, 'success');
       });
     }
-    const savedProfileW = parseFloat(localStorage.getItem('briefly_profile_panel_width') || localStorage.getItem('briefly_panel_width') || '');
-    const savedSettingsW = parseFloat(localStorage.getItem('briefly_settings_panel_width') || localStorage.getItem('briefly_panel_width') || '');
+    const savedProfileW = parseFloat(getStorage('better34_profile_panel_width', 'briefly_profile_panel_width') || getStorage('better34_panel_width', 'briefly_panel_width') || '');
+    const savedSettingsW = parseFloat(getStorage('better34_settings_panel_width', 'briefly_settings_panel_width') || getStorage('better34_panel_width', 'briefly_panel_width') || '');
     this._profileWidth = isFinite(savedProfileW) ? savedProfileW : null;
     this._settingsWidth = isFinite(savedSettingsW) ? savedSettingsW : null;
     this.applyPanelWidth();
@@ -922,82 +988,6 @@ export const App = {
       });
     });
     if (typeof this.initSmartFolders === 'function') this.initSmartFolders();
-  },
-
-  loadTheme() {
-    let theme = 'auto';
-    try { theme = localStorage.getItem('briefly_theme') || 'auto'; } catch {}
-    if (!this.THEMES.includes(theme)) theme = 'auto';
-    this.state.theme = theme;
-    this.applyResolvedTheme();
-    // Режим «Авто»: следим за системной темой вживую.
-    if (window.matchMedia) {
-      if (!this._themeMQ) {
-        this._themeMQ = window.matchMedia('(prefers-color-scheme: light)');
-        const onChange = () => {
-          if (this.state.theme === 'auto') this.applyResolvedTheme();
-        };
-        if (this._themeMQ.addEventListener) this._themeMQ.addEventListener('change', onChange);
-        else if (this._themeMQ.addListener) this._themeMQ.addListener(onChange);
-      }
-    }
-  },
-
-  resolvedTheme() {
-    if (this.state.theme !== 'auto') return this.state.theme;
-    try {
-      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
-    } catch { /* noop */ }
-    return 'dark';
-  },
-
-  applyResolvedTheme() {
-    document.documentElement.setAttribute('data-theme', this.resolvedTheme());
-  },
-
-  setTheme(theme) {
-    if (!this.THEMES.includes(theme)) return;
-    this.state.theme = theme;
-    this.applyResolvedTheme();
-    try { localStorage.setItem('briefly_theme', theme); } catch {}
-  },
-
-  // Доступные темы: базовые — авто/тёмная/светлая, плюс «цветовые схемы»:
-  // deep — AMOLED-чёрный для OLED-экранов, sepia — тёплая «бумажная» светлая.
-  THEMES: ['auto', 'dark', 'light', 'deep', 'sepia'],
-
-  toggleTheme() {
-    const next = this.resolvedTheme() === 'dark' ? 'light' : 'dark';
-    this.setTheme(next);
-  },
-
-  loadGridSetting() {
-    let v = null;
-    try { v = localStorage.getItem('briefly_grid_cols'); } catch {}
-    const n = parseInt(v || '', 10);
-    this.state.gridCols = (Number.isInteger(n) && n >= 2 && n <= 6) ? n : null;
-    this.renderGridMenu();
-  },
-
-  setGridSetting(val) {
-    const n = parseInt(val || '', 10);
-    this.state.gridCols = (val === 'auto' || !Number.isInteger(n)) ? null : (n >= 2 ? Math.min(n, 6) : null);
-    try { localStorage.setItem('briefly_grid_cols', this.state.gridCols === null ? 'auto' : String(this.state.gridCols)); } catch {}
-    this.renderGridMenu();
-    this.rebuildMasonry();
-  },
-
-    loadAutoRefreshSetting() {
-      let v = null;
-      try { v = localStorage.getItem('briefly_auto_refresh_feed'); } catch {}
-      this.state.autoRefreshFeed = v !== '0';
-    },
-
-  renderGridMenu() {
-    const active = this.state.gridCols === null ? 'auto' : String(this.state.gridCols);
-    document.querySelectorAll('.grid-opt').forEach((/** @type {HTMLElement} */ b) => {
-      b.classList.toggle('active', b.dataset.cols === active);
-    });
   },
 
   // Полоса глубины скролла + скрытие хедера при прокрутке вниз.
@@ -1044,7 +1034,7 @@ export const App = {
     const isMenuOpen = this.isMenuOpen || ((el) => {
       if (!el) return false;
       if (typeof el.matches === 'function') {
-        try { if (el.matches(':popover-open')) return true; } catch (_) {}
+        try { if (el.matches(':popover-open')) return true; } catch {}
       }
       return !el.classList.contains('hidden');
     });
@@ -1071,95 +1061,6 @@ export const App = {
     if (!main) return;
     if (typeof main.scrollTo === 'function') main.scrollTo({ top: 0, behavior: 'smooth' });
     else main.scrollTop = 0;
-  },
-
-  ACCENTS: {
-    purple: ['#a78bfa', '#7c5cbf'],
-    indigo: ['#818cf8', '#4f46e5'],
-    blue: ['#60a5fa', '#3b82f6'],
-    sky: ['#38bdf8', '#0284c7'],
-    cyan: ['#22d3ee', '#0891b2'],
-    teal: ['#2dd4bf', '#0d9488'],
-    green: ['#34d399', '#059669'],
-    lime: ['#a3e635', '#65a30d'],
-    amber: ['#fbbf24', '#d97706'],
-    orange: ['#fb923c', '#ea580c'],
-    rose: ['#fb7185', '#e11d48'],
-    pink: ['#f472b6', '#db2777'],
-    red: ['#f87171', '#dc2626'],
-  },
-
-  // mixColor затемняет шестизначный hex к чёрному (ratio 0..1) — из него
-  // строится --accent-dim для кастомного цвета.
-  mixColor(hex, ratio) {
-    const n = parseInt(hex.slice(1), 16);
-    if (!Number.isFinite(n)) return hex;
-    const r = (n >> 16) & 0xFF, g = (n >> 8) & 0xFF, b = n & 0xFF;
-    const dim = (v) => Math.round(v * (1 - ratio)).toString(16).padStart(2, '0');
-    return '#' + dim(r) + dim(g) + dim(b);
-  },
-
-  customAccentColor() {
-    try {
-      const v = localStorage.getItem('briefly_accent_custom');
-      return (v && /^#[0-9a-f]{6}$/i.test(v)) ? v.toLowerCase() : null;
-    } catch { return null; }
-  },
-
-  loadAccent() {
-    let name = 'purple';
-    try { name = localStorage.getItem('briefly_accent') || 'purple'; } catch {}
-    if (name !== 'custom' && !this.ACCENTS[name]) name = 'purple';
-    this.state.accent = name;
-    this.applyAccent(name);
-  },
-
-  applyAccent(name) {
-    let a, d;
-    if (name === 'custom') {
-      const c = this.customAccentColor();
-      if (!c) { a = this.ACCENTS.purple[0]; d = this.ACCENTS.purple[1]; }
-      else { a = c; d = this.mixColor(c, 0.34); }
-    } else {
-      const pair = this.ACCENTS[name];
-      if (!pair) return;
-      a = pair[0]; d = pair[1];
-    }
-    document.documentElement.style.setProperty('--accent', a);
-    document.documentElement.style.setProperty('--accent-dim', d);
-  },
-
-  setAccent(name) {
-    if (name === 'custom') {
-      const input = /** @type {HTMLInputElement | null} */ (document.getElementById('setting-accent-custom'));
-      const raw = input && /^#[0-9a-f]{6}$/i.test(input.value) ? input.value.toLowerCase() : this.customAccentColor();
-      if (!raw) return;
-      try { localStorage.setItem('briefly_accent_custom', raw); } catch {}
-      this.state.accent = 'custom';
-      this.applyAccent('custom');
-      try { localStorage.setItem('briefly_accent', 'custom'); } catch {}
-      this.renderAccent();
-      return;
-    }
-    if (!this.ACCENTS[name]) return;
-    this.state.accent = name;
-    this.applyAccent(name);
-    try { localStorage.setItem('briefly_accent', name); } catch {}
-    this.renderAccent();
-  },
-
-  renderAccent() {
-    document.querySelectorAll('.accent-swatch').forEach((/** @type {HTMLElement} */ b) => {
-      b.classList.toggle('active', b.dataset.accent === this.state.accent);
-    });
-    const inp = /** @type {HTMLInputElement | null} */ (document.getElementById('setting-accent-custom'));
-    if (inp) {
-      inp.classList.toggle('active', this.state.accent === 'custom');
-      if (this.state.accent === 'custom') {
-        const c = this.customAccentColor();
-        if (c) inp.value = c;
-      }
-    }
   },
 
   profileUrl(tab) {
@@ -1348,7 +1249,7 @@ export const App = {
     let nickname = p.nickname || '';
     if (!avatar && !nickname) {
       try {
-        const m = JSON.parse(localStorage.getItem('briefly_profile_meta') || '{}');
+        const m = JSON.parse(getStorage('better34_profile_meta', 'briefly_profile_meta') || '{}');
         avatar = m.avatar || '';
         nickname = m.nickname || '';
       } catch {}
@@ -1373,7 +1274,7 @@ export const App = {
       API.invalidate('/profile');
       this.showToast(t('profile.updated'));
     }).catch(err => this.showToast(tf('err.withMsg', { msg: err.message }), 'error'));
-    try { localStorage.setItem('briefly_profile_meta', JSON.stringify(data)); } catch {}
+    setStorage('better34_profile_meta', JSON.stringify(data), 'briefly_profile_meta');
   },
 
   /** Показать/спрятать крестик очистки по текущему значению поля поиска. */
@@ -1446,7 +1347,10 @@ export const App = {
         clearTimeout(this._scrollSaveTimer);
         this._scrollSaveTimer = setTimeout(() => {
           try {
-            if (this.state.posts.length) sessionStorage.setItem('briefly_scroll_top', String(mainEl.scrollTop));
+            if (this.state.posts.length && typeof sessionStorage !== 'undefined') {
+              sessionStorage.setItem('better34_scroll_top', String(mainEl.scrollTop));
+              sessionStorage.setItem('briefly_scroll_top', String(mainEl.scrollTop));
+            }
           } catch {}
         }, 250);
       }, { passive: true });
@@ -1542,8 +1446,9 @@ export const App = {
   savePanelWidth(w, panelKey = 'settingsPanel') {
     if (panelKey === 'profilePanel') this._profileWidth = w;
     else this._settingsWidth = w;
-    const storageKey = panelKey === 'profilePanel' ? 'briefly_profile_panel_width' : 'briefly_settings_panel_width';
-    try { localStorage.setItem(storageKey, String(w)); } catch {}
+    const storageKey = panelKey === 'profilePanel' ? 'better34_profile_panel_width' : 'better34_settings_panel_width';
+    const fallbackKey = panelKey === 'profilePanel' ? 'briefly_profile_panel_width' : 'briefly_settings_panel_width';
+    setStorage(storageKey, String(w), fallbackKey);
   },
 
   bindPanelResize() {
@@ -1602,109 +1507,6 @@ export const App = {
     bind('settingsPanel', () => { if (this.state.settingsOpen) this.toggleSettings(); });
   },
 
-  startDlPoll() {
-    let lastDone = 0;
-    let hideTimer = null;
-    // Задача 3: уведомление, когда партия загрузок завершилась (см. notify.js).
-    let wasActive = false;
-    let dlErrors = 0;
-    const hideProgress = () => {
-      this.els.dlProgress.classList.add('hidden');
-    };
-    const updateFromStatus = (d) => {
-      const activeCount = (d.queued || 0) + (d.active || 0);
-      if (typeof navigator !== 'undefined' && 'setAppBadge' in navigator) {
-        if (activeCount > 0) {
-          navigator.setAppBadge(activeCount).catch(() => {});
-        } else {
-          navigator.clearAppBadge().catch(() => {});
-        }
-      }
-      if (this.els.btnHeaderQueue) {
-        if (activeCount > 0) {
-          this.els.btnHeaderQueue.classList.remove('hidden');
-          this.els.btnHeaderQueue.classList.add('active');
-          if (this.els.headerQueueCount) this.els.headerQueueCount.textContent = String(activeCount);
-        } else {
-          this.els.btnHeaderQueue.classList.remove('active');
-          this.els.btnHeaderQueue.classList.add('hidden');
-        }
-      }
-      const total = (d.queued || 0) + (d.active || 0) + (d.done || 0);
-      if ((d.queued || 0) + (d.active || 0) > 0) {
-        this.els.dlProgress.classList.remove('hidden');
-        clearTimeout(hideTimer);
-        const pct = total > 0 ? (d.done || 0) / total * 100 : 0;
-        this.els.dlProgressBar.style.width = `${Math.min(pct, 100)}%`;
-        this.els.dlProgressText.textContent = (d.active || 0) > 0 ? `${d.done || 0}/${total}` : `готово: ${d.done || 0}`;
-        if ((d.done || 0) > lastDone && this.state.viewerOpen) {
-          const p = this.state.posts[this.state.viewerIndex];
-          if (p && (d.done_ids || []).includes(p.id)) this.els.viewerProgress.textContent = t('viewer.downloaded');
-        }
-      } else if (total > 0) {
-        // Партия завершилась (нет ни queued, ни active) — уведомляем (задача 3).
-        if (wasActive && this.notifyDownloadsDone(d.done || 0, dlErrors)) {
-          clearTimeout(hideTimer);
-          hideTimer = setTimeout(hideProgress, 3000);
-        }
-        wasActive = false;
-        dlErrors = 0;
-        this.els.dlProgress.classList.remove('hidden');
-        this.els.dlProgressBar.style.width = '100%';
-        this.els.dlProgressText.textContent = `готово: ${d.done || 0}`;
-        if ((d.done || 0) > lastDone && this.state.viewerOpen) {
-          const p = this.state.posts[this.state.viewerIndex];
-          if (p && (d.done_ids || []).includes(p.id)) this.els.viewerProgress.textContent = t('viewer.downloaded');
-        }
-        clearTimeout(hideTimer);
-        hideTimer = setTimeout(hideProgress, 3000);
-      }
-      wasActive = (d.queued || 0) + (d.active || 0) > 0;
-      lastDone = d ? (d.done || 0) : 0;
-    };
-    const applyResult = (r) => {
-      if (r.duplicate_of) {
-        this.state.downloadQueue.delete(r.post_id);
-        this.state.downloading.delete(r.post_id);
-        this.showToast(`Пост ${r.post_id} — дубликат #${r.duplicate_of}, файл уже скачан`);
-        return;
-      }
-      if (r.success) {
-        const p = this.state.posts.find(x => x.id === r.post_id);
-        if (p) {
-          p.downloaded = true;
-          const card = this.getCardByIndex(this.state.posts.indexOf(p));
-          if (card) card.classList.add('downloaded');
-        }
-      } else {
-        this.state.downloadQueue.delete(r.post_id);
-        this.state.downloading.delete(r.post_id);
-        dlErrors++;
-        this.showToast(`Ошибка скачивания поста ${r.post_id}: ${r.error || 'неизвестная'}`, 'error');
-      }
-    };
-    // SSE: авторизация через cookie-сессию (EventSource шлёт куки сам).
-    // Токен в query больше не подставляем: он попадал в access-логи,
-    // а страница legacy-токен и так не получает (см. serveIndex).
-    const es = new EventSource('/api/events');
-    es.addEventListener('event', (ev) => {
-      let d;
-      try { d = JSON.parse(ev.data); } catch { return; }
-      if (d.type === 'status') updateFromStatus(d);
-      else if (d.type === 'result') applyResult(d);
-      else if (d.type === 'comment' && this._onCommentEvent) this._onCommentEvent(d.post_id);
-      else if (d.type === 'remote' && d.id > 0) this.onRemotePost(d.id);
-      // События 'friends' больше нет: обмен с друзьями идёт только по запросу
-      // (открытие профиля или кнопка «Обновить»), поэтому в фоне перерисовывать
-      // профиль и вкладку «Друзья» нечего. Кто обменялся — тот и перерисует.
-      else if (d.type === 'post_saved' && this.state.isLocal && this.state.autoRefreshFeed) {
-        this.loadPosts(true);
-      }
-    });
-    es.onerror = () => {  };
-    this._sse = es;
-  },
-
   // ── Пульт и «похожие» ───────────────────────────────────────────────────
   // remotePushCurrent просит все подключённые клиенты открыть текущий пост.
   async remotePushCurrent() {
@@ -1720,7 +1522,7 @@ export const App = {
 
   // onRemotePost — на приёмнике: открыть присланный пост, если включён пульт.
   async onRemotePost(id) {
-    if (localStorage.getItem('briefly_remote_follow') !== '1') return;
+    if (getStorage('better34_remote_follow', 'briefly_remote_follow') !== '1') return;
     try {
       if (this.state.viewerOpen) {
         const idx = this.state.posts.findIndex(p => p.id === id);
@@ -1731,7 +1533,7 @@ export const App = {
       const saved = this.state.posts;
       this.state.posts = posts.concat(saved.filter(p => p.id !== id));
       this.openViewer(0);
-    } catch (e) { /* сеть моргнула — не критично */ }
+    } catch { /* сеть моргнула — не критично */ }
   },
 
   // ── Ряд «Похожие по тегам» во вьювере ───────────────────────────────────
@@ -1748,11 +1550,25 @@ export const App = {
    */
   onRelatedClick(ev) {
     const tab = ev && ev.target && ev.target.closest ? ev.target.closest('.rel-tab') : null;
-    if (tab && tab.dataset && tab.dataset.mode) {
-      ev.preventDefault();
-      const cur = this.state.posts[this.state.viewerIndex];
-      if (cur) this.loadRelated(cur, tab.dataset.mode);
-      return;
+    if (tab && tab.dataset) {
+      if (tab.dataset.mode) {
+        ev.preventDefault();
+        const mode = tab.dataset.mode;
+        this._relCurrentMode = mode;
+        setStorage('better34_rel_mode', mode, 'briefly_rel_mode');
+        const cur = this.state.posts[this.state.viewerIndex];
+        if (cur) this.loadRelated(cur, mode, this._relCurrentRating);
+        return;
+      }
+      if (tab.dataset.rating !== undefined) {
+        ev.preventDefault();
+        const rating = tab.dataset.rating;
+        this._relCurrentRating = rating;
+        setStorage('better34_rel_rating', rating, 'briefly_rel_rating');
+        const cur = this.state.posts[this.state.viewerIndex];
+        if (cur) this.loadRelated(cur, this._relCurrentMode, rating);
+        return;
+      }
     }
     const sBtn = ev && ev.target && ev.target.closest ? ev.target.closest('.rel-search-btn') : null;
     if (sBtn && sBtn.dataset && sBtn.dataset.tags) {
@@ -1788,12 +1604,25 @@ export const App = {
    */
   onRelatedKeydown(ev) {
     const tab = ev && ev.target && ev.target.closest ? ev.target.closest('.rel-tab') : null;
-    if (tab && tab.dataset && tab.dataset.mode) {
+    if (tab && tab.dataset && (tab.dataset.mode || tab.dataset.rating !== undefined)) {
       if (ev.key === 'Enter' || ev.key === ' ') {
         ev.preventDefault();
-        const cur = this.state.posts[this.state.viewerIndex];
-        if (cur) this.loadRelated(cur, tab.dataset.mode);
-        return;
+        if (tab.dataset.mode) {
+          const mode = tab.dataset.mode;
+          this._relCurrentMode = mode;
+          setStorage('better34_rel_mode', mode, 'briefly_rel_mode');
+          const cur = this.state.posts[this.state.viewerIndex];
+          if (cur) this.loadRelated(cur, mode, this._relCurrentRating);
+          return;
+        }
+        if (tab.dataset.rating !== undefined) {
+          const rating = tab.dataset.rating;
+          this._relCurrentRating = rating;
+          setStorage('better34_rel_rating', rating, 'briefly_rel_rating');
+          const cur = this.state.posts[this.state.viewerIndex];
+          if (cur) this.loadRelated(cur, this._relCurrentMode, rating);
+          return;
+        }
       }
     }
     const sBtn = ev && ev.target && ev.target.closest ? ev.target.closest('.rel-search-btn') : null;
@@ -1926,101 +1755,21 @@ export const App = {
     return this.openSimilarById(p.id);
   },
 
-  async pauseDownloads() {
-    await API.post('/download/pause');
-    this.els.dlPause.classList.add('hidden');
-    this.els.dlResume.classList.remove('hidden');
-    this.showToast(t('dl.paused'));
-  },
-
-  async resumeDownloads() {
-    await API.post('/download/resume');
-    this.els.dlResume.classList.add('hidden');
-    this.els.dlPause.classList.remove('hidden');
-    this.showToast(t('dl.resumed'));
-  },
-
-  async showQueue() {
-    if (this.state.viewerOpen) this.closeViewer();
-    try {
-      const d = await API.get('/download/queue');
-      const active = d.active || [];
-      const queue = d.queue || [];
-      let html = '';
-      if (active.length > 0) {
-        html += `<div class="queue-active-info">Активны: ${active.join(', ')}</div>`;
-      }
-      if (queue.length === 0) {
-        html += '<div class="queue-empty">Очередь пуста</div>';
-      } else {
-        // file_type экранируем (строка с сервера), действия — через
-        // data-атрибуты и делегирование вместо inline onclick (CSP).
-        html += queue.map(j =>
-          `<div class="queue-item">
-            <span class="queue-item-id">#${j.post_id}</span>
-            <span class="queue-item-ext">${esc(j.file_type || '')}</span>
-            <div class="queue-item-actions">
-              <button data-qact="up" data-id="${j.post_id}" title="${esc(t('jobs.up'))}">${icon('chevronUp', 13)}</button>
-              <button data-qact="down" data-id="${j.post_id}" title="${esc(t('jobs.down'))}">${icon('chevronDown', 13)}</button>
-              <button data-qact="cancel" data-id="${j.post_id}" title="${esc(t('jobs.cancel'))}" style="color:var(--error)">${icon('x', 13)}</button>
-            </div>
-          </div>`
-        ).join('');
-      }
-      this.els.queueBody.innerHTML = html;
-      if (!this._queueBound) {
-        this._queueBound = true;
-        this.els.queueBody.addEventListener('click', (ev) => {
-          const btn = ev.target.closest('button[data-qact]');
-          if (!btn) return;
-          const id = parseInt(btn.dataset.id, 10);
-          if (btn.dataset.qact === 'up') go(this.queueMoveUp(id));
-          else if (btn.dataset.qact === 'down') go(this.queueMoveDown(id));
-          else if (btn.dataset.qact === 'cancel') go(this.queueCancel(id));
-        });
-      }
-      this.els.queueModal.classList.remove('hidden');
-    } catch (err) { this.showToast(`Ошибка: ${err.message}`, 'error'); }
-  },
-
   toggleViewerMobile() {
     const el = this.els.viewerMobileActions;
     if (!el) return;
     el.classList.toggle('collapsed');
-    try { localStorage.setItem('briefly_viewer_panel', el.classList.contains('collapsed') ? '1' : '0'); } catch (_) {}
-  },
-
-  hideQueue() { this.els.queueModal.classList.add('hidden'); },
-
-  async queueCancel(id) {
-    await API.post(`/download/cancel/${id}`);
-    this.showToast(`Загрузка #${id} отменена`);
-    this.showQueue();
-  },
-
-  async queueMoveUp(id) {
-    await API.post(`/download/move-up/${id}`);
-    this.showQueue();
-  },
-
-  async queueMoveDown(id) {
-    await API.post(`/download/move-down/${id}`);
-    this.showQueue();
-  },
-
-  cycleGridDensity() {
-    const order = ['auto', '2', '3', '4', '5', '6'];
-    const cur = this.state.gridCols === null ? 'auto' : String(this.state.gridCols);
-    const next = order[(order.indexOf(cur) + 1) % order.length];
-    this.setGridSetting(next);
-    this.showToast(`Сетка: ${next === 'auto' ? 'авто' : next + ' в ряд'}`);
+    try {
+      const val = el.classList.contains('collapsed') ? '1' : '0';
+      setStorage('better34_viewer_panel', val, 'briefly_viewer_panel');
+    } catch {}
   },
 
   async recommendFeed() {
     if (this.state.recommendActive) { this.exitRecommend(); return; }
     API.invalidate('/profile');
     if (!this.state.profileOpen && !this._profileFresh) {
-      try { await this.loadProfile(); } catch (_) {}
+      try { await this.loadProfile(); } catch {}
     }
     const liked = (this.state.profile && this.state.profile.liked_posts) || [];
     if (liked.length < 5) {
@@ -2059,18 +1808,18 @@ export const App = {
     }, 1200);
   },
 
-  _recViewedKey: 'briefly_rec_viewed',
+  _recViewedKey: 'better34_rec_viewed',
 
   _recViewedLoad() {
     try {
-      const arr = JSON.parse(localStorage.getItem(this._recViewedKey) || '[]');
+      const arr = JSON.parse(getStorage(this._recViewedKey, 'briefly_rec_viewed') || '[]');
       return Array.isArray(arr) ? arr.filter(Number.isFinite).slice(0, 500) : [];
     } catch { return []; }
   },
 
   _recViewedSave() {
     try {
-      localStorage.setItem(this._recViewedKey, JSON.stringify(this._recViewed.slice(-500)));
+      setStorage(this._recViewedKey, JSON.stringify(this._recViewed.slice(-500)), 'briefly_rec_viewed');
     } catch {}
   },
 
@@ -2186,14 +1935,14 @@ export const App = {
     try {
       await API.post('/recommend/dislike', { tags: post.tags.split(' ').slice(0, 40) });
       this._scheduleRecommendRefresh();
-    } catch (_) {}
+    } catch {}
   },
 
   async openPresetsSubmenu() {
     const menu = this.els.headerMenu;
     if (!this._headerMenuHTML) this._headerMenuHTML = menu.innerHTML;
     if (!this.state.profileOpen && !this._profileFresh) {
-      try { await this.loadProfile(); } catch (_) {}
+      try { await this.loadProfile(); } catch {}
     }
     /** @type {{kind?: string, query?: string, name?: string}[]} */
     const presets = /** @type {{kind?: string, query?: string, name?: string}[]} */ (
@@ -2214,6 +1963,10 @@ export const App = {
     this.els.headerMenu.innerHTML = this._headerMenuHTML || '';
   },
 };
+
+extendStorage(App);
+extendQueue(App);
+extendShortcuts(App);
 
 // Доступ из консоли браузера; в Node (тесты) window не существует.
 if (typeof window !== 'undefined') (/** @type {any} */ (window)).App = App;

@@ -34,7 +34,7 @@ defG('document', {
 // Blob-URL для JSON-экспорта: подменяем, чтобы не тащить файловую систему.
 const blobURLs = [];
 defG('URL', {
-  createObjectURL(blob) { const u = 'blob:fake/' + blobURLs.length; blobURLs.push(u); return u; },
+  createObjectURL(_blob) { const u = 'blob:fake/' + blobURLs.length; blobURLs.push(u); return u; },
   revokeObjectURL(u) { this._revoked = (this._revoked || []).concat(u); },
 });
 

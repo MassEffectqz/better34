@@ -7,8 +7,8 @@ import { t } from './i18n.js';
 
 // ── Видео: настройки, позиция, autoplay, ошибки ─────────────────────────
 
-App._videoPrefsKey = 'briefly_video_prefs';
-App._videoPosKey = 'briefly_video_pos';
+App._videoPrefsKey = 'better34_video_prefs';
+App._videoPosKey = 'better34_video_pos';
 App.VIDEO_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 // Мьют — сессионная настройка: в localStorage не хранится. Иначе один
 // fallback-мьют при заблокированном autoplay «отравлял» настройки и все
@@ -16,7 +16,9 @@ App.VIDEO_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 App._loadVideoPrefs = function () {
   if (App._videoPrefsCache) return App._videoPrefsCache;
   let p = {};
-  try { p = JSON.parse(localStorage.getItem(App._videoPrefsKey) || '{}') || {}; } catch { /* noop */ }
+  try {
+    p = JSON.parse(localStorage.getItem(App._videoPrefsKey) || localStorage.getItem('briefly_video_prefs') || '{}') || {};
+  } catch { /* noop */ }
   App._videoPrefsCache = {
     volume: typeof p.volume === 'number' ? Math.min(1, Math.max(0, p.volume)) : 1,
     muted: false,
@@ -36,6 +38,7 @@ App._saveVideoPrefs = function () {
       volume: App._videoPrefsCache.volume,
       rate: App._videoPrefsCache.rate,
     }));
+    localStorage.removeItem('briefly_video_prefs');
   } catch { /* noop */ }
 };
 
@@ -111,7 +114,9 @@ App._currentPostId = function () {
 App._loadVideoPosMap = function () {
   if (App._videoPosMap) return App._videoPosMap;
   let m = {};
-  try { m = JSON.parse(localStorage.getItem(App._videoPosKey) || '{}') || {}; } catch { /* noop */ }
+  try {
+    m = JSON.parse(localStorage.getItem(App._videoPosKey) || localStorage.getItem('briefly_video_pos') || '{}') || {};
+  } catch { /* noop */ }
   App._videoPosMap = m && typeof m === 'object' ? m : {};
   return App._videoPosMap;
 };
@@ -123,7 +128,10 @@ App._rememberVideoTime = function (id, t) {
   m[id] = Math.floor(t);
   const keys = Object.keys(m);
   while (keys.length > 60) { delete m[keys[0]]; keys.shift(); }
-  try { localStorage.setItem(App._videoPosKey, JSON.stringify(m)); } catch { /* noop */ }
+  try {
+    localStorage.setItem(App._videoPosKey, JSON.stringify(m));
+    localStorage.removeItem('briefly_video_pos');
+  } catch { /* noop */ }
 };
 
 App._savedVideoTime = function (id) {
@@ -137,7 +145,10 @@ App._forgetVideoTime = function (id) {
   const m = App._loadVideoPosMap();
   if (m[id] == null) return;
   delete m[id];
-  try { localStorage.setItem(App._videoPosKey, JSON.stringify(m)); } catch { /* noop */ }
+  try {
+    localStorage.setItem(App._videoPosKey, JSON.stringify(m));
+    localStorage.removeItem('briefly_video_pos');
+  } catch { /* noop */ }
 };
 
 // Сохраняет позицию текущего <video> из DOM (вызывать ДО смены поста).

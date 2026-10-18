@@ -30,8 +30,9 @@ App.renderAPIKeys = function (keys) {
   this.state.apiKeys = list;
   listEl.innerHTML = '';
   list.forEach((k, i) => {
-    const row = document.createElement('div');
+    const row = document.createElement('form');
     row.className = 'api-key-row';
+    row.onsubmit = (e) => e.preventDefault();
     row.innerHTML = `
       <input type="text" class="api-key-name" placeholder="${t('set.apiKeyName')}" value="${esc(k.name || '')}" autocomplete="off">
       <input type="password" class="api-key-value" placeholder="${t('set.apiKeyValue')}" value="${esc(k.api_key || '')}" spellcheck="false" autocomplete="off">

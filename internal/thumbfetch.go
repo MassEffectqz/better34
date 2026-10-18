@@ -241,7 +241,7 @@ func (h *Handler) downloadThumbFrom(rawURL string, id int, post *Post, tg *Thumb
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Briefly/1.0")
+	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Referer", h.refererForHost(u.Hostname()))
 	resp, err := MediaHTTPClient().Do(req)
 	if err != nil {

@@ -19,7 +19,7 @@ function el(id) {
       _s: new Set(),
       add(...c) { c.forEach(x => this._s.add(x)); },
       remove(...c) { c.forEach(x => this._s.delete(x)); },
-      toggle(c, f) { if (f === undefined) { this._s.has(c) ? this._s.delete(c) : this._s.add(c); } else if (f) this._s.add(c); else this._s.delete(c); },
+      toggle(c, f) { if (f === undefined) { if (this._s.has(c)) this._s.delete(c); else this._s.add(c); } else if (f) this._s.add(c); else this._s.delete(c); },
       contains(c) { return this._s.has(c); },
     },
     addEventListener() {}, removeEventListener() {},

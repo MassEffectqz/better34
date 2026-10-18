@@ -72,7 +72,9 @@ func (h *Handler) DownloadZip(c *gin.Context) {
 	defer zw.Close()
 
 	used := make(map[string]int, len(files))
-	buf := make([]byte, 256<<10)
+	bufPtr := GetBuffer128k()
+	defer PutBuffer128k(bufPtr)
+	buf := *bufPtr
 	for _, f := range files {
 		ext := strings.ToLower(filepath.Ext(f.path))
 		base := fmt.Sprintf("%d_%s%s", f.id, "post", ext)

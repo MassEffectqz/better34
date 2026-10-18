@@ -55,22 +55,22 @@ jobs:
       - name: Build frontend before Go
         run: npm run build
       - name: Build windows/amd64
-        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o briefly.exe .
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o better34.exe .
       - name: Build linux/amd64
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o briefly-linux-amd64 .
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o better34-linux-amd64 .
       - name: Build linux/arm64
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o briefly-linux-arm64 .
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o better34-linux-arm64 .
       - name: Smoke test self-contained Linux binary
-        run: bash scripts/smoke.sh briefly-linux-amd64
+        run: bash scripts/smoke.sh better34-linux-amd64
       - name: Checksums
-        run: sha256sum briefly.exe briefly-linux-amd64 briefly-linux-arm64 > SHA256SUMS
+        run: sha256sum better34.exe better34-linux-amd64 better34-linux-arm64 > SHA256SUMS
       - name: Attest build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: |
-            briefly.exe
-            briefly-linux-amd64
-            briefly-linux-arm64
+            better34.exe
+            better34-linux-amd64
+            better34-linux-arm64
             SHA256SUMS
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -78,9 +78,9 @@ jobs:
           prerelease: ${{ steps.channel.outputs.stable != 'true' }}
           make_latest: ${{ steps.channel.outputs.stable == 'true' }}
           files: |
-            briefly.exe
-            briefly-linux-amd64
-            briefly-linux-arm64
+            better34.exe
+            better34-linux-amd64
+            better34-linux-arm64
             SHA256SUMS
 
   docker:

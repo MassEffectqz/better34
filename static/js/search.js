@@ -140,8 +140,13 @@ App.fetchSuggestions = function (tail) {
 App.updateQueryMeta = function (q) {
   const el = this.els.queryMeta;
   if (!el) return;
+  const box = this.els.searchBox;
   const query = q.trim();
-  if (!query) { el.classList.remove('visible'); return; }
+  if (!query) {
+    el.classList.remove('visible');
+    if (box && box.classList) box.classList.remove('has-meta');
+    return;
+  }
   const terms = query.split(/\s+/).filter(Boolean).length;
   const hidden = (this.state.profile && this.state.profile.hidden_tags) || [];
   // Сервер prepend'ит rating-метатеги к запросу (в первую | группу) до
@@ -166,13 +171,18 @@ App.updateQueryMeta = function (q) {
     if (budget - (t.length + 2) >= 0) { budget -= t.length + 2; }
     else { local++; }
   }
-  if (!hidden.length && terms <= 1) { el.classList.remove('visible'); return; }
+  if (!hidden.length && terms <= 1) {
+    el.classList.remove('visible');
+    if (box && box.classList) box.classList.remove('has-meta');
+    return;
+  }
   const total = terms + hidden.length;
   el.textContent = local > 0 ? `${total} · ${local} лок.` : `${total}`;
   el.title = local > 0
     ? `Сервер получит ${total - local} тегов, остальные ${local} отфильтруются локально`
     : `Всего тегов: ${total} (в лимите источника)`;
   el.classList.add('visible');
+  if (box && box.classList) box.classList.add('has-meta');
 };
 
 // suggTier — релевантность тега к набранному префиксу; чем меньше, тем выше

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/disintegration/imaging"
@@ -28,8 +29,34 @@ func NewThumbnailGenerator() *ThumbnailGenerator {
 	}
 }
 
+var (
+	ffmpegCheckOnce sync.Once
+	ffmpegBinary    string
+)
+
+func ffmpegAvailable() string {
+	ffmpegCheckOnce.Do(func() {
+		p, err := exec.LookPath("ffmpeg")
+		if err == nil {
+			ffmpegBinary = p
+		}
+	})
+	return ffmpegBinary
+}
+
 func (tg *ThumbnailGenerator) ThumbPath(postID int) string {
-	return filepath.Join(tg.thumbDir, fmt.Sprintf("%d.jpg", postID))
+	webp := filepath.Join(tg.thumbDir, fmt.Sprintf("%d.webp", postID))
+	if _, err := os.Stat(webp); err == nil {
+		return webp
+	}
+	jpg := filepath.Join(tg.thumbDir, fmt.Sprintf("%d.jpg", postID))
+	if _, err := os.Stat(jpg); err == nil {
+		return jpg
+	}
+	if ffmpegAvailable() != "" {
+		return webp
+	}
+	return jpg
 }
 
 // downscaleForThumb — двухступенчатый даунскейл: для очень больших
@@ -50,15 +77,32 @@ var videoExtensions = map[string]bool{
 }
 
 func (tg *ThumbnailGenerator) Generate(sourcePath string, postID int) (string, error) {
-	thumbPath := tg.ThumbPath(postID)
-
-	if _, err := os.Stat(thumbPath); err == nil {
-		return thumbPath, nil
+	webpPath := filepath.Join(tg.thumbDir, fmt.Sprintf("%d.webp", postID))
+	if _, err := os.Stat(webpPath); err == nil {
+		return webpPath, nil
+	}
+	jpgPath := filepath.Join(tg.thumbDir, fmt.Sprintf("%d.jpg", postID))
+	if _, err := os.Stat(jpgPath); err == nil {
+		return jpgPath, nil
 	}
 
 	ext := strings.ToLower(filepath.Ext(sourcePath))
 	if videoExtensions[ext] {
 		return tg.generateVideoThumbnail(sourcePath, postID)
+	}
+
+	os.MkdirAll(tg.thumbDir, 0o755)
+	size := GetConfig().GetThumbSize()
+
+	// Если доступен ffmpeg, создаём WebP миниатюру: на 30–50% легче JPEG при той же четкости
+	if ffmpeg := ffmpegAvailable(); ffmpeg != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		scaleFilter := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease:flags=fast_bilinear", size, size)
+		cmd := exec.CommandContext(ctx, ffmpeg, "-y", "-i", sourcePath, "-vframes", "1", "-vf", scaleFilter, "-c:v", "libwebp", "-quality", "75", webpPath)
+		if err := cmd.Run(); err == nil {
+			return webpPath, nil
+		}
 	}
 
 	srcImg, err := imaging.Open(sourcePath, imaging.AutoOrientation(true))
@@ -69,30 +113,27 @@ func (tg *ThumbnailGenerator) Generate(sourcePath string, postID int) (string, e
 		return "", fmt.Errorf("failed to open image %s: %w", sourcePath, err)
 	}
 
-	size := GetConfig().GetThumbSize()
 	thumb := imaging.Fit(downscaleForThumb(srcImg, size), size, size, imaging.Lanczos)
-
-	os.MkdirAll(tg.thumbDir, 0o755)
-	if err := imaging.Save(thumb, thumbPath, imaging.JPEGQuality(80)); err != nil {
+	if err := imaging.Save(thumb, jpgPath, imaging.JPEGQuality(80)); err != nil {
 		return "", fmt.Errorf("failed to save thumbnail: %w", err)
 	}
 
-	return thumbPath, nil
+	return jpgPath, nil
 }
 
 // generateVideoThumbnail — извлекает кадр из видео через ffmpeg.
 // При любой неудаче (ffmpeg отсутствует, кадр не извлёкся, таймаут) возвращает
 // ОШИБКУ, а не исходный файл: превью-сетка не должна отдавать видео целиком.
 func (tg *ThumbnailGenerator) generateVideoThumbnail(sourcePath string, postID int) (string, error) {
-	ffmpegPath, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		return "", fmt.Errorf("ffmpeg not found: %w", err)
+	ffmpegPath := ffmpegAvailable()
+	if ffmpegPath == "" {
+		return "", fmt.Errorf("ffmpeg not found")
 	}
 
-	thumbPath := tg.ThumbPath(postID)
+	webpPath := filepath.Join(tg.thumbDir, fmt.Sprintf("%d.webp", postID))
 	os.MkdirAll(tg.thumbDir, 0o755)
 
-	// Извлекаем кадр на 0.5сек, масштабируем до thumbSize
+	// Извлекаем кадр на 0.5сек, масштабируем до thumbSize в WebP
 	size := GetConfig().GetThumbSize()
 	args := []string{"-y"}
 	if os.Getenv("BRIEFLY_FFMPEG_HWACCEL") == "1" {
@@ -104,8 +145,9 @@ func (tg *ThumbnailGenerator) generateVideoThumbnail(sourcePath string, postID i
 		"-vframes", "1",
 		// fast_bilinear — в разы быстрее на 4K-видео, разница на 300px незаметна
 		"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", size, size, size, size),
-		"-q:v", "2",
-		thumbPath,
+		"-c:v", "libwebp",
+		"-quality", "75",
+		webpPath,
 	)
 
 	// Зависший ffmpeg (битый файл) не должен навсегда блокировать воркер
@@ -118,11 +160,20 @@ func (tg *ThumbnailGenerator) generateVideoThumbnail(sourcePath string, postID i
 	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
+		// Fallback к JPEG если libwebp не поддержан конкретным билдом ffmpeg
+		jpgPath := filepath.Join(tg.thumbDir, fmt.Sprintf("%d.jpg", postID))
+		argsJpg := []string{"-y", "-ss", "0.5", "-i", sourcePath, "-vframes", "1",
+			"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=%d:%d:(ow-iw)/2:(oh-ih)/2", size, size, size, size),
+			"-q:v", "2", jpgPath}
+		cmdJpg := exec.CommandContext(ctx, ffmpegPath, argsJpg...)
+		if errJpg := cmdJpg.Run(); errJpg == nil {
+			return jpgPath, nil
+		}
 		log.Printf("ffmpeg thumbnail %s failed: %v; stderr=%s", sourcePath, err, stderr.String())
 		return "", err
 	}
 
-	return thumbPath, nil
+	return webpPath, nil
 }
 
 func (tg *ThumbnailGenerator) GenerateFromReader(r image.Image, postID int) (string, error) {

@@ -146,7 +146,7 @@ func (h *Handler) GetProfileData(c *gin.Context) {
 
 	nickname := ""
 	avatar := ""
-	if u := c.GetString("briefly_user"); u != "" {
+	if u := UserFromContext(c); u != "" {
 		if acc, ok := GetAccounts().Get(u); ok {
 			nickname = acc.Nickname
 			if nickname == "" {

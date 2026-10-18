@@ -94,7 +94,7 @@ App.extractPalette = function (img) {
 
     const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
     const chosen = [];
-    const hues = new Set();
+    const hues = [];
 
     for (const [hex] of sorted) {
       if (chosen.length >= 4) break;
@@ -113,16 +113,55 @@ App.extractPalette = function (img) {
 
       if (isDistinct || chosen.length < 2) {
         chosen.push(hex);
-        hues.add(hue);
+        hues.push(hue);
       }
     }
 
-    const res = { colors: chosen, hues: [...hues] };
+    const res = { colors: chosen, hues };
     paletteCache.set(key, res);
     return res;
   } catch {
     return { colors: [], hues: [] };
   }
+};
+
+/**
+ * Асинхронное извлечение палитры с выносом вычислений в Web Worker.
+ * @this {any}
+ * @param {HTMLImageElement} img
+ * @returns {Promise<{ colors: string[], hues: string[] }>}
+ */
+App.extractPaletteAsync = async function (img) {
+  if (!img || !img.naturalWidth || !img.naturalHeight) {
+    return { colors: [], hues: [] };
+  }
+  const key = img.src;
+  if (paletteCache.has(key)) return paletteCache.get(key);
+
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 24;
+    canvas.height = 24;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return this.extractPalette(img);
+    ctx.drawImage(img, 0, 0, 24, 24);
+    const imgData = ctx.getImageData(0, 0, 24, 24);
+
+    if (this.workerCall) {
+      try {
+        const res = await this.workerCall('extractPalette', {
+          data: imgData.data,
+          width: 24,
+          height: 24,
+        });
+        if (res && res.colors) {
+          paletteCache.set(key, res);
+          return res;
+        }
+      } catch {}
+    }
+  } catch {}
+  return this.extractPalette(img);
 };
 
 const HUE_TRANSLATIONS = {
@@ -158,8 +197,8 @@ App.renderViewerPalette = function (post) {
   const img = this.els.viewerContent.querySelector('img');
   if (!img) return;
 
-  const show = () => {
-    const pal = this.extractPalette(img);
+  const show = async () => {
+    const pal = await this.extractPaletteAsync(img);
     container.innerHTML = '';
     if (!pal.colors || !pal.colors.length) return;
 
@@ -175,13 +214,21 @@ App.renderViewerPalette = function (post) {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (e.shiftKey) {
-          this.setColorFilter(hue);
-        } else {
           if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(hex);
           }
           this.showToast(tf('color.copied', { hex }), 'success');
+        } else {
+          this.setColorFilter(hue);
         }
+      });
+      btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(hex);
+        }
+        this.showToast(tf('color.copied', { hex }), 'success');
       });
       container.appendChild(btn);
     });
@@ -203,6 +250,9 @@ App.setColorFilter = function (colorName) {
   const popover = document.getElementById('color-popover');
   if (popover && typeof (/** @type {any} */ (popover)).hidePopover === 'function') {
     try { (/** @type {any} */ (popover)).hidePopover(); } catch {}
+  }
+  if (this.state.viewerOpen && typeof this.closeViewer === 'function') {
+    this.closeViewer({ keepUrl: true });
   }
   let q = (this.state.query || (this.els.searchInput && this.els.searchInput.value) || '').trim();
   q = q.replace(/(?:^|\s)color:\w+/g, '').trim();

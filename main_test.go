@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"briefly/internal"
+	"better34/internal"
 )
 
 func TestHostAllowed(t *testing.T) {
@@ -147,8 +147,10 @@ func TestTokenMatches(t *testing.T) {
 		}
 	}
 
+	ok("X-Better34-Token", func(r *http.Request) { r.Header.Set("X-Better34-Token", "secret") })
 	ok("X-Briefly-Token", func(r *http.Request) { r.Header.Set("X-Briefly-Token", "secret") })
 	ok("Bearer", func(r *http.Request) { r.Header.Set("Authorization", "Bearer secret") })
+	fail("wrong better34 header", func(r *http.Request) { r.Header.Set("X-Better34-Token", "nope") })
 	fail("wrong header", func(r *http.Request) { r.Header.Set("X-Briefly-Token", "nope") })
 	fail("wrong bearer", func(r *http.Request) { r.Header.Set("Authorization", "Bearer nope") })
 	fail("no token", nil)

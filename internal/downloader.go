@@ -112,10 +112,12 @@ func NewDownloader(workers int, onResult func(DownloadResult)) *Downloader {
 	d.client.Store(&http.Client{
 		Timeout: 120 * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns:       workers * 2,
-			IdleConnTimeout:    0,
-			DisableCompression: true,
-			DialContext:        transport.DialContext,
+			MaxIdleConns:        workers * 2,
+			MaxIdleConnsPerHost: workers * 2,
+			IdleConnTimeout:     90 * time.Second,
+			ForceAttemptHTTP2:   true,
+			DisableCompression:  true,
+			DialContext:         transport.DialContext,
 		},
 	})
 	d.queueCond = sync.NewCond(&d.queueMu)
@@ -331,7 +333,7 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 		if err != nil {
 			return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("failed to create request: %w", err)}
 		}
-		req.Header.Set("User-Agent", "Briefly/1.0")
+		req.Header.Set("User-Agent", UserAgent)
 		referer := job.Referer
 		if referer == "" {
 			referer = "https://rule34.xxx/"
@@ -410,7 +412,9 @@ func (d *Downloader) downloadFile(ctx context.Context, job DownloadJob) Download
 			return DownloadResult{PostID: job.PostID, Error: fmt.Errorf("failed to create file: %w", err)}
 		}
 
-		written, copyErr := io.Copy(outFile, io.LimitReader(resp.Body, limit-resumeFrom+1))
+		bufPtr := GetBuffer64k()
+		written, copyErr := io.CopyBuffer(outFile, io.LimitReader(resp.Body, limit-resumeFrom+1), *bufPtr)
+		PutBuffer64k(bufPtr)
 		resp.Body.Close()
 		outFile.Close()
 		if copyErr != nil {
@@ -622,10 +626,12 @@ func (d *Downloader) RebuildClient() {
 	newClient := &http.Client{
 		Timeout: 120 * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns:       d.workers * 2,
-			IdleConnTimeout:    0,
-			DisableCompression: true,
-			DialContext:        transport.DialContext,
+			MaxIdleConns:        d.workers * 2,
+			MaxIdleConnsPerHost: d.workers * 2,
+			IdleConnTimeout:     90 * time.Second,
+			ForceAttemptHTTP2:   true,
+			DisableCompression:  true,
+			DialContext:         transport.DialContext,
 		},
 	}
 	// Закрываем старый transport, чтобы не утечь соединениями (S7).

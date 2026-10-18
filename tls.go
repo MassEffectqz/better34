@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
 	"log"
 	"log/slog"
 	"math/big"
@@ -30,7 +31,7 @@ import (
 // поверх TLS, а без него лимит 6 соединений на хост сериализует ленту
 // из десятков миниатюр. Сертификат self-signed (BRIEFLY_TLS=1).
 func tlsEnabled() bool {
-	v := strings.ToLower(os.Getenv("BRIEFLY_TLS"))
+	v := strings.ToLower(getEnv("BETTER34_TLS"))
 	return v == "1" || v == "true" || v == "yes"
 }
 
@@ -40,14 +41,64 @@ const (
 	tlsKeyPath  = "data/tls/key.pem"
 )
 
+// certCoversHosts проверяет, что сертификат содержит все необходимые адреса и домены.
+func certCoversHosts(cert *x509.Certificate, hosts []string) bool {
+	for _, h := range hosts {
+		if strings.HasPrefix(h, ".") {
+			continue
+		}
+		if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
+			found := false
+			for _, certIP := range cert.IPAddresses {
+				if certIP.Equal(ip) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		} else {
+			found := false
+			for _, dns := range cert.DNSNames {
+				if strings.EqualFold(dns, h) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // loadOrGenerateCert возвращает self-signed сертификат, покрывающий все
 // разрешённые хосты (allowedHosts). Сертификат сохраняется в data/tls и
 // переиспользуется: постоянный отпечаток означает, что браузер (особенно
 // на телефоне) принимает предупреждение о самоподписанном сертификате
 // один раз, а не после каждого перезапуска сервера.
+// Если сертификат на диске устарел, истёк или не покрывает текущие адреса,
+// он автоматически перегенерируется с максимальным сроком действия 365 дней
+// (в соответствии с требованиями Apple ATS и современных браузеров Chromium).
 func loadOrGenerateCert() (tls.Certificate, error) {
 	if cert, err := tls.LoadX509KeyPair(tlsCertPath, tlsKeyPath); err == nil {
-		return cert, nil
+		if len(cert.Certificate) > 0 {
+			if leaf, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
+				now := time.Now()
+				validityPeriod := leaf.NotAfter.Sub(leaf.NotBefore)
+				// Проверяем:
+				// 1. До конца действия осталось более 7 дней.
+				// 2. Срок действия не превышает 398 дней (правило Apple / Chromium для TLS-сертификатов).
+				// 3. Сертификат покрывает все текущие allowedHosts.
+				if now.Add(7*24*time.Hour).Before(leaf.NotAfter) &&
+					validityPeriod <= 398*24*time.Hour &&
+					certCoversHosts(leaf, allowedHosts) {
+					return cert, nil
+				}
+			}
+		}
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -60,15 +111,18 @@ func loadOrGenerateCert() (tls.Certificate, error) {
 	}
 	tmpl := x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "briefly-local"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().AddDate(10, 0, 0),
+		Subject:               pkix.Name{CommonName: "better34-local"},
+		NotBefore:             time.Now().Add(-24 * time.Hour),
+		NotAfter:              time.Now().AddDate(1, 0, 0), // 1 год (<= 398 дней) — строгое требование Apple ATS и Android Chrome
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
 	for _, h := range allowedHosts {
+		if strings.HasPrefix(h, ".") {
+			continue
+		}
 		if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
 			tmpl.IPAddresses = append(tmpl.IPAddresses, ip)
 		} else {
@@ -180,13 +234,17 @@ func demuxAccept(ln net.Listener, tlsLn, plainLn *chanListener, done <-chan stru
 // altSvcMiddleware рекламирует HTTP/3 на том же порту: современные браузеры
 // по Alt-Svc сами переключаются на QUIC, когда сеть его поддерживает.
 func altSvcMiddleware() gin.HandlerFunc {
-	h3Active := strings.ToLower(strings.TrimSpace(os.Getenv("BRIEFLY_H3"))) != "0"
+	h3Active := strings.ToLower(strings.TrimSpace(getEnv("BETTER34_H3"))) != "0"
 	if !tlsEnabled() || !h3Active {
 		return func(c *gin.Context) { c.Next() }
 	}
+	port := strings.TrimSpace(getEnv("BETTER34_PORT"))
+	if port == "" {
+		port = "3000"
+	}
 	return func(c *gin.Context) {
 		if c.Request.TLS != nil {
-			c.Header("Alt-Svc", `h3=":`+os.Getenv("BRIEFLY_PORT")+`"; ma=86400`)
+			c.Header("Alt-Svc", `h3=":`+port+`"; ma=86400`)
 		}
 		c.Next()
 	}
@@ -211,12 +269,13 @@ func httpsRedirectHandler() http.Handler {
 // done — канал для остановки demuxAccept (разблокирует отправку в каналы),
 // cert — сертификат, сгенерированный ОДИН раз: его же использует HTTPS-сервер
 // в main.go (иначе при неудаче записи на диск TLS и H3 получали разные ключи).
-func setupTLS(addr string) (scheme string, tlsLn net.Listener, plainSrv *http.Server, h3Server *http3.Server, rawLn net.Listener, done chan struct{}, cert tls.Certificate) {
+func setupTLS(addr string, handler http.Handler) (scheme string, tlsLn net.Listener, plainSrv *http.Server, h3Server *http3.Server, rawLn net.Listener, done chan struct{}, cert tls.Certificate) {
 	scheme = "http"
 	if !tlsEnabled() {
 		return
 	}
-	cert, err := loadOrGenerateCert()
+	var err error
+	cert, err = loadOrGenerateCert()
 	if err != nil {
 		slog.Warn("BRIEFLY_TLS: не удалось подготовить сертификат, работаю по HTTP", "error", err)
 		return
@@ -235,6 +294,7 @@ func setupTLS(addr string) (scheme string, tlsLn net.Listener, plainSrv *http.Se
 		Handler:           httpsRedirectHandler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		ErrorLog:          newTLSErrorFilterLogger(logOutput),
 	}
 	go func() {
 		_ = plainSrv.Serve(plainLn)
@@ -242,23 +302,57 @@ func setupTLS(addr string) (scheme string, tlsLn net.Listener, plainSrv *http.Se
 	// Задача 10: HTTP/3 (QUIC) — отдельный UDP-сокет на том же порту.
 	// Браузер видит Alt-Svc и сам уходит на h3, если сеть позволяет.
 	// Сертификат передаём из памяти (не читаем с диска), чтобы H3 и HTTPS
-	// использовали один и тот же сертификат.
-	if strings.ToLower(strings.TrimSpace(os.Getenv("BRIEFLY_H3"))) != "0" {
-		h3TLSConfig := &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			NextProtos:   []string{"h3"},
-			Certificates: []tls.Certificate{cert},
-		}
-		h3Server = &http3.Server{
-			Addr:      addr,
-			TLSConfig: h3TLSConfig,
-		}
-		go func() {
-			if err := h3Server.ListenAndServeTLS("", ""); err != nil &&
-				!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
-				slog.Warn("HTTP/3: QUIC недоступен, продолжаем по TCP", "error", err)
+	// Задача 10: HTTP/3 (QUIC) — отдельный UDP-сокет на том же порту.
+	// Браузер видит Alt-Svc и сам уходит на h3, если сеть позволяет.
+	// Сертификат передаём из памяти через Serve(udpConn).
+	if strings.ToLower(strings.TrimSpace(getEnv("BETTER34_H3"))) != "0" {
+		udpConn, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			slog.Warn("HTTP/3: QUIC UDP недоступен", "error", err)
+		} else {
+			h3TLSConfig := http3.ConfigureTLSConfig(&tls.Config{
+				Certificates: []tls.Certificate{cert},
+			})
+			h3Server = &http3.Server{
+				Addr:      addr,
+				Handler:   handler,
+				TLSConfig: h3TLSConfig,
 			}
-		}()
+			go func() {
+				defer udpConn.Close()
+				if err := h3Server.Serve(udpConn); err != nil &&
+					!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+					slog.Warn("HTTP/3: QUIC недоступен, продолжаем по TCP", "error", err)
+				}
+			}()
+		}
 	}
 	return
+}
+
+// tlsErrorFilterWriter фильтрует штатные для self-signed сертификатов ошибки хэндшейка
+// (клиент закрывает соединение до подтверждения исключения в браузере или проводит фоновый опрос).
+type tlsErrorFilterWriter struct {
+	w io.Writer
+}
+
+func (f *tlsErrorFilterWriter) Write(p []byte) (int, error) {
+	s := string(p)
+	if strings.Contains(s, "TLS handshake error") && (strings.Contains(s, "unknown certificate") ||
+		strings.Contains(s, "bad certificate") ||
+		strings.Contains(s, "certificate unknown") ||
+		strings.Contains(s, "unknown CA") ||
+		strings.Contains(s, "EOF") ||
+		strings.Contains(s, "connection reset by peer") ||
+		strings.Contains(s, "forcibly closed by the remote host")) {
+		if v := strings.ToLower(getEnv("BETTER34_DEBUG")); v == "1" || v == "true" {
+			slog.Debug("TLS handshake error (suppressed)", "error", strings.TrimSpace(s))
+		}
+		return len(p), nil
+	}
+	return f.w.Write(p)
+}
+
+func newTLSErrorFilterLogger(out io.Writer) *log.Logger {
+	return log.New(&tlsErrorFilterWriter{w: out}, "", 0)
 }

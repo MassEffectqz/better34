@@ -12,10 +12,10 @@ const safeRich = (s) => {
   if (haystack === '') return '';
   const doc = new DOMParser().parseFromString(haystack, 'text/html');
   const clean = (node) => {
-    for (const child of [...node.children]) {
+    for (const child of node.children) {
       if (SAFE_TAGS.has(child.tagName)) {
         // Разрешённому тегу обрезаем атрибуты (никаких onclick/href и т.п.).
-        for (const k of [...child.attributes]) child.removeAttribute(k.name);
+        for (const k of child.attributes) child.removeAttribute(k.name);
         clean(child);
       } else {
         const span = document.createElement('span');

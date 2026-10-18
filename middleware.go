@@ -1,7 +1,7 @@
 package main
 
 import (
-	"briefly/internal"
+	"better34/internal"
 	"bytes"
 	"compress/gzip"
 	"errors"
@@ -381,7 +381,7 @@ func webSecurityMiddleware() gin.HandlerFunc {
 			}
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Briefly-Token")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Better34-Token, X-Briefly-Token")
 		}
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -397,6 +397,7 @@ func webSecurityMiddleware() gin.HandlerFunc {
 				strings.HasPrefix(c.Request.URL.Path, "/api/healthz") ||
 				strings.HasPrefix(c.Request.URL.Path, "/api/friend/") ||
 				c.Request.URL.Path == "/api/tags/popular" ||
+				c.Request.URL.Path == "/api/odd-tags" ||
 				c.Request.URL.Path == "/api/ready" {
 				c.Next()
 				return
@@ -408,6 +409,7 @@ func webSecurityMiddleware() gin.HandlerFunc {
 			}
 			if cookie, err := c.Cookie(internal.SessionCookieName); err == nil {
 				if u, ok := accs.UserBySession(cookie); ok {
+					c.Set("better34_user", u)
 					c.Set("briefly_user", u)
 					c.Next()
 					return

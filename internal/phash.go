@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"image"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -37,6 +38,15 @@ func buildDCTTable(n int) [][]float64 {
 		}
 	}
 	return t
+}
+
+// PerceptualHashReader считает pHash из потока байт (например, превью из сети).
+func PerceptualHashReader(r io.Reader) string {
+	img, err := imaging.Decode(r)
+	if err != nil {
+		return ""
+	}
+	return PerceptualHash(img)
 }
 
 // PerceptualHashFile считает pHash файла с изображением. Пустая строка —

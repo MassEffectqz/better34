@@ -72,7 +72,7 @@ func (h *Handler) GetTournament(c *gin.Context) {
 	size := 1 << rounds
 
 	source := c.DefaultQuery("source", "offline")
-	if source != "offline" && source != "online" {
+	if source != "offline" && source != "online" && source != "collection" {
 		AbortWithError(c, ErrInvalidRequest)
 		return
 	}
@@ -94,12 +94,26 @@ func (h *Handler) GetTournament(c *gin.Context) {
 	for tg := range profile.HiddenTags {
 		hidden = append(hidden, strings.ToLower(strings.TrimLeft(tg, "+-")))
 	}
-	// Библиотека турнира — мои лайки (см. tournamentLibrary): id берём здесь же,
-	// под одним мьютексом, вместе со скрытыми тегами.
-	liked := make([]int, 0, len(profile.LikedPosts))
-	for id := range profile.LikedPosts {
-		if id > 0 {
-			liked = append(liked, id)
+	colID := c.Query("collection")
+	liked := make([]int, 0)
+	if source == "collection" || colID != "" {
+		for _, col := range profile.Collections {
+			if col.ID == colID || (colID == "" && len(col.Posts) > 0) {
+				for _, id := range col.Posts {
+					if id > 0 {
+						liked = append(liked, id)
+					}
+				}
+				break
+			}
+		}
+	} else {
+		// Библиотека турнира — мои лайки (см. tournamentLibrary): id берём здесь же,
+		// под одним мьютексом, вместе со скрытыми тегами.
+		for id := range profile.LikedPosts {
+			if id > 0 {
+				liked = append(liked, id)
+			}
 		}
 	}
 	profile.mu.RUnlock()
@@ -110,7 +124,7 @@ func (h *Handler) GetTournament(c *gin.Context) {
 	var available int
 	var libStats tournamentLibStats
 	var appErr *AppError
-	if source == "offline" {
+	if source == "offline" || source == "collection" {
 		prov := h.provider()
 		posts, libStats = tournamentLibrary(c.Request.Context(), db, prov,
 			tournamentIDQueryPlanFor(prov), liked, hidden, tags, size, ratingExcl)
@@ -135,7 +149,7 @@ func (h *Handler) GetTournament(c *gin.Context) {
 			"available": available, "posts": []TournamentPost{},
 			"bracket": emptyTournamentBracket(rounds),
 		}
-		if source == "offline" {
+		if source == "offline" || source == "collection" {
 			resp["liked"], resp["scored"] = libStats.Liked, libStats.Scored
 		}
 		c.JSON(http.StatusOK, resp)
@@ -170,7 +184,7 @@ func (h *Handler) GetTournamentPosts(c *gin.Context) {
 		return
 	}
 	source := c.DefaultQuery("source", "offline")
-	if source != "offline" && source != "online" {
+	if source != "offline" && source != "online" && source != "collection" {
 		AbortWithError(c, ErrInvalidRequest)
 		return
 	}

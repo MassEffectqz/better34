@@ -51,6 +51,7 @@
 .settings-panel.hidden{transform:translateX(103%)}
 #settings-panel .panel-tab-content.active{display:flex;flex-direction:column;gap:16px}
 .setting-group{display:flex;flex-direction:column;gap:6px}
+.setting-pwd-form{display:flex;flex-direction:column;gap:6px;width:100%}
 .setting-label{font-size:.85rem;color:var(--text-dim)}
 .setting-group input[type="text"],.setting-group input[type="number"],.setting-group input[type="password"]{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;color:var(--text);font-size:.9rem;outline:none;transition:border-color var(--transition)}
 .setting-group input:focus{border-color:var(--accent)}

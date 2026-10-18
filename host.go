@@ -1,7 +1,7 @@
 package main
 
 import (
-	"briefly/internal"
+	"better34/internal"
 	"net"
 	"net/http"
 	"os"
@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var allowedHosts = func() []string {
+func computeAllowedHosts() []string {
 	hosts := []string{"localhost", "127.0.0.1", "::1"}
 	extra := os.Getenv("BRIEFLY_ALLOWED_HOSTS")
 	if extra == "" {
@@ -58,7 +58,14 @@ var allowedHosts = func() []string {
 		hosts = append(hosts, h)
 	}
 	return hosts
-}()
+}
+
+var allowedHosts = computeAllowedHosts()
+
+func initAllowedHosts() {
+	allowedHosts = computeAllowedHosts()
+	authToken = strings.TrimSpace(os.Getenv("BRIEFLY_TOKEN"))
+}
 
 var authToken = strings.TrimSpace(os.Getenv("BRIEFLY_TOKEN"))
 

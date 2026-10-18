@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -79,13 +80,21 @@ func (h *Handler) GetRelated(c *gin.Context) {
 		return
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(c.Query("type")))
-	if mode == "" {
-		mode = strings.ToLower(strings.TrimSpace(c.Query("mode")))
+	rawMode := strings.ToLower(strings.TrimSpace(c.Query("type")))
+	if rawMode == "" {
+		rawMode = strings.ToLower(strings.TrimSpace(c.Query("mode")))
 	}
-	if mode == "" {
-		mode = "all"
+	if rawMode == "" {
+		rawMode = "all"
 	}
+	clientMode := rawMode
+	mode := rawMode
+	if mode == "char" {
+		mode = "character"
+	}
+
+	ratingParam := strings.ToLower(strings.TrimSpace(c.Query("rating")))
+	ratingTerms, ratingExcl := ratingFilter(ratingParam)
 
 	db := GetDB()
 	var srcPost *Post
@@ -113,20 +122,66 @@ func (h *Handler) GetRelated(c *gin.Context) {
 	}
 
 	if srcPost == nil || srcPost.Tags == "" {
-		c.JSON(http.StatusOK, gin.H{"posts": []any{}, "tags": []string{}, "mode": mode, "has_artist": false, "has_character": false})
+		c.JSON(http.StatusOK, gin.H{
+			"posts":         []any{},
+			"tags":          []string{},
+			"mode":          clientMode,
+			"rating":        ratingParam,
+			"has_artist":    false,
+			"has_character": false,
+		})
 		return
+	}
+
+	freqMap := globalTagFreq()
+	analyzed := AnalyzeTags(srcPost.Tags, freqMap)
+	hasArtist := false
+	hasChar := false
+	for _, ct := range analyzed {
+		if ct.Kind == TagKindArtist {
+			hasArtist = true
+		} else if ct.Kind == TagKindCharacter || ct.Kind == TagKindCopyright {
+			hasChar = true
+		}
 	}
 
 	// Режим visual: визуальный поиск похожих по pHash
 	if mode == "visual" {
-		if srcPost.Phash == "" && srcPost.Downloaded && srcPost.FilePath != "" {
-			srcPost.Phash = PerceptualHashFile(srcPost.FilePath)
-			db.SetPostPHash(srcPost.ID, srcPost.Phash)
+		if srcPost.Phash == "" {
+			if srcPost.Downloaded && srcPost.FilePath != "" {
+				srcPost.Phash = PerceptualHashFile(srcPost.FilePath)
+				if srcPost.Phash != "" {
+					db.SetPostPHash(srcPost.ID, srcPost.Phash)
+				}
+			} else if srcPost.PreviewURL != "" {
+				if cp := mediaCacheGet(srcPost.PreviewURL); cp != "" {
+					srcPost.Phash = PerceptualHashFile(cp)
+				} else {
+					ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+					req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, srcPost.PreviewURL, nil)
+					if rerr == nil {
+						if resp, err := (&http.Client{Timeout: 4 * time.Second}).Do(req); err == nil {
+							if resp.StatusCode == http.StatusOK {
+								srcPost.Phash = PerceptualHashReader(resp.Body)
+							}
+							resp.Body.Close()
+						}
+					}
+					cancel()
+				}
+				if srcPost.Phash != "" {
+					db.SetPostPHash(srcPost.ID, srcPost.Phash)
+				}
+			}
 		}
+
+		out := make([]gin.H, 0)
 		if srcPost.Phash != "" {
 			simPosts := db.SimilarPHash(srcPost.Phash, id, 24, 16)
-			out := make([]gin.H, 0, len(simPosts))
 			for _, p := range simPosts {
+				if len(ratingExcl) > 0 && ratingExcl[strings.ToLower(p.Rating)] {
+					continue
+				}
 				d, _ := HammingPHash(srcPost.Phash, p.Phash)
 				simPct := int(math.Max(30, (1.0-float64(d)/20.0)*100))
 				out = append(out, gin.H{
@@ -146,27 +201,16 @@ func (h *Handler) GetRelated(c *gin.Context) {
 					"matched_tags": []string{},
 				})
 			}
-			c.JSON(http.StatusOK, gin.H{
-				"posts":         out,
-				"tags":          []string{},
-				"mode":          "visual",
-				"has_artist":    false,
-				"has_character": false,
-			})
-			return
 		}
-	}
-
-	freqMap := globalTagFreq()
-	analyzed := AnalyzeTags(srcPost.Tags, freqMap)
-	hasArtist := false
-	hasChar := false
-	for _, ct := range analyzed {
-		if ct.Kind == TagKindArtist {
-			hasArtist = true
-		} else if ct.Kind == TagKindCharacter {
-			hasChar = true
-		}
+		c.JSON(http.StatusOK, gin.H{
+			"posts":         out,
+			"tags":          []string{},
+			"mode":          clientMode,
+			"rating":        ratingParam,
+			"has_artist":    hasArtist,
+			"has_character": hasChar,
+		})
+		return
 	}
 
 	primaryQ, fallbackQ, pickedTags := BuildRelatedQueries(analyzed, mode)
@@ -174,11 +218,22 @@ func (h *Handler) GetRelated(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"posts":         []any{},
 			"tags":          []string{},
-			"mode":          mode,
+			"mode":          clientMode,
+			"rating":        ratingParam,
 			"has_artist":    hasArtist,
 			"has_character": hasChar,
 		})
 		return
+	}
+
+	primaryWithRating := primaryQ
+	fallbackWithRating := fallbackQ
+	if len(ratingTerms) > 0 {
+		rt := strings.Join(ratingTerms, " ")
+		primaryWithRating = rt + " " + primaryQ
+		if fallbackQ != "" {
+			fallbackWithRating = rt + " " + fallbackQ
+		}
 	}
 
 	candidateMap := make(map[int]*RelatedCandidate)
@@ -186,9 +241,12 @@ func (h *Handler) GetRelated(c *gin.Context) {
 
 	// 1. Поиск в активном онлайн-провайдере
 	if prov != nil {
-		res, err := prov.SearchPosts(primaryQ, 1, 24, 0)
+		res, err := prov.SearchPosts(primaryWithRating, 1, 24, 0)
 		if err == nil {
 			for i := range res {
+				if len(ratingExcl) > 0 && ratingExcl[strings.ToLower(res[i].Rating)] {
+					continue
+				}
 				if res[i].ID != id {
 					ph := ""
 					if local := db.Get(res[i].ID); local != nil {
@@ -212,10 +270,13 @@ func (h *Handler) GetRelated(c *gin.Context) {
 			}
 		}
 		// Fallback при малом числе результатов
-		if len(candidateMap) < 12 && fallbackQ != "" && fallbackQ != primaryQ {
-			fbRes, fbErr := prov.SearchPosts(fallbackQ, 1, 24, 0)
+		if len(candidateMap) < 12 && fallbackWithRating != "" && fallbackWithRating != primaryWithRating {
+			fbRes, fbErr := prov.SearchPosts(fallbackWithRating, 1, 24, 0)
 			if fbErr == nil {
 				for i := range fbRes {
+					if len(ratingExcl) > 0 && ratingExcl[strings.ToLower(fbRes[i].Rating)] {
+						continue
+					}
 					if fbRes[i].ID != id && candidateMap[fbRes[i].ID] == nil {
 						ph := ""
 						if local := db.Get(fbRes[i].ID); local != nil {
@@ -245,6 +306,9 @@ func (h *Handler) GetRelated(c *gin.Context) {
 	if len(pickedTags) > 0 {
 		localPosts := db.SearchDownloaded(pickedTags[0])
 		for _, lp := range localPosts {
+			if len(ratingExcl) > 0 && ratingExcl[strings.ToLower(lp.Rating)] {
+				continue
+			}
 			if lp.ID != id && candidateMap[lp.ID] == nil {
 				candidateMap[lp.ID] = &RelatedCandidate{
 					ID:         lp.ID,
@@ -319,7 +383,8 @@ func (h *Handler) GetRelated(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"posts":         out,
 		"tags":          pickedTags,
-		"mode":          mode,
+		"mode":          clientMode,
+		"rating":        ratingParam,
 		"has_artist":    hasArtist,
 		"has_character": hasChar,
 	})

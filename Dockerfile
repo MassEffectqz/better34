@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /frontend/static ./static
 # Frontend must be built before the Go binary; go:embed consumes this tree.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o briefly .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o better34 .
 
 FROM alpine:3.22
 # Сертификаты для исходящих запросов к провайдерам, wget — для HEALTHCHECK,
@@ -21,7 +21,7 @@ FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata tini \
  && addgroup -S briefly && adduser -S -G briefly -H briefly
 WORKDIR /app
-COPY --from=builder /build/briefly ./briefly
+COPY --from=builder /build/better34 ./better34
 # Frontend is embedded in the binary; no static directory is copied into the runtime image.
 # data/ — volume: владелец задаётся заранее, чтобы bind-mount с chown на хосте не требовался.
 RUN mkdir -p data/posts data/thumbs && chown -R briefly:briefly /app
@@ -32,4 +32,4 @@ EXPOSE 3000
 VOLUME ["/app/data"]
 # tini как PID 1: форвардит сигналы и пожинает зомби-процессы.
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["./briefly"]
+CMD ["./better34"]

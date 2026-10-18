@@ -165,7 +165,7 @@ func (h *Handler) GetSourceCommentsMeta(c *gin.Context) {
 
 // POST /api/comments/:postId {text} — только авторизованный пользователь.
 func (h *Handler) AddComment(c *gin.Context) {
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 	if user == "" {
 		AbortWithError(c, ErrAuthRequired)
 		return
@@ -203,7 +203,7 @@ func (h *Handler) AddComment(c *gin.Context) {
 
 // DELETE /api/comments/:cid — удалить может только автор.
 func (h *Handler) DeleteComment(c *gin.Context) {
-	user := c.GetString("briefly_user")
+	user := UserFromContext(c)
 	if user == "" {
 		AbortWithError(c, ErrAuthRequired)
 		return

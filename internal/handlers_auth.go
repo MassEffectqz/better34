@@ -166,7 +166,7 @@ func (h *Handler) AuthMe(c *gin.Context) {
 
 // POST /api/profile/meta {nickname, avatar}
 func (h *Handler) UpdateProfileMeta(c *gin.Context) {
-	u := c.GetString("briefly_user")
+	u := UserFromContext(c)
 	if u == "" {
 		AbortWithError(c, ErrAuthRequired)
 		return

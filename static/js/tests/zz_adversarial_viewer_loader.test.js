@@ -68,7 +68,7 @@ function makeApp() {
     naturalWidth: 100, naturalHeight: 100,
     get src() { return 'http://localhost' + (this._src || ''); },
     set src(v) { this._src = v; srcAssigns++; },
-    addEventListener(ev, fn, opts) { if (ev === 'load' || ev === 'error') loadListeners++; },
+    addEventListener(ev, _fn, _opts) { if (ev === 'load' || ev === 'error') loadListeners++; },
   };
   const viewerContent = {
     classList: makeClassList(),

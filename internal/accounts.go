@@ -55,6 +55,9 @@ func TokenMatches(c *gin.Context) bool {
 	if briefToken == "" {
 		return false
 	}
+	if t := c.GetHeader("X-Better34-Token"); t != "" {
+		return subtle.ConstantTimeCompare([]byte(t), []byte(briefToken)) == 1
+	}
 	if t := c.GetHeader("X-Briefly-Token"); t != "" {
 		return subtle.ConstantTimeCompare([]byte(t), []byte(briefToken)) == 1
 	}
@@ -473,10 +476,18 @@ func (a *Accounts) migrateLegacyProfile(username string) {
 	os.Rename(legacyProfileFile, legacyProfileFile+".bak")
 }
 
+// UserFromContext извлекает имя пользователя из контекста, отдавая приоритет better34_user.
+func UserFromContext(c *gin.Context) string {
+	if u := c.GetString("better34_user"); u != "" {
+		return u
+	}
+	return c.GetString("briefly_user")
+}
+
 // ProfileFor возвращает профиль по запросу: для залогиненного пользователя —
 // его личный, для token-запросов — legacy-профиль.
 func ProfileFor(c *gin.Context) *Profile {
-	if u := c.GetString("briefly_user"); u != "" {
+	if u := UserFromContext(c); u != "" {
 		return GetAccounts().Profile(u)
 	}
 	return GetProfile()
